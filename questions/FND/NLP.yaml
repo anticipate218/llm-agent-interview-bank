@@ -1,0 +1,1208 @@
+domain: FND
+subcategory: NLP
+questions:
+
+  - id: FND-NLP-001
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [分词与文本预处理]
+    tags: [中文分词, 最大匹配]
+    question: |
+      基于词典的中文分词中，词典为 {研究, 研究生, 生命, 命, 起源}，最大词长为 3。分别用正向最大匹配（FMM：从左往右，每次取能在词典中匹配到的最长词）和逆向最大匹配（BMM：从右往左，规则相同）切分「研究生命起源」，结果是：
+    options:
+      A: 'FMM：研究 / 生命 / 起源；BMM：研究生 / 命 / 起源'
+      B: 'FMM：研究生 / 命 / 起源；BMM：研究 / 生命 / 起源'
+      C: '两者都得到：研究 / 生命 / 起源'
+      D: '两者都得到：研究生 / 命 / 起源'
+    answer: B
+    explanation: |
+      **结论**：两种贪心方向不同，在交集型歧义处给出不同结果，FMM 切错，BMM 切对。
+
+      - **FMM**：从「研究生命」开始，先试 3 个字「研究生」，在词典中，切出；剩下「命起源」，「命起源」「命起」都不在词典中，只能切出单字「命」；最后是「起源」。结果：研究生 / 命 / 起源。
+      - **BMM**：从右边取 3 个字「命起源」，不在词典中；退到「起源」，切出；剩下「研究生命」，取末尾 3 个字「究生命」不在词典中，退到「生命」，切出；最后是「研究」。结果：研究 / 生命 / 起源。
+      - **双向最大匹配**：两种结果都是 3 个词；再比单字词个数，FMM 有 1 个（「命」），BMM 有 0 个，所以选 BMM 的结果。
+
+      - A 错：把两种方法的结果弄反了。
+      - C 错：FMM 是贪心的，第一步就会取最长的「研究生」。
+      - D 错：BMM 从右往左扫描，先切出的是「起源」和「生命」。
+
+      延伸：最大匹配实现简单、速度快，但只能靠词典和贪心规则，处理不了需要上下文才能消解的歧义，也识别不出词典里没有的新词（未登录词）。因此后来发展出基于统计的方法：jieba 用前缀词典构建所有可能切分组成的有向无环图，再用动态规划找词频意义下的最大概率路径，对未登录词则用 HMM 的 Viterbi 解码；更进一步是把分词看作序列标注，用 CRF、BiLSTM-CRF 或 BERT 来做。
+
+  - id: FND-NLP-002
+    type: fill
+    difficulty: 1
+    frequency: 1
+    points: [分词与文本预处理, 经典NLP任务]
+    tags: [BMES, 序列标注]
+    question: |
+      把中文分词转化为逐字的序列标注时，常用 BMES 四种标签：B 表示词首，M 表示词中，E 表示词尾，S 表示单字成词。句子「我爱北京天安门」的正确切分是「我 / 爱 / 北京 / 天安门」，它对应的标签序列为 ____（按字依次写出，如 SBE）。
+    answer: [['SSBEBME', 'S S B E B M E', 'S,S,B,E,B,M,E']]
+    explanation: |
+      逐字标注：我 S、爱 S、北 B、京 E、天 B、安 M、门 E，合起来是 **SSBEBME**。
+
+      这样转化的好处：
+      1. 分词变成了「给每个字打一个标签」，可以直接套用 HMM、CRF、BiLSTM-CRF、BERT + CRF 等序列标注模型，从标注语料中学习；
+      2. 模型学的是字在词中的位置规律，因此能切出词典里没有的新词，这是纯词典方法做不到的。
+
+      标签之间有合法性约束：B 之后只能接 M 或 E，E 和 S 之后只能接 B 或 S，句首不能是 M 或 E。CRF 用转移矩阵学到这些约束，也可以在解码时把非法转移的分数设为 $-\infty$。命名实体识别中常用的 BIO / BIOES 标注是同一思路。
+
+  - id: FND-NLP-003
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [分词与文本预处理]
+    tags: [停用词, 词干提取, 大模型数据处理]
+    question: |
+      训练大语言模型之前，通常要像传统文本分类流水线那样，对语料做去停用词、词干提取（stemming）和统一转小写，以缩小词表、降低噪声。
+    answer: false
+    explanation: |
+      **错误**。这些步骤属于词袋 / TF-IDF 时代的预处理，不适用于大模型。
+
+      **传统流水线为什么要做**：词袋模型里每个词形都是一个独立特征，「run」「runs」「running」互不相通，「The」和「the」也是两个维度；去停用词、词干化、转小写能合并特征、缓解稀疏，对分类、检索这类只看「有哪些词」的任务影响不大。
+
+      **大模型为什么不做**：
+      1. 大模型要理解并**生成**自然文本，输入和输出都必须是原始文本。删掉「不」「not」「的」会改变语义或语法，词干化会丢掉时态、单复数，转小写会丢掉专有名词、缩写和代码中的大小写信息。
+      2. 稀疏和未登录词问题已经由子词分词（如字节级 BPE）解决，不需要再靠规范化词形来缩小词表。
+
+      大模型语料处理的重点是另一些事：语言识别、质量过滤、去重、去除隐私信息、清理 HTML 残留与乱码，以及按需做 Unicode 规范化（规范化也要谨慎，例如全角半角转换可能影响代码和特定格式文本）。
+
+  - id: FND-NLP-004
+    type: code_output
+    difficulty: 1
+    frequency: 2
+    points: [词袋与TF-IDF]
+    tags: [词袋模型, n-gram]
+    question: |
+      下面的代码比较「狗咬人」与「人咬狗」在两种特征下的余弦相似度：只用 unigram 计数，以及 unigram 加 bigram 计数。输出是什么？
+    code: |
+      from collections import Counter
+      import math
+
+      def cos(a, b):
+          dot = sum(a[k] * b[k] for k in a)
+          return dot / math.sqrt(sum(v * v for v in a.values()) * sum(v * v for v in b.values()))
+
+      def feats(toks, n_max):
+          c = Counter()
+          for n in range(1, n_max + 1):
+              c.update(tuple(toks[i:i + n]) for i in range(len(toks) - n + 1))
+          return c
+
+      s1, s2 = ["狗", "咬", "人"], ["人", "咬", "狗"]
+      print(round(cos(feats(s1, 1), feats(s2, 1)), 2))
+      print(round(cos(feats(s1, 2), feats(s2, 2)), 2))
+    answer: |
+      1.0
+      0.6
+    explanation: |
+      - **只用 unigram**：两句都是「狗、咬、人」各 1 次，计数向量完全相同，余弦相似度为 **1.0**。词袋模型丢掉了词序，分不清谁咬了谁。
+      - **加上 bigram**：s1 多出 (狗,咬)、(咬,人)，s2 多出 (人,咬)、(咬,狗)，两组 bigram 没有交集。内积只来自 3 个共同的 unigram，等于 3；每个向量有 5 个取值为 1 的特征，模长都是 $\sqrt5$。相似度 $3/(\sqrt5\cdot\sqrt5)=$ **0.6**。
+
+      加入 n-gram 能找回一部分局部词序，代价是特征数量随 $n$ 迅速膨胀、更加稀疏。词袋 / n-gram 特征的根本局限在于只能比较字面是否相同：顺序只能看到局部，语义相近的不同词也无法匹配，这正是后来词向量和上下文表示要解决的问题。
+
+  - id: FND-NLP-005
+    type: calc
+    difficulty: 1
+    frequency: 2
+    points: [词袋与TF-IDF]
+    tags: [TF-IDF, 关键词提取]
+    question: |
+      用 TF-IDF 给一篇文档提取关键词。文档分词后为：「苹果 苹果 手机 发布 的 的 的」（共 7 个词）。语料库共 $N=1000$ 篇文档，各词的文档频率为：df(的) = 1000，df(苹果) = 100，df(手机) = 50，df(发布) = 200。取 $\mathrm{tf}=\dfrac{\text{词在文档中的次数}}{\text{文档总词数}}$，$\mathrm{idf}=\log_{10}\dfrac{N}{\mathrm{df}}$。
+      (1) 计算 4 个词的 TF-IDF 值，按从大到小排序；
+      (2) 如果把 idf 改成 $\log_{10}\dfrac{N}{\mathrm{df}+1}$（一种常见的「防止除零」写法），「的」的 TF-IDF 会变成多少？这说明了什么？
+    answer: '(1) 苹果 ≈ 0.286 > 手机 ≈ 0.186 > 发布 ≈ 0.100 > 的 = 0；(2) 约 -0.0002，变成负数，所以实现中常用 log((1+N)/(1+df)) + 1 这类平滑写法'
+    explanation: |
+      **(1) 逐个计算**
+      - 的：tf $=3/7$，idf $=\log_{10}(1000/1000)=0$，TF-IDF $=0$；
+      - 苹果：tf $=2/7\approx0.286$，idf $=\log_{10}10=1$，TF-IDF $\approx0.286$；
+      - 手机：tf $=1/7$，idf $=\log_{10}20\approx1.301$，TF-IDF $\approx0.186$；
+      - 发布：tf $=1/7$，idf $=\log_{10}5\approx0.699$，TF-IDF $\approx0.100$。
+
+      排序：苹果 > 手机 > 发布 > 的。「的」出现次数最多，但每篇文档都有它，idf 为 0，权重被压到 0；「手机」只出现 1 次，却因为更稀有排在「发布」前面。TF 衡量「在本文中多重要」，IDF 衡量「在整个语料中有多大区分度」。
+
+      **(2)** idf $=\log_{10}(1000/1001)\approx-0.000434$，TF-IDF $\approx\frac37\times(-0.000434)\approx-0.0002$。出现在所有文档中的词得到负权重，用作特征或检索打分时会出现「出现越多扣分越多」的怪现象。因此实际实现常用平滑版本，例如 scikit-learn 默认的 $\mathrm{idf}=\ln\frac{1+N}{1+\mathrm{df}}+1$，保证 idf 始终为正。
+
+      延伸：文档向量通常还要做 L2 归一化，再用余弦相似度比较；检索场景中，BM25 在 TF-IDF 的基础上加入了词频饱和与文档长度归一化。
+
+  - id: FND-NLP-006
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [词袋与TF-IDF]
+    tags: [TF-IDF, 文本分类, 词汇鸿沟]
+    question: |
+      关于词袋（Bag-of-Words）与 TF-IDF 文本表示，下列说法**正确**的有：
+    options:
+      A: '把一篇文档的内容原样重复一遍（长度翻倍），按原始词频计算并做 L2 归一化后，它的 TF-IDF 向量会发生变化'
+      B: '在数据量不大的文本分类任务上，「TF-IDF 特征 + 逻辑回归或线性 SVM」常常是又快又强的基线'
+      C: '它们得到的是高维稀疏向量：维度等于词表大小，一篇文档只在出现过的词所对应的维度上非零'
+      D: 'IDF 是词级别的全局权重，只取决于该词在语料中出现在多少篇文档里，同一个词在不同文档中的 IDF 相同'
+      E: '「电脑」和「计算机」在 TF-IDF 空间中是两个正交的维度，因此两篇只是用词不同的同义文档，余弦相似度可能为 0'
+    answer: [B, C, D, E]
+    explanation: |
+      **结论**：B、C、D、E 正确。
+
+      - A 错：内容重复一遍，每个词的次数都翻倍；df 统计的是「包含该词的文档数」，不受影响。整条向量只是乘以 2，L2 归一化后完全不变。
+      - B 对：TF-IDF 特征配线性模型训练快、可解释、不易过拟合，在新闻分类、垃圾邮件识别等任务上很难被轻易超越，做新方案时应当先跑这个基线。
+      - C 对：每个词一个维度，词表动辄数万到数十万维，而一篇文档只含其中很少一部分词，所以是稀疏向量，常用稀疏矩阵存储。
+      - D 对：$\mathrm{idf}(t)=\log\frac{N}{\mathrm{df}(t)}$（各种实现会加 1 平滑），只依赖文档频率 $\mathrm{df}(t)$，与当前是哪篇文档无关；同一个词在不同文档中权重的差别来自 TF（以及向量归一化）。IDF 是逐词独立的标量，不包含词与词之间的关系，所以 TF-IDF 无法让近义词彼此靠近，这需要 Word2Vec 等分布式表示。
+      - E 对：这就是「词汇鸿沟」。词袋只做字面匹配，不同的词即使同义也互相正交。
+  - id: FND-NLP-007
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [Word2Vec与GloVe]
+    tags: [Skip-gram, CBOW]
+    question: |
+      关于 Word2Vec 的两种训练架构 CBOW 与 Skip-gram，下列说法正确的是：
+    options:
+      A: 'CBOW 用中心词去预测窗口内的每个上下文词，Skip-gram 把上下文词向量取平均后预测中心词'
+      B: 'Skip-gram 逐个预测窗口内的上下文词，较慢但对低频词更好；CBOW 平均上下文后只预测一次，较快'
+      C: '两者都要先统计整个语料的全局词共现矩阵，再对这个矩阵做加权分解得到词向量'
+      D: 'Skip-gram 学到的词向量会随所在句子变化，能区分多义词；CBOW 学到的是每个词一个固定向量'
+    answer: B
+    explanation: |
+      **结论**：Skip-gram 慢而对低频词更好，CBOW 快。Word2Vec 官方工具的说明正是这样概括的：skip-gram（较慢，对低频词更好），CBOW（快）。
+
+      - **CBOW**（Continuous Bag-of-Words）：把窗口内上下文词的向量取平均，预测中心词，每个窗口只产生 1 次预测，速度快；平均操作把低频词的信号和周围词混在一起，对高频词略好。
+      - **Skip-gram**：用中心词分别预测窗口内的每个上下文词，一个窗口产生多次预测。低频词每次出现都能得到多个独立的训练信号，所以表示更好，代价是训练更慢。
+
+      - A 错：把两者弄反了。
+      - C 错：这描述的是 GloVe、LSA 这类基于全局共现矩阵的方法，Word2Vec 是在语料上滑动窗口在线训练的。
+      - D 错：两者学到的都是静态词向量，每个词只有一个向量，与所在句子无关，都区分不了多义词。能随上下文变化的表示要到 ELMo、BERT 才出现。
+    source: 'Word2Vec 论文 arXiv:1301.3781；Word2Vec 官方工具说明（code.google.com/archive/p/word2vec）'
+
+  - id: FND-NLP-008
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [Word2Vec与GloVe]
+    tags: [负采样]
+    question: |
+      Word2Vec 的负采样从「词频的 3/4 次方」分布中抽取负例：$P_n(w)\propto f(w)^{3/4}$。设语料中只有 3 个词，出现次数分别为 81、16、1。若直接按原始词频抽样，最低频的那个词被抽中的概率约为 ____（保留 3 位小数）；按 3/4 次方分布抽样时，这一概率为 ____（保留 3 位小数）。
+    answer: [['0.010', '0.01', '1/98'], ['0.028', '1/36']]
+    explanation: |
+      - **原始词频**：$1/(81+16+1)=1/98\approx$ **0.010**。
+      - **3/4 次方**：$81^{3/4}=27$，$16^{3/4}=8$，$1^{3/4}=1$，概率为 $1/36\approx$ **0.028**。
+
+      3/4 次方把分布「压平」：最高频词的概率从 $81/98\approx0.83$ 降到 $27/36=0.75$，最低频词的概率提高到原来的约 2.7 倍。这样负例不会几乎全是「的」「the」这类高频词，低频词也能作为负例得到训练。原论文报告 3/4 次方的效果明显好于直接用词频分布和均匀分布，这是一个经验选择。
+
+      注意不要与「高频词下采样」混淆：后者以概率 $1-\sqrt{t/f(w)}$（$t$ 约为 $10^{-5}$）丢弃训练语料中的高频词，作用对象是训练样本，目的是加速训练并提升低频词的表示；负采样分布作用于「抽哪些词当负例」。
+    source: 'Distributed Representations of Words and Phrases and their Compositionality（Mikolov 等, 2013）arXiv:1310.4546'
+
+  - id: FND-NLP-009
+    type: code_fill
+    difficulty: 2
+    frequency: 2
+    points: [Word2Vec与GloVe]
+    tags: [负采样, 手撕]
+    question: |
+      补全 Skip-gram 负采样（SGNS）对一个（中心词, 上下文词）正例对的损失：
+      $$\mathcal{L}=-\log\sigma(u_o^\top v_c)-\sum_{k=1}^{K}\log\sigma(-u_k^\top v_c)$$
+      其中 $v_c$ 是中心词的输入向量，$u_o$ 是真实上下文词的输出向量，$u_k$ 是第 $k$ 个负例的输出向量。
+    code: |
+      import numpy as np
+
+      def sigmoid(x):
+          return 1.0 / (1.0 + np.exp(-x))
+
+      def sgns_loss(v_c, u_o, U_neg):
+          """v_c: (d,)；u_o: (d,)；U_neg: (K, d)，每行是一个负例的输出向量"""
+          pos = np.log(sigmoid(____))
+          neg = np.log(sigmoid(____)).sum()
+          return -(pos + neg)
+    answer: ['u_o @ v_c', '-(U_neg @ v_c)']
+    test: |
+      v_c = np.array([1.0, 0.0])
+      u_o = np.array([2.0, 0.0])
+      U_neg = np.array([[0.0, 1.0], [-1.0, 0.0]])
+      expected = -(np.log(sigmoid(2.0)) + np.log(sigmoid(0.0)) + np.log(sigmoid(1.0)))
+      assert np.isclose(sgns_loss(v_c, u_o, U_neg), expected)
+      # 正例点积越大、负例点积越小，损失越低
+      assert sgns_loss(v_c, 3 * u_o, U_neg) < sgns_loss(v_c, u_o, U_neg)
+      assert sgns_loss(v_c, u_o, U_neg - 5 * v_c) < sgns_loss(v_c, u_o, U_neg)
+    explanation: |
+      **答案**：`u_o @ v_c` 与 `-(U_neg @ v_c)`。
+
+      SGNS 把「预测上下文词」从 $|V|$ 类 Softmax 换成了 $K+1$ 个二分类：真实上下文词要判为「是」，即 $\sigma(u_o^\top v_c)\to1$；每个负例要判为「否」，即 $\sigma(-u_k^\top v_c)\to1$。`U_neg @ v_c` 一次算出 $K$ 个负例的点积，取负号后再过 sigmoid。每个训练对的计算量从 $O(|V|d)$ 降到 $O(Kd)$，$K$ 一般取 5～20。
+
+      **要点**：
+      - 每个词有两套向量：作为中心词时的输入向量 $v$，作为上下文或负例时的输出向量 $u$；训练完通常只用 $v$（或 $v+u$）。
+      - 梯度：$\partial\mathcal{L}/\partial v_c=(\sigma(u_o^\top v_c)-1)\,u_o+\sum_k\sigma(u_k^\top v_c)\,u_k$。
+      - 数值稳定：点积很大时，`np.log(sigmoid(x))` 可能出现 $\log 0$，工程上写成 $\log\sigma(x)=-\log(1+e^{-x})$，用 `np.logaddexp(0, -x)` 计算。
+
+  - id: FND-NLP-010
+    type: short
+    difficulty: 3
+    frequency: 2
+    points: [Word2Vec与GloVe]
+    tags: [GloVe, 共现矩阵, PMI]
+    question: |
+      请比较 Word2Vec（以 Skip-gram 负采样为例）与 GloVe：两者分别利用了语料中的什么统计信息、优化什么目标？GloVe 目标函数中的加权函数 $f(X_{ij})$ 起什么作用？为什么说两者「本质上都在分解词—上下文共现矩阵」？
+    answer: |
+      1. **Word2Vec（SGNS）**：在语料上滑动窗口，在线地用中心词预测上下文词，目标是让真实（中心词, 上下文词）对的 $\sigma(u_o^\top v_c)$ 变大、随机负例的变小。它不显式统计共现次数，共现信息通过样本的反复出现间接体现。
+      2. **GloVe**：先统计全局共现矩阵 $X$（$X_{ij}$ 为词 $j$ 出现在词 $i$ 窗口内的次数），再用加权最小二乘拟合对数共现：
+         $$J=\sum_{i,j}f(X_{ij})\big(w_i^\top\tilde w_j+b_i+\tilde b_j-\log X_{ij}\big)^2$$
+         动机是共现概率的**比值**承载语义，例如 $P(\text{solid}\mid\text{ice})/P(\text{solid}\mid\text{steam})$ 很大，而对 water 这类与两者都相关的词，比值接近 1。
+      3. **加权函数**：$f(x)=(x/x_{\max})^{\alpha}$（$x<x_{\max}$），否则为 1，论文取 $\alpha=3/4$、$x_{\max}=100$。作用：$X_{ij}=0$ 时权重为 0，既避开 $\log0$，又跳过矩阵中占绝大多数的零元素；罕见共现噪声大，给小权重；极高频共现（如与停用词的共现）权重封顶，防止它们主导损失。
+      4. **本质联系**：Levy 与 Goldberg（2014）证明，SGNS 在最优点上隐式分解的矩阵，元素是 $\mathrm{PMI}(w,c)-\log k$（$k$ 为负例数）；GloVe 显式拟合 $\log X_{ij}$，扣除偏置项后与 PMI 同类。两者都是对共现统计做低秩分解，区别在于加权方式与优化过程（随机梯度在线训练，还是先建矩阵再拟合）。
+      5. **实践**：调好超参数后两者效果相近；GloVe 最终常用 $W+\tilde W$ 作为词向量。两者都是静态词向量，一词一个向量，处理不了多义词，也没有未登录词的向量（fastText 引入字符 n-gram 缓解后者）。
+    rubric:
+      - '说清 Word2Vec 的局部窗口预测目标与负采样（2 分）'
+      - '写出 GloVe 的加权最小二乘目标，并说明共现比值的动机（3 分）'
+      - '说明 f(X) 对零值、罕见共现和高频共现的处理（2 分）'
+      - '指出 SGNS 隐式分解移位 PMI 矩阵，两者本质相通（3 分）'
+    explanation: |
+      **常见失分点**：说「GloVe 是神经网络、Word2Vec 是矩阵分解」（恰好说反了直觉，二者都可以看成矩阵分解）；不知道加权函数为什么要让 $X_{ij}=0$ 的项权重为 0；把 GloVe 说成上下文相关的词向量；只罗列「全局 vs 局部」而讲不出两者的数学联系。
+    source: 'GloVe（Pennington 等, 2014）；Neural Word Embedding as Implicit Matrix Factorization（Levy 与 Goldberg, 2014）'
+
+  - id: FND-NLP-011
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [语言模型与困惑度]
+    tags: [n-gram, 加一平滑, 困惑度]
+    question: |
+      用下面 3 句训练语料估计一个 bigram（二元）语言模型，句首、句尾分别加 `<s>`、`</s>`：
+
+      - `<s> 我 爱 猫 </s>`
+      - `<s> 我 爱 狗 </s>`
+      - `<s> 你 爱 猫 </s>`
+
+      可被预测的词表为 {我, 你, 爱, 猫, 狗, `</s>`}，共 $V=6$ 个（`<s>` 只作为历史，不被预测）。测试句为 `<s> 你 爱 狗 </s>`，困惑度按被预测的 4 个 token（含 `</s>`）计算：$\mathrm{PPL}=P(\text{句子})^{-1/4}$。
+      (1) 用最大似然估计（MLE），测试句的困惑度是多少？
+      (2) 用加一平滑 $P(w\mid h)=\dfrac{c(h,w)+1}{c(h)+V}$，困惑度是多少？
+      (3) 若测试句换成 `<s> 你 爱 我 </s>`，MLE 下会发生什么？
+    answer: '(1) √3 ≈ 1.73；(2) 约 3.97；(3) P(我|爱) = 0，整句概率为 0，困惑度为无穷大'
+    explanation: |
+      **统计**：作为历史的次数 $c(\texttt{<s>})=3$，$c(\text{我})=2$，$c(\text{你})=1$，$c(\text{爱})=3$，$c(\text{狗})=1$；相关的 bigram 次数：$c(\texttt{<s>},\text{你})=1$，$c(\text{你},\text{爱})=1$，$c(\text{爱},\text{狗})=1$，$c(\text{狗},\texttt{</s>})=1$。
+
+      **(1) MLE**：
+      $$P=\frac13\times\frac11\times\frac13\times\frac11=\frac19,\qquad \mathrm{PPL}=9^{1/4}=\sqrt3\approx1.73$$
+
+      **(2) 加一平滑**：
+      $$P=\frac{1+1}{3+6}\times\frac{1+1}{1+6}\times\frac{1+1}{3+6}\times\frac{1+1}{1+6}=\Big(\frac29\Big)^2\Big(\frac27\Big)^2=\frac{16}{3969}$$
+      $$\mathrm{PPL}=\Big(\frac{3969}{16}\Big)^{1/4}=\sqrt{15.75}\approx3.97$$
+
+      **(3)** 训练语料中「爱」后面从未出现「我」，MLE 给出 $P(\text{我}\mid\text{爱})=0$，整句概率为 0，困惑度为无穷大。加一平滑后该项为 $\frac{0+1}{3+6}=\frac19$，可以正常计算。
+
+      **结论**：平滑把一部分概率从见过的事件挪给没见过的事件。对本题这种 bigram 全都见过的测试句，加一平滑反而让困惑度从 1.73 升到 3.97，因为它挪走的概率太多；但它避免了「一个没见过的 bigram 让整句概率归零」。加一平滑过于粗糙，实践中用 Good-Turing、Kneser-Ney 或回退 / 插值等方法。
+
+  - id: FND-NLP-012
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [语言模型与困惑度]
+    tags: [n-gram, 数据稀疏, 神经语言模型]
+    question: |
+      某 n-gram 语言模型的词表大小为 $V=5\times10^4$。下列关于 n-gram 语言模型的说法，正确的是：
+    options:
+      A: 'n 越大利用的上下文越长，所以在万亿词级的语料上，10-gram 以上的模型效果最好，也最常用'
+      B: 'n-gram 模型通过回退（back-off）可以利用任意长的历史，只是计算量会随历史长度线性增长'
+      C: '「猫在睡觉」与「狗在睡觉」在 n-gram 模型中会自动共享统计信息，因为 Kneser-Ney 平滑会把概率分给语义相近的词'
+      D: '三元模型约需估计 $V^3\approx1.25\times10^{14}$ 个条件概率，多数组合从未出现'
+    answer: D
+    explanation: |
+      **结论**：n-gram 的核心矛盾是「上下文越长越准」与「参数指数增长、数据越来越稀疏」之间的冲突。
+
+      n-gram 模型做马尔可夫假设：$P(w_t\mid w_{<t})\approx P(w_t\mid w_{t-n+1},\dots,w_{t-1})$。三元模型有 $V^2$ 种历史，每种历史下有 $V$ 个条件概率，共 $V^3=1.25\times10^{14}$ 个，任何语料都覆盖不了，绝大多数组合的计数为 0，这就是数据稀疏问题，所以必须依靠平滑和回退。
+
+      - A 错：n 越大，参数呈指数增长，绝大多数长 n-gram 只出现一两次甚至没出现过，估计极不可靠。实践中常用 3～5 元。
+      - B 错：马尔可夫假设把历史截断为前 $n-1$ 个词，更早的词完全看不到。回退（back-off）是在高阶统计不足时退到更**短**的历史，而不是利用更长的历史。
+      - C 错：n-gram 把词当作离散符号，「猫」和「狗」毫无关系，学到的统计无法迁移；平滑只是按计数规则把概率分给未见过的组合，不考虑词义（Kneser-Ney 看的也只是一个词出现在多少种不同的上下文中）。Bengio 等（2003）的神经语言模型用词向量（分布式表示）让相似的词共享统计强度，这是神经语言模型相对 n-gram 的根本优势；之后 RNN 语言模型去掉了固定窗口，Transformer 语言模型再解决了并行与长距离依赖的问题。
+
+  - id: FND-NLP-013
+    type: judge
+    difficulty: 3
+    frequency: 1
+    points: [语言模型与困惑度]
+    tags: [Kneser-Ney, 平滑]
+    question: |
+      Kneser-Ney 平滑在回退到低阶分布时，不直接使用词的出现次数，而是使用「这个词跟在多少种不同的词后面出现过」（延续概率）。因此像 Francisco 这样出现次数多、但几乎只跟在 San 后面的词，在没见过的上下文中得到的回退概率，会比按词频估计的低得多。
+    answer: true
+    explanation: |
+      **正确**。
+
+      回退到低阶分布的场景是：当前上下文（如「我去了 ___」）没怎么见过，需要估计某个词出现在一个新上下文里的可能性。这时真正有用的不是词的总频次，而是它能和多少种不同的前文搭配：
+      $$P_{\text{cont}}(w)=\frac{|\{v:\ c(v,w)>0\}|}{|\{(v',w'):\ c(v',w')>0\}|}$$
+
+      Francisco 的总频次可能很高，但几乎只出现在 San 之后，它的「前文种类」只有 1 种，延续概率很低；而 glasses 这类能跟在许多不同词后面的词，延续概率高。用词频回退会高估 Francisco 出现在新上下文中的概率。
+
+      Kneser-Ney 还配合绝对折扣：从每个见过的 n-gram 的计数中减去一个常数 $d$（常取 0.75 左右），把省下的概率按延续概率分给低阶模型。改进版 Modified Kneser-Ney 被认为是 n-gram 时代效果最好的平滑方法，KenLM 等工具包都以它为默认方法。
+
+  - id: FND-NLP-014
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [RNN/LSTM/GRU, Seq2Seq与注意力起源]
+    tags: [Transformer, 并行, 路径长度]
+    question: |
+      《Attention Is All You Need》比较了自注意力层与循环层（序列长度为 $n$，表示维度为 $d$）。下列对比**正确**的是：
+    options:
+      A: '自注意力每层计算量为 $O(nd^2)$、循环层为 $O(n^2d)$，因此序列越长自注意力越省计算，这也是它适合长文本的原因'
+      B: '两者任意两位置之间的最大路径长度都是 $O(n)$，自注意力的优势仅在于顺序操作数为 $O(1)$、训练可以并行'
+      C: '自注意力：每层 $O(n^2d)$、顺序操作 $O(1)$、最大路径 $O(1)$；循环层：$O(nd^2)$、$O(n)$、$O(n)$'
+      D: '自注意力的顺序操作数为 $O(\log n)$、最大路径长度为 $O(\log n)$，介于卷积层与循环层之间'
+    answer: C
+    explanation: |
+      **结论**：自注意力用 $O(n^2d)$ 的计算换来了「完全并行」和「任意两位置一步直达」。
+
+      - **顺序操作数**：RNN 的 $h_t$ 依赖 $h_{t-1}$，训练时必须沿时间串行走 $n$ 步，无法在时间维度并行；自注意力一次矩阵乘就算出所有位置，顺序操作数为 $O(1)$。
+      - **最大路径长度**：RNN 中第 1 个位置的信息要经过 $n$ 次状态更新才能到达第 $n$ 个位置，梯度也要反向穿过同样多的步数，长距离依赖难学；自注意力中任意两个位置直接交互，路径长度为 $O(1)$。
+      - **计算量**：自注意力每层 $O(n^2d)$，循环层 $O(nd^2)$。论文指出，当 $n<d$ 时（当时机器翻译的句子长度通常小于表示维度）自注意力更快。
+
+      - A 错：把两者的计算量写反了；自注意力的 $n^2$ 项恰恰让它在长序列上更费计算。
+      - B 错：自注意力的最大路径长度是 $O(1)$，不是 $O(n)$。
+      - D 错：$O(\log_k n)$ 是空洞卷积的最大路径长度；自注意力的顺序操作数和最大路径长度都是 $O(1)$。
+
+      延伸：序列很长时，$n^2$ 项成为主要开销，这又促使人们回头研究线性注意力、状态空间模型等「类 RNN」结构，希望兼得并行训练与推理时的常数大小状态。
+    source: 'Attention Is All You Need（Vaswani 等, 2017）arXiv:1706.03762，表 1'
+
+  - id: FND-NLP-015
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [RNN/LSTM/GRU, 上下文词表示]
+    tags: [双向LSTM, 语言模型]
+    question: |
+      双向 LSTM 在每个位置同时利用了左右两侧的上下文，表示能力比单向 LSTM 更强，因此也可以直接用作自回归语言模型，从左到右逐词生成文本。
+    answer: false
+    explanation: |
+      **错误**。自回归语言模型要用 $w_{<t}$ 预测 $w_t$，而双向 LSTM 在位置 $t$ 的表示里含有反向 LSTM 从右往左带来的信息，也就是「未来」的词。
+
+      - **训练时**：若用位置 $t$ 的表示预测 $w_{t+1}$，反向 LSTM 早已读过 $w_{t+1}$，答案直接泄露，模型学不到真正的预测能力，损失会低得不正常。
+      - **生成时**：未来的词还不存在，反向部分根本无从计算。
+
+      双向结构适合「整句已知」的任务：序列标注（如 BiLSTM-CRF 做命名实体识别）、文本分类、Seq2Seq 的编码器。ELMo 想要双向信息又要保持语言模型目标，于是分别训练一个前向语言模型和一个后向语言模型，再把两者的表示拼接；BERT 则用 MLM 目标实现了每一层都双向的「深度双向」表示。
+
+  - id: FND-NLP-016
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [RNN/LSTM/GRU]
+    tags: [PyTorch, 双向LSTM]
+    question: |
+      下面的代码构造了一个 2 层、双向、`batch_first=True` 的 LSTM。输出是什么？
+    code: |
+      import torch
+      import torch.nn as nn
+
+      torch.manual_seed(0)
+      lstm = nn.LSTM(input_size=8, hidden_size=16, num_layers=2,
+                     bidirectional=True, batch_first=True)
+      x = torch.randn(4, 10, 8)          # (batch, seq_len, input_size)
+      out, (h_n, c_n) = lstm(x)
+      print(tuple(out.shape))
+      print(tuple(h_n.shape), tuple(c_n.shape))
+      print(torch.allclose(out[:, -1, :16], h_n[-2]), torch.allclose(out[:, 0, 16:], h_n[-1]))
+    answer: |
+      (4, 10, 32)
+      (4, 4, 16) (4, 4, 16)
+      True True
+    explanation: |
+      - **`out`**：最后一层在每个时间步的输出，前向、反向各 16 维拼接，形状 `(batch, seq_len, 2×hidden)` = `(4, 10, 32)`。
+      - **`h_n`、`c_n`**：每一层、每个方向的最终状态，形状 `(num_layers×2, batch, hidden)` = `(4, 4, 16)`。注意 `batch_first=True` **只影响输入和 `out`**，`h_n` 的第 0 维仍是「层 × 方向」。排列顺序为：第 0 层前向、第 0 层反向、第 1 层前向、第 1 层反向。
+      - **第三行**：`h_n[-2]` 是最后一层前向的最终状态，等于 `out` 在**最后一个时间步**的前 16 维；`h_n[-1]` 是最后一层反向的最终状态，反向是从右往左读的，所以它等于 `out` 在**第 0 个时间步**的后 16 维。两个都是 `True`。
+
+      常见 bug：用 `out[:, -1, :]` 作为双向 LSTM 的整句表示。它的反向部分只读过最后一个 token，信息很少。正确做法是拼接 `h_n[-2]` 与 `h_n[-1]`，或对 `out` 做池化。变长序列在 padding 之后还要配合 `pack_padded_sequence`，否则「最后一个时间步」可能落在 padding 上。
+
+  - id: FND-NLP-017
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [RNN/LSTM/GRU, Seq2Seq与注意力起源]
+    tags: [Transformer, RNN, 线性注意力]
+    question: |
+      为什么 Transformer 取代了 RNN / LSTM，成为 NLP 的主流架构？请从训练并行性、长距离依赖、可扩展性等角度分析。RNN 在哪些方面仍有优势？近年有哪些研究在重新利用这些优势？
+    answer: |
+      1. **训练并行**：RNN 的 $h_t$ 依赖 $h_{t-1}$，训练时只能沿时间串行计算，GPU 利用率低；Transformer 借助因果掩码与教师强制，一次前向就算出所有位置，能高效利用大规模并行硬件，在同样的时间里训练更多数据。
+      2. **长距离依赖**：RNN 中远处的信息要经过 $O(n)$ 次状态更新才能传到当前位置，梯度也要反向穿过同样多步；LSTM 的门控缓解了梯度消失，但全部历史仍要压缩进一个固定大小的隐状态，形成信息瓶颈。自注意力让任意两个位置直接交互（路径长度 $O(1)$），能按内容精确取回很远处的信息。
+      3. **可扩展性**：Transformer 结构规整，加深加宽、加数据都能稳定地带来收益（缩放律），并行训练框架和算子生态也围绕它建立；LSTM 难以堆得很深，规模扩大后收益递减。
+      4. **Transformer 的代价**：注意力计算量随长度平方增长；推理时 KV Cache 随上下文线性增长，每生成一个 token 都要读取全部历史。
+      5. **RNN 仍有的优势**：推理时每步计算量与历史长度无关，状态大小固定，天然适合流式处理、超长序列和资源受限的端侧设备。
+      6. **重新利用**：线性注意力（可以写成 RNN 形式）、RWKV、RetNet、Mamba 等状态空间模型，目标是「训练时像 Transformer 一样并行（并行扫描或分块计算），推理时像 RNN 一样常数状态」；业界常把它们与少量全注意力层组成混合架构（如 Jamba、Qwen3-Next），兼顾效率与精确检索能力。
+    rubric:
+      - '说明 RNN 时间维串行、Transformer 可并行训练（3 分）'
+      - '用路径长度或固定隐状态瓶颈解释长距离依赖的差异（3 分）'
+      - '说明可扩展性以及 Transformer 的平方复杂度、KV Cache 代价（2 分）'
+      - '指出 RNN 推理常数状态的优势，并举出线性注意力 / SSM 等新架构（2 分）'
+    explanation: |
+      **常见失分点**：只说「Transformer 有注意力所以更好」，讲不出并行性和路径长度；以为 LSTM 彻底解决了长距离依赖（门控缓解了梯度消失，但没有消除固定状态的容量限制）；忽略 Transformer 的平方复杂度与 KV Cache 代价，答不出 RNN 类结构为什么又重新受到关注。
+
+  - id: FND-NLP-018
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [Seq2Seq与注意力起源]
+    tags: [Bahdanau, 机器翻译]
+    question: |
+      2014 年的 RNN 编码器—解码器（Seq2Seq）翻译模型，把整个源句编码成一个固定长度的向量，再交给解码器生成译文。Bahdanau 等提出注意力机制，主要想解决的问题是：
+    options:
+      A: '固定长度的向量要装下整个源句，句子越长信息损失越严重，长句翻译质量明显下降'
+      B: '解码器只能逐词串行生成，长句翻译太慢；注意力让解码器可以一次并行输出整句译文'
+      C: '目标语言词表太大，输出层 Softmax 计算量过高，注意力只对少数候选词计算概率'
+      D: '编码器是单向 RNN，只能看到左侧上下文；注意力让每个位置也能利用右侧的信息'
+    answer: A
+    explanation: |
+      **结论**：注意力机制最初是为了打破「固定长度向量」这一信息瓶颈。
+
+      Bahdanau 等（2014）的论文《Neural Machine Translation by Jointly Learning to Align and Translate》指出，把任意长的源句压成一个固定长度的向量是性能瓶颈，长句的翻译质量明显下降。他们的做法是：解码器每生成一个词，都对编码器**所有位置**的隐状态计算一组权重，加权求和得到当前步专属的上下文向量 $c_i$。解码器不必再依赖一个向量记住全句，需要哪部分就「看」哪部分；权重矩阵还可以可视化为源词与目标词之间的软对齐。
+
+      - B 错：加注意力之后解码器仍是 RNN，仍要逐词串行生成；训练时的并行化要到 Transformer 才实现。
+      - C 错：大词表 Softmax 的开销靠采样近似（如 Jean 等, 2015）和子词切分（BPE）等方法缓解，与注意力无关；注意力的权重分布在源句位置上，而不是目标词表上。
+      - D 错：Bahdanau 的编码器本身就是双向 RNN，每个位置的表示同时包含左右上下文；双向编码是一个设计选择，不是注意力要解决的问题。
+    source: 'Neural Machine Translation by Jointly Learning to Align and Translate（Bahdanau 等, 2014）arXiv:1409.0473'
+
+  - id: FND-NLP-019
+    type: code_fill
+    difficulty: 2
+    frequency: 2
+    points: [Seq2Seq与注意力起源]
+    tags: [Bahdanau, 加性注意力, 手撕]
+    question: |
+      补全 Bahdanau 加性注意力：用解码器上一时刻的隐状态 $s$ 与编码器各位置的隐状态 $h_j$ 计算打分 $e_j=v^\top\tanh(Ws+Uh_j)$，对 $e$ 做 Softmax 得到权重 $\alpha$，再求上下文向量 $c=\sum_j\alpha_jh_j$。要求向量化实现，不对源位置做 Python 循环。
+    code: |
+      import numpy as np
+
+      def additive_attention(s, H, W, U, v):
+          """s: (d_s,) 解码器上一时刻的隐状态；H: (T, d_h) 编码器各位置的隐状态
+          W: (d_a, d_s)，U: (d_a, d_h)，v: (d_a,)；返回 (context, alpha)"""
+          e = np.tanh(____) @ v                  # (T,) 每个源位置的打分
+          e = e - e.max()
+          alpha = np.exp(e) / np.exp(e).sum()
+          context = ____                         # (d_h,)
+          return context, alpha
+    answer: ['H @ U.T + W @ s', 'alpha @ H']
+    test: |
+      rng = np.random.default_rng(0)
+      T, d_s, d_h, d_a = 5, 3, 4, 6
+      s, H = rng.normal(size=d_s), rng.normal(size=(T, d_h))
+      W, U, v = rng.normal(size=(d_a, d_s)), rng.normal(size=(d_a, d_h)), rng.normal(size=d_a)
+      ctx, alpha = additive_attention(s, H, W, U, v)
+      ref_e = np.array([v @ np.tanh(W @ s + U @ H[j]) for j in range(T)])
+      ref_a = np.exp(ref_e) / np.exp(ref_e).sum()
+      assert np.allclose(alpha, ref_a) and np.isclose(alpha.sum(), 1.0)
+      assert np.allclose(ctx, sum(ref_a[j] * H[j] for j in range(T)))
+      assert ctx.shape == (d_h,)
+    explanation: |
+      **答案**：`H @ U.T + W @ s` 与 `alpha @ H`。
+
+      - `H @ U.T` 的形状是 `(T, d_a)`，即每个源位置的 $Uh_j$；`W @ s` 的形状是 `(d_a,)`，广播加到每一行上，过 tanh 后乘 $v$，得到 `(T,)` 的打分。
+      - `alpha @ H` 即 $\sum_j\alpha_jh_j$，形状 `(d_h,)`。
+
+      **工程细节**：同一句话的 $Uh_j$ 与解码步无关，可以在解码开始前一次算好缓存起来，每步只需计算 $Ws$。加性打分要经过一个带 tanh 的小网络；乘性（点积）打分直接做矩阵乘，速度更快。Transformer 论文提到，不缩放时，$d_k$ 较大的情况下加性注意力的效果好于点积注意力，这也是缩放点积注意力要除以 $\sqrt{d_k}$ 的原因之一。
+
+  - id: FND-NLP-020
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [Seq2Seq与注意力起源]
+    tags: [Bahdanau, Luong]
+    question: |
+      关于 Bahdanau 注意力（2014）与 Luong 注意力（2015），下列说法**正确**的有：
+    options:
+      A: 'Bahdanau 用解码器上一时刻的隐状态 $s_{i-1}$ 算注意力；Luong 先算出当前隐状态 $h_t$，再用它算注意力'
+      B: '注意力机制最早是为了降低 Transformer 的计算复杂度而提出的，后来才被移植到 RNN 翻译模型中'
+      C: 'Bahdanau 用单隐层前馈网络计算加性打分；Luong 提出了点积、general 等乘性打分方式'
+      D: 'Luong 还提出了「局部注意力」：每步只关注源句中以某个预测位置为中心的窗口，与「全局注意力」相对'
+      E: 'Transformer 的缩放点积注意力属于加性注意力，除以 $\sqrt{d_k}$ 是为了模拟 tanh 的饱和效果'
+    answer: [A, C, D]
+    explanation: |
+      **结论**：A、C、D 正确。
+
+      - A 对：两者的计算路径不同。Bahdanau：$s_{i-1}\to\alpha\to c_i\to s_i$，注意力结果参与本步隐状态的更新；Luong：$h_t\to\alpha\to c_t\to\tilde h_t=\tanh(W_c[c_t;h_t])$，用注意力结果修饰已算出的隐状态，再用 $\tilde h_t$ 预测输出。
+      - B 错：注意力诞生于 2014 年的 RNN 机器翻译，比 Transformer（2017）早了三年；Transformer 的贡献是完全去掉循环结构，只用注意力搭建模型。
+      - C 对：Bahdanau 的对齐模型是一个单隐层前馈网络，打分 $v^\top\tanh(Ws_{i-1}+Uh_j)$ 是加性的；Luong 等（2015）比较了 dot、general（$h_t^\top W_ah_s$）、concat 三种打分函数，前两种是乘性的。
+      - D 对：局部注意力先预测一个对齐位置，只在其附近窗口内计算注意力，计算量更小。
+      - E 错：缩放点积注意力是乘性注意力。除以 $\sqrt{d_k}$ 是因为点积的方差随 $d_k$ 增大，会让 Softmax 饱和、梯度变小，与 tanh 无关。
+    source: 'Bahdanau 等 arXiv:1409.0473；Effective Approaches to Attention-based Neural Machine Translation（Luong 等, 2015）arXiv:1508.04025'
+
+  - id: FND-NLP-021
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [上下文词表示]
+    tags: [ELMo, 特征提取]
+    question: |
+      ELMo 在下游任务中使用预训练双向语言模型（biLM）表示的方式是：
+    options:
+      A: '只取 biLM 最顶层 LSTM 的输出作为词表示，底层表示在预训练后丢弃，以免引入句法噪声'
+      B: '把 biLM 的全部参数与下游任务一起端到端微调，并在顶层接一个 [CLS] 分类头输出预测'
+      C: '把每个词在大量句子中的 ELMo 向量取平均，得到一张固定的词向量表，再像 Word2Vec 一样查表使用'
+      D: '对字符 CNN 层和各层 biLSTM 的输出做 softmax 加权求和再乘以 γ，权重由下游任务学习，biLM 通常冻结'
+    answer: D
+    explanation: |
+      **结论**：ELMo 是「特征提取式」用法，取各层表示的可学习加权和。
+
+      $$\mathrm{ELMo}_k^{task}=\gamma^{task}\sum_{j=0}^{L}s_j^{task}\,h_{k,j}^{LM}$$
+
+      其中 $j=0$ 是字符 CNN 得到的上下文无关表示，$j=1,\dots,L$（论文中 $L=2$）是各层 biLSTM 的输出（前向、后向拼接）；$s^{task}$ 经 softmax 归一化，$\gamma^{task}$ 调整整体尺度。论文发现不同层侧重不同：低层 biLSTM 的表示更适合词性标注这类句法任务，高层更适合词义消歧这类语义任务，所以让下游任务自己学怎么组合。ELMo 向量通常与原有的词向量拼接后送入下游模型。
+
+      - A 错：只用顶层会丢掉低层的句法信息，论文的消融显示加权组合各层效果更好。
+      - B 错：这是 BERT、GPT 的微调范式（[CLS] 分类头也是 BERT 的做法）。ELMo 一般冻结 biLM，只训练层权重和下游模型。
+      - C 错：取平均就退化成了静态词向量，丢掉了「同一个词在不同句子中表示不同」这一核心优势。
+    source: 'Deep contextualized word representations（Peters 等, 2018）arXiv:1802.05365'
+
+  - id: FND-NLP-022
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [上下文词表示, Word2Vec与GloVe]
+    source: 'Mikolov 等, Efficient Estimation of Word Representations in Vector Space, arXiv:1301.3781；Pennington 等, GloVe（EMNLP 2014）；Peters 等, Deep Contextualized Word Representations（ELMo）, arXiv:1802.05365；Radford 等, Improving Language Understanding by Generative Pre-Training（OpenAI, 2018）；Devlin 等, BERT, arXiv:1810.04805'
+    tags: [静态词向量, ELMo, BERT, 多义词]
+    question: |
+      什么是「静态词向量」与「上下文相关的词表示」？请以多义词为例说明两者的区别，并梳理从 Word2Vec 到 ELMo、再到 GPT / BERT 的演进：每一步解决了什么问题？预训练得到的表示在下游任务中分别是怎样被使用的？
+    answer: |
+      1. **静态词向量**（Word2Vec、GloVe）：每个词只有一个向量，与所在句子无关。例如「苹果」在「吃苹果」和「苹果发布会」中是同一个向量，它是各个义项按出现频率混合的结果，偏向高频义项。
+      2. **上下文相关的表示**：词的表示是整句的函数，由预训练的深层模型实时计算，同一个词的每次出现都有不同的向量，能区分义项和句法角色。
+      3. **演进**：
+         - Word2Vec / GloVe（2013—2014）：引入稠密的分布式表示，相似的词向量相近；下游用来初始化词嵌入层，任务模型（如 LSTM、CNN）基本从零训练。
+         - ELMo（2018）：用双向 LSTM 语言模型产生上下文相关表示，组合多层表示；以冻结特征的方式接入下游，在多项任务上大幅提升。局限：前向、后向两个 LSTM 参数独立，各自只看单侧上下文（两者的对数似然相加、联合训练），表示再拼接，属于「浅层双向」；LSTM 难以扩展。
+         - GPT（2018）：Transformer 解码器做语言模型预训练，下游**微调整个模型**，只加很少的任务参数；但每个位置只能看到左侧上下文。
+         - BERT（2018）：用 MLM 实现每一层都双向的深度表示，配合 [CLS] 或 token 级输出头微调，在理解类任务上全面领先。
+      4. **使用范式的变化**：查表初始化 → 特征提取（ELMo）→ 整体微调（GPT、BERT）→ 之后的大模型进一步走向提示与上下文学习，很多任务不再需要微调。
+    rubric:
+      - '准确区分静态与上下文相关表示，并用多义词举例（3 分）'
+      - '说明 Word2Vec 到 ELMo 的改进及 ELMo 的局限（3 分）'
+      - '说明 GPT、BERT 的做法与区别（2 分）'
+      - '说明查表、特征提取、微调、提示等使用范式的变化（2 分）'
+    explanation: |
+      **常见失分点**：认为 Word2Vec 能区分多义词；把 ELMo 说成 Transformer 模型；说 ELMo 和 BERT 一样是深度双向（ELMo 是两个单向语言模型的拼接）；只列模型名，不讲每一步解决的问题和下游使用方式的变化。
+
+  - id: FND-NLP-023
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [BERT预训练目标]
+    tags: [BERT, MLM]
+    question: |
+      BERT 的 MLM 随机选择 15% 的 token 作为预测目标；对被选中的 token，80% 替换为 [MASK]，10% 替换为随机 token，10% 保持不变。这样设计的最主要原因是：
+    options:
+      A: '随机替换相当于一种数据增强，主要目的是让模型学会发现并纠正输入中的拼写错误和错别字，提升对噪声文本的鲁棒性'
+      B: '保持不变的那 10% 不计算损失，实际只对约 13.5% 的 token 做预测，可以节省预训练的计算量'
+      C: '微调时没有 [MASK]，混入随机词与原词可缓解两阶段的不一致，迫使模型为每个 token 都保留好的表示'
+      D: '这样设计让模型在推理时能同时预测多个被遮位置，从而直接并行生成整段文本，不再需要逐词自回归解码'
+    answer: C
+    explanation: |
+      **结论**：80/10/10 是为了缓解「预训练见过 [MASK]、微调从未见过」的不一致。
+
+      如果被选中的位置一律换成 [MASK]，模型只需在看到 [MASK] 时才认真做预测，对普通 token 的表示可能「偷懒」，而微调时的输入里根本没有 [MASK]。混入 10% 随机替换和 10% 保持原词后，模型不知道哪些位置被换过、哪些是原词，只能对每个 token 都结合上下文给出好的表示。随机替换只占全部 token 的 $15\%\times10\%=1.5\%$，论文认为不会损害语言理解能力。BERT 论文附录的消融实验比较了多种替换比例：微调对不同策略相当稳健；但只用 [MASK] 时，以特征提取方式做命名实体识别的效果明显变差（开发集 F1 从 94.9 降到 94.0），只用随机替换也明显更差。
+
+      - A 错：随机替换不是为了纠错或提升对噪声文本的鲁棒性，目的是让模型无法仅凭「这里是 [MASK]」来决定何时认真预测。
+      - B 错：被选中的 15% 位置（包括保持不变的那部分）**都**计算损失；不被选中的 85% 不计算。
+      - D 错：MLM 只预测被遮住的位置，BERT 不能直接用于高质量的文本生成。
+    source: 'BERT 论文 arXiv:1810.04805（3.1 节与附录 C.2）'
+
+  - id: FND-NLP-024
+    type: multiple
+    difficulty: 3
+    frequency: 3
+    points: [BERT预训练目标]
+    tags: [BERT, NSP, RoBERTa, ALBERT]
+    question: |
+      关于 BERT 的下一句预测（NSP）任务及其后续演变，下列说法**正确**的有：
+    options:
+      A: 'BERT 原论文的消融实验显示，去掉 NSP 后 QNLI、MNLI、SQuAD 等任务的效果明显下降'
+      B: 'ALBERT 认为 NSP 太容易，模型靠判断主题就能答对，于是改用句子顺序预测（SOP）'
+      C: 'NSP 被后续模型放弃，主要是因为句对标签需要额外的人工标注，构造大规模语料的成本太高'
+      D: 'NSP 的负例是同一文档中两个相邻句子交换顺序后得到的句子对，正负例各占一半'
+      E: 'RoBERTa 发现去掉 NSP、改用连续的完整句子作为输入后，下游效果持平或略有提升'
+    answer: [A, B, E]
+    explanation: |
+      **结论**：A、B、E 正确。
+
+      - A 对：BERT 论文 5.1 节的消融中，去掉 NSP 损害了 QNLI、MNLI 和 SQuAD 1.1 的效果。
+      - B 对：随机抽取的句子大概率主题不同，NSP 混淆了「主题预测」和「连贯性预测」，前者太简单。SOP 的正负例来自同一文档、主题相同，模型只能靠语篇连贯性判断顺序。
+      - C 错：NSP 与 MLM 一样是自监督任务，「是否相邻」的标签由语料自动构造，不需要人工标注。
+      - D 错：NSP 的负例是从语料中**随机抽取**的另一个句子，正负例各占 50%。「同一文档相邻两句交换顺序」是 ALBERT 的 SOP 负例。
+      - E 对：RoBERTa 认为 BERT 的消融只去掉了 NSP 损失，仍保留了「两个片段拼接」的输入格式；改为从文档中连续采样完整句子、填满 512 个 token 后，不用 NSP 反而持平或更好。两篇论文结论的差异，来自输入格式不同。
+    source: 'BERT arXiv:1810.04805；RoBERTa arXiv:1907.11692；ALBERT arXiv:1909.11942'
+
+  - id: FND-NLP-025
+    type: judge
+    difficulty: 3
+    frequency: 1
+    points: [BERT预训练目标, GPT与自回归建模]
+    tags: [XLNet, MLM, 独立性假设]
+    question: |
+      XLNet 指出：BERT 的 MLM 在预测同一个序列中多个被遮住的 token 时，隐含地假设它们在给定未遮盖部分的条件下彼此独立。例如「[MASK] [MASK] is a city」中两个位置分别是 New 和 York，MLM 把它们分开预测，无法建模二者之间的依赖。
+    answer: true
+    explanation: |
+      **正确**。MLM 的目标是
+      $$\sum_{t\in\mathcal{M}}\log p(x_t\mid x_{\setminus\mathcal{M}})$$
+      每个被遮住的位置只以未遮盖的 token 为条件，各自独立预测。对「New York」这样相互依赖的片段，模型可能分别给出「New」和「Los」等各自合理、合起来却矛盾的结果。自回归语言模型用链式法则 $p(x)=\prod_tp(x_t\mid x_{<t})$ 分解联合概率，没有这个独立性假设，但每个位置只能利用单侧上下文。
+
+      XLNet（Yang 等, 2019）提出排列语言模型：对因子分解顺序做随机排列，仍用自回归的方式建模，既能利用双向上下文，又避免了独立性假设和 [MASK] 带来的预训练—微调不一致，「New York is a city」正是论文中的例子。
+
+      延伸：这也是 MLM 不适合一次性并行生成多个 token 的原因。掩码扩散语言模型通过多步迭代、每步只揭开一部分 token，来缓解同时预测多个相互依赖的位置时的不一致问题。
+    source: 'XLNet: Generalized Autoregressive Pretraining for Language Understanding arXiv:1906.08237'
+
+  - id: FND-NLP-026
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [BERT预训练目标, GPT与自回归建模]
+    tags: [MLM, CLM, 预训练目标]
+    question: |
+      掩码语言模型（MLM，如 BERT）与因果语言模型（CLM，如 GPT）的训练目标有什么不同？各自更适合什么任务，为什么？如果用 BERT 做长文本生成、用 GPT 类模型做句子分类，分别会遇到什么问题，可以怎么处理？
+    answer: |
+      1. **训练目标**：
+         - MLM：随机遮盖约 15% 的 token，利用双向上下文预测被遮盖的位置，只有这些位置计算损失；
+         - CLM：按链式法则 $p(x)=\prod_tp(x_t\mid x_{<t})$ 建模，因果掩码保证每个位置只看左侧，每个位置都预测下一个 token。
+      2. **适合的任务**：
+         - MLM 的每个 token 表示都融合了左右两侧的信息，适合分类、序列标注、抽取式问答、句向量与检索等理解类任务；
+         - CLM 的训练方式就是使用方式（续写），天然适合生成、对话；能精确计算序列概率；推理时可用 KV Cache；规模足够大时出现上下文学习能力。
+      3. **用 BERT 做生成**：没有从左到右的概率分解，无法直接逐词采样；只能用「迭代填空」式的非自回归解码（每轮预测全部 [MASK]，保留高置信度的结果，再遮住其余位置重来），长文本的连贯性差、长度也要预先确定。常见替代方案：把 BERT 作为编码器接一个解码器，或改用 UniLM 这类通过不同注意力掩码同时支持理解与生成的模型。
+      4. **用 GPT 类模型做分类**：每个位置只能看到左侧，可以取最后一个 token 的表示接分类头微调（GPT-1 的做法），也可以把类别写成文字，比较各个标签的条件概率，或直接用指令让模型输出类别。大模型在指令遵循下分类效果很好，但同等规模下推理成本更高；做句向量时，单向注意力需要特殊处理（如取最后一个 token、改造注意力掩码后再训练）。
+      5. **训练信号密度**：CLM 每个位置都有监督信号，MLM 只有约 15% 的位置有；ELECTRA 用替换 token 检测让所有位置都参与损失。
+    rubric:
+      - '准确说明两种目标的形式与损失位置（3 分）'
+      - '说明各自适合的任务及原因（3 分）'
+      - '指出 BERT 做生成的困难与可行做法（2 分）'
+      - '给出 GPT 类模型做分类的方法与代价（2 分）'
+    explanation: |
+      **常见失分点**：把 MLM 说成「预测下一个词」；认为 GPT 完全不能做理解类任务；只说「BERT 双向、GPT 单向」，讲不出这对生成和分类的具体影响；不知道 BERT 生成可以用迭代填空，也不知道它的局限。
+
+  - id: FND-NLP-027
+    type: single
+    difficulty: 2
+    frequency: 1
+    points: [BERT预训练目标]
+    tags: [ELECTRA, 替换token检测]
+    question: |
+      ELECTRA 用「替换 token 检测」代替 MLM：一个小型生成器先把部分 token 替换成看似合理的候选词，判别器再对**每个** token 判断它是否被替换过。相对于 MLM，ELECTRA 的主要优势是：
+    options:
+      A: '训练信号来自输入的全部 token，而不只是被遮盖的约 15%，相同算力下学得更快'
+      B: '判别器在预训练中学会了区分真假 token，可以直接用来生成文本，不再需要单独的解码器'
+      C: '生成器与判别器以 GAN 的方式对抗训练，生成器努力骗过判别器，因而能产生更难的负例'
+      D: '它不需要大规模未标注语料：生成器自动构造替换样本，只用少量标注数据就能完成预训练'
+    answer: A
+    explanation: |
+      **结论**：ELECTRA 的核心收益是样本效率。
+
+      MLM 每条样本只有被遮盖的约 15% 的位置产生损失，其余 85% 的计算「浪费」了。ELECTRA 的判别器对每个位置做二分类（原词还是被替换），所有位置都提供训练信号。论文报告：在单张 GPU 上训练 4 天的小模型，在 GLUE 上超过了 GPT（后者的训练算力约为它的 30 倍）；大模型用不到 RoBERTa、XLNet 四分之一的算力就能达到相当的效果。判别器的输入里也没有 [MASK]，缓解了预训练与微调的不一致。
+
+      - B 错：判别器只做「是否被替换」的二分类，没有学过预测词表上的分布，不能生成文本；预训练后丢弃生成器，只微调判别器。
+      - C 错：生成器用普通的 MLM 极大似然训练，并不以骗过判别器为目标。论文指出，对抗式训练（需要通过离散采样传递梯度）效果反而更差。
+      - D 错：ELECTRA 仍是在大规模未标注语料上的自监督预训练，生成器构造的替换样本也来自这些语料。
+    source: 'ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators arXiv:2003.10555'
+
+  - id: FND-NLP-028
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [Word2Vec与GloVe]
+    tags: [层次Softmax, 高频词下采样, 词类比]
+    question: |
+      下列关于 Word2Vec 训练与评测的说法，**正确**的有：
+    options:
+      A: '用 king − man + woman 做词类比时，不需要把 king、man、woman 三个输入词排除在候选之外，结果最近的向量通常就是 queen'
+      B: '层次 Softmax 用一棵按词频构建的 Huffman 二叉树代替扁平 Softmax，预测一个词的代价从 $O(|V|)$ 降到约 $O(\log_2|V|)$'
+      C: '窗口越大，学到的相似性越偏向主题上的相关（如「医生」与「医院」）；窗口越小，越偏向可以互相替换的功能或句法上的相似'
+      D: '负采样的负例数 $K$ 越大越好，所以一般取与词表大小同一量级，以尽量逼近完整 Softmax 的梯度'
+      E: '高频词下采样以一定概率丢弃训练语料中的高频词，既能加快训练，也能提升低频词的表示质量'
+    answer: [B, C, E]
+    explanation: |
+      **结论**：B、C、E 正确。
+
+      - A 错：常见的类比评测会把三个输入词排除在候选之外。不排除时，离 king − man + woman 最近的往往就是 king 本身。这提醒我们，「词向量能做类比」的效果有一部分来自评测设置。
+      - B 对：每个词对应 Huffman 树的一个叶子，预测概率是从根到叶子路径上一串二分类概率的乘积，路径长度约为 $\log_2|V|$；高频词路径更短，进一步省计算。
+      - C 对：大窗口让共现更多反映「出现在同一话题里」，小窗口让共现更多反映「出现在相同的句法位置」，这是选择窗口大小时的经验规律。
+      - D 错：原论文建议，小数据集上 $K$ 取 5～20，大数据集上取 2～5 即可；$K$ 越大计算越慢，收益递减。负采样的意义正是只用少量负例代替全词表 Softmax。
+      - E 对：高频词（如「的」「the」）出现次数极多，信息量却少，以 $1-\sqrt{t/f(w)}$ 的概率丢弃它们，可以减少大量冗余样本，也让低频词在训练中占比相对提高。
+    source: 'Mikolov 等 arXiv:1310.4546；Dependency-Based Word Embeddings（Levy 与 Goldberg, 2014）；Fair is Better than Sensational（Nissim 等, 2020）'
+
+  - id: FND-NLP-029
+    type: single
+    difficulty: 2
+    frequency: 1
+    points: [GPT与自回归建模]
+    tags: [GPT-1, 微调, 输入变换]
+    question: |
+      GPT-1 采用「生成式预训练 + 判别式微调」，微调时尽量不改模型结构，而是把结构化输入改写成 token 序列。对于多项选择问答（给定文档 $z$、问题 $q$ 和若干候选答案 $\{a_k\}$），它的做法是：
+    options:
+      A: '把文档、问题和全部候选答案拼成一条长序列，用末尾 token 的表示经线性层直接输出正确答案的编号'
+      B: '每个候选分别拼成 [z; q; 分隔符; a_k] 独立编码，末位表示经线性层打分后对所有候选做 Softmax'
+      C: '只把问题和候选答案送入模型，文档部分另用一个单独训练的双向编码器（如 BERT）编码，再作为额外特征拼接'
+      D: '让模型在 [z; q] 之后从左到右生成答案文本，再与各个候选答案做字符串匹配，选出最接近的一个'
+    answer: B
+    explanation: |
+      **结论**：GPT-1 的思路是「输入变换」：把各种任务都改写成单向语言模型能处理的序列，只新增一个线性输出层和分隔符等少量参数。
+
+      论文中的几种变换：
+      - **分类**：直接输入文本；
+      - **蕴含**：[前提; 分隔符; 假设]；
+      - **相似度**：两句没有先后之分，于是两种顺序各算一遍，把两个表示逐元素相加后再接输出层；
+      - **问答 / 多项选择**：每个候选分别构造 [z; q; 分隔符; a_k]，独立计算后对候选做 Softmax。
+
+      所有序列首尾都加起止标记，用最后一个 token 的表示做预测，因为在单向模型里只有它看过了整个输入。
+
+      - A 错：把多个候选塞进一条序列，候选之间会互相干扰，也无法直接「输出编号」。
+      - C 错：GPT-1 早于 BERT，也不依赖外部编码器。
+      - D 错：生成后再做字符串匹配更接近后来 GPT-2 / GPT-3 的零样本、少样本用法；GPT-1 仍要对每个任务做有监督微调。
+    source: 'Improving Language Understanding by Generative Pre-Training（Radford 等, 2018）'
+
+  - id: FND-NLP-030
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [GPT与自回归建模]
+    tags: [GPT-1, 辅助目标]
+    question: |
+      GPT-1 在下游任务微调时，除了任务本身的监督损失，还把语言模型损失作为辅助目标一起优化（权重 λ = 0.5）；论文认为这有助于提升泛化、加快收敛，并且消融实验显示这一收益在较大的数据集上更明显。
+    answer: true
+    explanation: |
+      **正确**。GPT-1 微调时的目标是 $L_3=L_2(\mathcal{C})+\lambda L_1(\mathcal{C})$，其中 $L_2$ 是任务损失，$L_1$ 是在同一批任务文本上的语言模型损失，$\lambda=0.5$。论文认为辅助语言模型目标能（a）提升监督模型的泛化，（b）加快收敛。消融实验中，去掉辅助目标后，较大的数据集（如 MNLI、QQP）效果下降，较小的数据集则没有受益。
+
+      背后的直觉：继续做语言建模能在一定程度上保住预训练学到的通用知识，减少微调对表示的破坏，与后来指令微调中「混入预训练数据」、InstructGPT 的 PPO-ptx 防止「对齐税」的思路一脉相承。BERT 之后的微调实践大多不再加这个辅助项。
+    source: 'Improving Language Understanding by Generative Pre-Training（Radford 等, 2018）'
+
+  - id: FND-NLP-031
+    type: coding
+    difficulty: 2
+    frequency: 2
+    points: [编码器-解码器模型]
+    tags: [T5, 片段破坏, 手撕]
+    question: |
+      实现 T5 的片段破坏（span corruption）样本构造：
+
+      ```python
+      def span_corrupt(tokens: list[str], spans: list[tuple[int, int]]) -> tuple[list[str], list[str]]: ...
+      ```
+
+      - `spans` 中每个元素是要遮盖的左闭右开区间 `(start, end)`，互不重叠，但可能乱序给出；首尾相接的两个区间（前一个的 `end` 等于后一个的 `start`）视为同一个片段；
+      - 按片段在原文中的先后顺序，第 $i$ 个片段在输入中替换为一个哨兵 token `<extra_id_i>`；
+      - 目标序列依次为「哨兵 + 该片段的原 token」，最后再追加一个 `<extra_id_n>`（$n$ 为片段数）作为结束；
+      - 返回 `(输入序列, 目标序列)`。例如 `Thank you for inviting me to your party last week .` 遮盖 `for inviting` 与 `last`，输入为 `Thank you <extra_id_0> me to your party <extra_id_1> week .`，目标为 `<extra_id_0> for inviting <extra_id_1> last <extra_id_2>`。
+    answer: |
+      def span_corrupt(tokens, spans):
+          merged = []
+          for s, e in sorted(spans):
+              if merged and s == merged[-1][1]:     # 与上一个片段首尾相接，合并
+                  merged[-1][1] = e
+              else:
+                  merged.append([s, e])
+          inp, tgt, prev = [], [], 0
+          for i, (s, e) in enumerate(merged):
+              sentinel = f"<extra_id_{i}>"
+              inp += tokens[prev:s] + [sentinel]
+              tgt += [sentinel] + tokens[s:e]
+              prev = e
+          inp += tokens[prev:]
+          tgt.append(f"<extra_id_{len(merged)}>")
+          return inp, tgt
+    test: |
+      toks = "Thank you for inviting me to your party last week .".split()
+      inp, tgt = span_corrupt(toks, [(8, 9), (2, 4)])          # 乱序给出
+      assert inp == "Thank you <extra_id_0> me to your party <extra_id_1> week .".split()
+      assert tgt == "<extra_id_0> for inviting <extra_id_1> last <extra_id_2>".split()
+
+      # 首尾相接的片段合并成一个，只用一个哨兵
+      inp, tgt = span_corrupt(list("abcdef"), [(1, 2), (2, 4)])
+      assert inp == ["a", "<extra_id_0>", "e", "f"]
+      assert tgt == ["<extra_id_0>", "b", "c", "d", "<extra_id_1>"]
+
+      # 片段位于开头和结尾
+      inp, tgt = span_corrupt(list("abcde"), [(0, 1), (4, 5)])
+      assert inp == ["<extra_id_0>", "b", "c", "d", "<extra_id_1>"]
+      assert tgt == ["<extra_id_0>", "a", "<extra_id_1>", "e", "<extra_id_2>"]
+
+      # 没有片段：输入不变，目标只有一个结束哨兵
+      assert span_corrupt(list("ab"), []) == (["a", "b"], ["<extra_id_0>"])
+
+      # 每个原始 token 恰好出现一次：要么留在输入里，要么进入目标
+      inp, tgt = span_corrupt(list("abcdefgh"), [(5, 7), (1, 3)])
+      kept = [t for t in inp + tgt if not t.startswith("<extra_id_")]
+      assert sorted(kept) == list("abcdefgh")
+    explanation: |
+      **思路**：先排序并合并首尾相接的区间，再一次遍历：区间之前的原文放进输入，区间本身换成哨兵；目标里写「哨兵 + 被遮盖的原文」，最后补一个结束哨兵。
+
+      **为什么这样设计**：
+      - 目标序列只包含被遮盖的片段。T5 默认破坏 15% 的 token、平均片段长度为 3，目标长度大约只有原文的 15% 再加上少量哨兵，解码器的计算量远小于「重建全文」。
+      - 每个片段用**不同**的哨兵，目标里的哨兵告诉模型「接下来填的是哪一处」，输入和目标之间的对应关系清楚。
+      - 哨兵是词表中预留的特殊 token（T5 的词表预留了 100 个 `<extra_id_*>`）。
+
+      **易错点**：区间没有排序就直接编号，导致哨兵顺序与位置不一致；忘了最后的结束哨兵；把相邻区间当成两个片段（T5 的实现中，连续被选中的 token 本来就构成一个片段）。
+
+  - id: FND-NLP-032
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [编码器-解码器模型]
+    tags: [BART, T5, 去噪目标]
+    question: |
+      BART 与 T5 都是编码器—解码器结构，都用「破坏文本再还原」的去噪目标做预训练。下列关于两者差异的说法，正确的是：
+    options:
+      A: 'BART 的编码器像 GPT 一样使用因果注意力、只看左侧上下文，T5 的编码器则是双向的'
+      B: 'T5 的解码器要重建完整的原文，BART 的解码器只输出被遮盖的片段，所以 BART 的预训练更省计算'
+      C: 'BART 只用了 token 删除这一种噪声，而 T5 系统地比较了遮盖、删除、打乱顺序等多种噪声目标'
+      D: 'BART 用单个 [MASK] 替换每个片段（可为空）并重建全文；T5 用不同哨兵替换各片段，目标只含被遮片段'
+    answer: D
+    explanation: |
+      **结论**：两者的关键区别在于「目标是否是全文」与「片段如何表示」。
+
+      - **BART**：编码器双向、解码器自回归，目标是**重建完整原文**。论文比较了 token 遮盖、token 删除、文本填充、句子打乱、文档旋转等多种噪声，文本填充加句子打乱的组合效果最好。文本填充中每个片段只用**一个** [MASK] 代替，长度为 0 的片段相当于插入一个 [MASK]，模型必须自己判断缺了多少个 token。
+      - **T5**：每个片段换成一个哨兵，目标只写被遮盖的部分，训练更省计算。
+
+      - A 错：两者的编码器都是双向的，BART 只有解码器是自回归的。
+      - B 错：把两者的目标弄反了：BART 重建全文，T5 只输出被遮盖的片段，T5 的目标序列更短、更省计算。
+      - C 错：BART 并非只用 token 删除，它系统比较了上述五种噪声；T5 也比较了前缀语言模型、BERT 式遮盖、打乱顺序后还原、片段破坏等多种目标，以及破坏比例与片段长度。
+
+      延伸：BART 的目标更接近生成任务，在摘要等任务上表现突出，在 GLUE、SQuAD 上与 RoBERTa 相当；T5 则以「一切任务都是文本到文本」的统一框架著称。
+    source: 'BART arXiv:1910.13461；T5 arXiv:1910.10683'
+
+  - id: FND-NLP-033
+    type: calc
+    difficulty: 3
+    frequency: 3
+    points: [生成评估指标]
+    tags: [BLEU, 截断计数, 简短惩罚]
+    question: |
+      两条参考译文：R1 = 「the cat is on the mat」（6 个词），R2 = 「there is a cat on the mat」（7 个词）。
+      (1) 候选 C1 = 「the the the the the the the」（7 个词），它的修正 unigram 精确率是多少？若不做截断呢？
+      (2) 候选 C2 = 「the cat on the mat」（5 个词），求修正 n-gram 精确率 $p_1$～$p_4$、简短惩罚 BP（参考长度取与候选长度最接近的参考长度），以及等权重的 BLEU-4。
+    answer: '(1) 2/7 ≈ 0.29，不截断时为 7/7 = 1；(2) p1 = 1，p2 = 1，p3 = 2/3，p4 = 1/2，BP = e^{-0.2} ≈ 0.819，BLEU-4 ≈ 0.62'
+    explanation: |
+      **(1) 截断计数**：「the」在 R1 中出现 2 次、在 R2 中出现 1 次，取各参考中的最大值 2 作为上限。C1 中「the」出现 7 次，截断为 2，修正精确率为 $2/7\approx0.29$。不截断时 7 个词都「出现在参考中」，精确率为 1，这正是 BLEU 要截断的原因：防止重复堆砌高频词刷分。
+
+      **(2) C2 = the cat on the mat**
+      - $p_1$：the（2 次，上限 2）、cat、on、mat，共 5/5 = 1；
+      - $p_2$：the cat（R1）、cat on（R2）、on the、the mat，共 4/4 = 1；
+      - $p_3$：the cat on（两个参考都没有）、cat on the（R2）、on the mat，共 2/3；
+      - $p_4$：the cat on the（没有）、cat on the mat（R2），共 1/2；
+      - **BP**：候选长 $c=5$，参考长度 6、7 中最接近 5 的是 6，即 $r=6$；$c\le r$，$\mathrm{BP}=e^{1-r/c}=e^{-0.2}\approx0.819$；
+      - **BLEU-4** $=\mathrm{BP}\cdot\exp\big(\tfrac14\sum_n\ln p_n\big)=0.819\times\big(1\times1\times\tfrac23\times\tfrac12\big)^{1/4}=0.819\times0.760\approx$ **0.62**。
+
+      **启示**：C2 的每个词都对、语义也基本对，只是更短、少了「is」，得分就被简短惩罚和高阶 n-gram 拉低。BLEU 只有精确率，没有召回率，靠 BP 阻止「只输出有把握的少数词」的投机行为。另外，实际报告的 BLEU 是语料级的：在整个测试集上累加截断计数和长度后再计算，不是逐句求平均。
+
+  - id: FND-NLP-034
+    type: coding
+    difficulty: 2
+    frequency: 2
+    points: [生成评估指标]
+    tags: [ROUGE-L, 最长公共子序列, 手撕]
+    question: |
+      实现基于最长公共子序列（LCS）的 ROUGE-L：
+
+      ```python
+      def rouge_l(candidate: list[str], reference: list[str]) -> tuple[float, float, float]: ...
+      ```
+
+      - 精确率 $P=\mathrm{LCS}/|\text{candidate}|$，召回率 $R=\mathrm{LCS}/|\text{reference}|$，返回 $(P, R, F_1)$，其中 $F_1=2PR/(P+R)$；
+      - LCS 是两个序列的最长公共**子序列**，不要求连续；
+      - 任一输入为空，或 LCS 为 0 时，返回 `(0.0, 0.0, 0.0)`；
+      - 要求时间复杂度 $O(mn)$，空间 $O(n)$。
+    answer: |
+      def rouge_l(candidate, reference):
+          m, n = len(candidate), len(reference)
+          if m == 0 or n == 0:
+              return 0.0, 0.0, 0.0
+          prev = [0] * (n + 1)                   # 上一行：candidate[:i-1] 与 reference[:j] 的 LCS
+          for i in range(1, m + 1):
+              cur = [0] * (n + 1)
+              for j in range(1, n + 1):
+                  if candidate[i - 1] == reference[j - 1]:
+                      cur[j] = prev[j - 1] + 1
+                  else:
+                      cur[j] = max(prev[j], cur[j - 1])
+              prev = cur
+          lcs = prev[n]
+          if lcs == 0:
+              return 0.0, 0.0, 0.0
+          p, r = lcs / m, lcs / n
+          return p, r, 2 * p * r / (p + r)
+    test: |
+      import itertools, random
+
+      def close(a, b):
+          return all(abs(x - y) < 1e-9 for x, y in zip(a, b))
+
+      ref = "the cat is on the mat".split()
+      assert close(rouge_l("the cat sat on the mat".split(), ref), (5 / 6, 5 / 6, 5 / 6))
+      # 子序列不要求连续
+      assert close(rouge_l("a b c d".split(), "a x b y c".split()), (3 / 4, 3 / 5, 2 * 0.75 * 0.6 / 1.35))
+      # 完全相同、完全不重叠、空输入
+      assert close(rouge_l(ref, ref), (1.0, 1.0, 1.0))
+      assert rouge_l(["x", "y"], ref) == (0.0, 0.0, 0.0)
+      assert rouge_l([], ref) == (0.0, 0.0, 0.0)
+
+      # 与暴力枚举的 LCS 对拍
+      def brute_lcs(a, b):
+          for k in range(min(len(a), len(b)), 0, -1):
+              subs = set(itertools.combinations(a, k))
+              if any(s in subs for s in itertools.combinations(b, k)):
+                  return k
+          return 0
+
+      random.seed(0)
+      for _ in range(200):
+          a = [random.choice("abc") for _ in range(random.randint(1, 7))]
+          b = [random.choice("abc") for _ in range(random.randint(1, 7))]
+          k = brute_lcs(a, b)
+          p, r, f = rouge_l(a, b)
+          assert abs(p - k / len(a)) < 1e-9 and abs(r - k / len(b)) < 1e-9
+    explanation: |
+      **思路**：经典 LCS 动态规划。$dp[i][j]$ 表示 candidate 前 $i$ 个词与 reference 前 $j$ 个词的 LCS 长度：两词相同时 $dp[i][j]=dp[i-1][j-1]+1$，否则取 $\max(dp[i-1][j],dp[i][j-1])$。每一行只依赖上一行，所以用两行滚动数组，空间降到 $O(n)$。
+
+      **为什么用 LCS**：ROUGE-N 只看固定长度的 n-gram；ROUGE-L 用最长公共子序列自动匹配最长的「顺序一致」部分，不要求连续，能容忍中间插入的词，又保留了词序信息。例如「the cat sat on the mat」与参考的 LCS 是「the cat on the mat」，长度 5。
+
+      **注意**：Lin（2004）原始定义中 $F_{lcs}=\frac{(1+\beta^2)RP}{R+\beta^2P}$，$\beta$ 取得很大时几乎只看召回率；常用的实现（如 rouge-score 包）报告 $\beta=1$ 的 F1。不同实现的分词、大小写处理、词干化也不同，比较分数时要用同一个实现。
+    source: 'ROUGE: A Package for Automatic Evaluation of Summaries（Lin, 2004）'
+
+  - id: FND-NLP-035
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [生成评估指标]
+    tags: [BLEU, ROUGE, 大模型评测]
+    question: |
+      用 BLEU、ROUGE 这类 n-gram 重叠指标，评估大模型对开放式问题（如「解释一下什么是过拟合」）的回答，最主要的问题是：
+    options:
+      A: '合格回答的措辞千差万别，n-gram 重叠只衡量字面相似度，与回答是否正确、有用的相关性很差'
+      B: '它们只能用于英文这类以空格分词的语言，无法在中文文本上计算 n-gram 重叠'
+      C: '它们要对每个回答与全部参考逐个比对 n-gram，计算开销太大，无法用于大规模评测'
+      D: '它们需要先训练一个打分模型来判断 n-gram 是否匹配，评测结果会受打分模型偏见的影响'
+    answer: A
+    explanation: |
+      **结论**：n-gram 指标衡量的是「像不像参考答案」，而不是「好不好」。
+
+      开放式问答的合格答案空间极大：换一种讲法、换一个例子、调整顺序，都会让 n-gram 重叠大幅下降，好回答因此被低估；反过来，只改了一个关键数字或漏掉一个「不」字的错误回答，与参考的重叠依然很高。指标对事实性、逻辑、有用性几乎不敏感，还会偏好与参考长度相近的回答。
+
+      - B 错：中文可以按字或按词切分后计算，只是分数依赖分词方式。
+      - C 错：n-gram 计数与比对只是简单的字符串统计，计算非常便宜，这正是它们曾经流行的原因。
+      - D 错：这描述的是基于模型的评测（如 LLM-as-Judge、训练过的奖励模型），BLEU / ROUGE 只做字符串统计。
+
+      实践中，开放式生成更多依靠人工评测、成对比较、带评分细则的 LLM 评审，或可以程序验证的任务（代码单测、数学答案精确匹配）。BLEU 在多参考、语料级、固定工具（如 sacreBLEU）的条件下仍是机器翻译的常用参考指标，ROUGE 也仍用于摘要的回归监控。
+
+  - id: FND-NLP-036
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [生成评估指标]
+    tags: [BLEU, ROUGE, BERTScore, sacreBLEU]
+    question: |
+      关于 BLEU、ROUGE 及相关指标的计算与使用，下列说法**正确**的有：
+    options:
+      A: '句子级 BLEU 通常需要平滑，因为短句的某个高阶 n-gram 匹配数为 0 时，几何平均会直接变成 0'
+      B: 'BERTScore 用上下文词向量的相似度做软匹配，能识别同义改写，因此不再需要参考文本'
+      C: 'BLEU 以精确率为核心，ROUGE 最初以召回率为核心，分别对应机器翻译与摘要的关注点'
+      D: 'BLEU 原本是句子级指标：语料级 BLEU 就是先算出每个句子的 BLEU，再对所有句子取算术平均'
+      E: '使用相同的参考译文时，不同论文报告的 BLEU 分数可以直接比较，分词和大小写处理不影响结果'
+    answer: [A, C]
+    explanation: |
+      **结论**：A、C 正确。
+
+      - A 对：例如候选只有 3 个词时根本不存在 4-gram，$p_4=0$，几何平均直接为 0。常见的平滑方法是给零计数加一个小值。
+      - B 错：BERTScore 用上下文向量把候选与**参考**中的 token 做软匹配，确实能识别部分同义改写，但它仍然需要参考文本。不需要参考的是另一类方法，如 LLM 评审或质量估计（QE）模型。
+      - C 对：精确率看候选的 n-gram 有多少出现在参考中，召回率看参考的 n-gram 有多少被候选覆盖。翻译更怕「译出参考里没有的错误内容」，所以看精确率，再用简短惩罚防止只输出少数有把握的词；摘要更怕「漏掉要点」，所以 ROUGE 最初以召回率为主（现在常报告 F1）。
+      - D 错：BLEU 原本就是语料级指标：先在整个测试集上累加截断后的 n-gram 匹配数、候选与参考的长度，再计算各阶精确率和简短惩罚。这样短句偶然的零匹配不至于把整体拉到 0，结果也更稳定；逐句计算再取平均与之不等价，数值一般也不同。
+      - E 错：分词方式（尤其中文、日文）、是否区分大小写、是否对参考做预处理，都会显著改变 BLEU。sacreBLEU 的出发点正是统一这些设置，并输出一个签名，便于复现和比较。
+    source: 'BLEU（Papineni 等, 2002）；A Call for Clarity in Reporting BLEU Scores（Post, 2018）arXiv:1804.08771；BERTScore arXiv:1904.09675'
+
+  - id: FND-NLP-037
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [生成评估指标]
+    tags: [BLEU, 机器翻译, 人工评测, COMET]
+    question: |
+      某中英翻译系统升级后，测试集上的 BLEU 从 32.1 提高到 34.5（单参考译文，中文按词切分）。但人工抽检发现，新版本的译文更「直译」，读起来不自然，还有几处把否定句译成了肯定句的严重错误；上线后用户投诉反而增多。请分析 BLEU 与人工评价不一致的可能原因，并设计一套更可靠的评估方案。
+    answer: |
+      **1. 可能原因**
+      - **单参考的偏差**：BLEU 奖励与那一条参考字面相同的用词和语序。参考本身偏直译时，直译风格的系统更容易「撞上」参考的 n-gram，分数上涨，但流畅度和自然度下降。
+      - **对严重错误不敏感**：漏掉「不」「not」只差一个 token，n-gram 重叠下降很少，语义却完全相反；数字、专名、否定这类关键错误在 BLEU 中权重极低。
+      - **语料级平均掩盖了长尾**：少数句子的灾难性错误被大量普通句子的小幅提升抵消，而用户投诉恰恰集中在这些严重错误上。
+      - **评测流程与分布问题**：中文分词或预处理在两次评测间是否一致（不一致时分数不可比）；是否在测试集上反复调参导致过拟合；测试集的领域与线上流量是否一致；2.4 分的差异是否显著（需要做配对自助重采样检验）。
+
+      **2. 更可靠的评估方案**
+      - **自动指标组合**：用 sacreBLEU 固定签名，保证可比；加上 chrF（字符级，对中文分词不敏感）和 COMET 等基于人工评分训练的神经指标，它们与人工判断的相关性通常更高；条件允许时使用多参考译文。
+      - **针对性测试集**：构造否定、数字、日期、专名、术语、长句等专项用例，用规则或模型自动检查，设为「零容忍」的上线门槛。
+      - **人工评测**：盲评的两两对比（A/B），或基于错误类型的 MQM 标注，区分严重错误与轻微错误；按领域、句长分层抽样。
+      - **线上指标**：投诉率、用户后编辑率、复制或采纳率，小流量灰度后再全量。
+      - **流程**：任何单一指标都不作为唯一的上线依据；关键错误类回归测试必须通过；报告显著性与置信区间。
+    rubric:
+      - '指出单参考与直译偏差导致 BLEU 虚高（2 分）'
+      - '指出 BLEU 对否定等关键错误不敏感、语料级平均掩盖严重错误（3 分）'
+      - '给出 chrF / COMET、专项测试集、人工评测等多维方案（3 分）'
+      - '提到评测一致性、显著性检验或线上灰度验证（2 分）'
+    explanation: |
+      **常见失分点**：只说「BLEU 不好，换成人工评测」而不分析具体原因；忽略否定、数字这类关键错误在 n-gram 指标中几乎「隐身」；不检查前后两次评测的分词与预处理是否一致；没有显著性和分层分析，也没有提出上线门槛。
+
+  - id: FND-NLP-038
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [经典NLP任务]
+    tags: [HMM, Viterbi, 词性标注, 手撕]
+    question: |
+      用 numpy 实现隐马尔可夫模型（如词性标注）的 Viterbi 解码：
+
+      ```python
+      def viterbi(obs, log_start, log_trans, log_emit) -> tuple[list[int], float]: ...
+      ```
+
+      - `obs`：观测（词）编号列表，长度 $T\ge1$；
+      - `log_start`：形状 `(S,)`，初始状态的对数概率；`log_trans`：形状 `(S, S)`，`log_trans[i, j]` 为从状态 $i$ 转到状态 $j$ 的对数概率；`log_emit`：形状 `(S, O)`，`log_emit[s, o]` 为状态 $s$ 发射观测 $o$ 的对数概率；
+      - 概率为 0 的项以 `-inf` 给出；
+      - 返回联合概率最大的状态序列及其对数概率；时间复杂度要求 $O(TS^2)$，不能枚举全部 $S^T$ 条路径。
+    answer: |
+      import numpy as np
+
+      def viterbi(obs, log_start, log_trans, log_emit):
+          T = len(obs)
+          score = log_start + log_emit[:, obs[0]]            # (S,) 到达各状态的最优对数概率
+          back = np.zeros((T, len(log_start)), dtype=int)    # 回溯指针
+          for t in range(1, T):
+              cand = score[:, None] + log_trans              # cand[i, j]：从 i 转到 j
+              back[t] = cand.argmax(axis=0)
+              score = cand.max(axis=0) + log_emit[:, obs[t]]
+          best = int(score.argmax())
+          path = [best]
+          for t in range(T - 1, 0, -1):
+              best = int(back[t, best])
+              path.append(best)
+          return path[::-1], float(score.max())
+    test: |
+      import itertools
+
+      rng = np.random.default_rng(0)
+
+      def rand_logprob(*shape):
+          p = rng.random(shape) + 0.1
+          return np.log(p / p.sum(axis=-1, keepdims=True))
+
+      S, O = 3, 4
+      ls, lt, le = rand_logprob(S), rand_logprob(S, S), rand_logprob(S, O)
+
+      def path_score(p, obs, ls, lt, le):
+          s = ls[p[0]] + le[p[0], obs[0]]
+          for t in range(1, len(obs)):
+              s += lt[p[t - 1], p[t]] + le[p[t], obs[t]]
+          return s
+
+      # 1) 与暴力枚举全部 S^T 条路径对拍
+      for obs in ([0, 2, 1, 3, 2], [3, 3, 0], [1, 0, 2, 2, 1, 3]):
+          path, lp = viterbi(obs, ls, lt, le)
+          best = max(itertools.product(range(S), repeat=len(obs)),
+                     key=lambda p: path_score(p, obs, ls, lt, le))
+          assert path == list(best)
+          assert np.isclose(lp, path_score(best, obs, ls, lt, le))
+
+      # 2) 长度为 1：只看初始概率与发射概率
+      p1, lp1 = viterbi([3], ls, lt, le)
+      assert p1 == [int(np.argmax(ls + le[:, 3]))] and np.isclose(lp1, np.max(ls + le[:, 3]))
+
+      # 3) 禁止的转移（概率为 0，对数为 -inf）不能出现在最优路径中
+      lt2 = lt.copy()
+      lt2[0, 0] = -np.inf
+      le2 = le.copy()
+      le2[0, :] = np.log(0.97)                       # 状态 0 对任何观测都很「诱人」
+      obs = [1, 1, 1, 1]
+      path, lp = viterbi(obs, ls, lt2, le2)
+      assert all(not (a == 0 and b == 0) for a, b in zip(path, path[1:]))
+      best = max(itertools.product(range(S), repeat=len(obs)),
+                 key=lambda p: path_score(p, obs, ls, lt2, le2))
+      assert path == list(best) and np.isfinite(lp)
+    explanation: |
+      **思路**：动态规划。$\delta_t(j)$ 表示「在时刻 $t$ 处于状态 $j$、并生成前 $t$ 个观测」的所有路径中最大的对数概率：
+      $$\delta_t(j)=\max_i\big[\delta_{t-1}(i)+\log a_{ij}\big]+\log b_j(o_t)$$
+      同时记录取得最大值的前驱 $i$ 作为回溯指针。最后从最优的终止状态沿指针倒推出整条路径。每步对 $S\times S$ 的候选取最大值，总复杂度 $O(TS^2)$，而暴力枚举是 $O(S^T)$。
+
+      **要点**：
+      - 在对数域里把乘法变成加法，避免长序列的概率连乘下溢；概率为 0 的转移用 $-\infty$ 表示，自然不会被选中。
+      - 回溯时，`back[t]` 存的是「到达 $t$ 时刻各状态的最优前驱」，所以从 $t=T-1$ 倒推到 $t=1$。
+      - 同样的算法用于 CRF 的解码（把对数概率换成学到的转移分数和发射分数）、BiLSTM-CRF 命名实体识别，以及分词器中 Unigram 模型的最优切分。
+
+      **易错点**：$t=0$ 时漏加发射概率；回溯循环差一位；直接用概率相乘导致下溢；沿 `axis=1` 取最大值，把转移方向弄反。
+
+  - id: FND-NLP-039
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [经典NLP任务]
+    tags: [NER, 抽取式问答, NLI, 句法分析]
+    question: |
+      下列经典 NLP 任务与其常见建模方式的对应关系中，正确的是：
+    options:
+      A: '命名实体识别：做句子级分类，为整句输出一个实体类别'
+      B: '抽取式问答（如 SQuAD）：让模型自由生成答案文本，再用 BLEU 与参考答案比较'
+      C: '自然语言推断（NLI）：输入前提与假设两句话，做「蕴含 / 矛盾 / 中立」三分类'
+      D: '依存句法分析：对每个词独立做词性分类，得到的词性序列就是句法树'
+    answer: C
+    explanation: |
+      **结论**：NLI 是典型的句对三分类任务（如 SNLI、MNLI），BERT 时代用 [CLS] 的表示接分类头来做。
+
+      - A 错：命名实体识别是 **token 级**的序列标注，用 BIO / BIOES 标签标出每个实体的边界和类型，一句话可以有多个实体；常用 BiLSTM-CRF、BERT + CRF。
+      - B 错：抽取式问答的答案是原文中的一个片段，模型预测答案的**起始位置和结束位置**，评测用精确匹配（EM）和 token 级 F1。SQuAD 2.0 还加入了无法回答的问题。
+      - D 错：依存句法分析要为每个词预测它的**中心词（head）和依存关系类型**，常见方法有基于转移的和基于图的（如双仿射打分）；词性标注是另一个独立的序列标注任务，词性序列不是句法树。
+
+      大模型时代，这些任务常被改写成指令和文本生成，但评测仍要用各任务专门的指标（实体级 F1、EM、准确率等），不能简单换成 BLEU。
+
+  - id: FND-NLP-040
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [经典NLP任务]
+    tags: [NER, BIO, 实体级F1]
+    question: |
+      下面的代码把 BIO 标签序列解析成实体片段，并比较 token 级准确率与实体级的精确率、召回率、F1。输出是什么？
+    code: |
+      def spans(tags):
+          out, start, typ = [], None, None
+          for i, t in enumerate(tags + ["O"]):
+              if start is not None and not (t.startswith("I-") and t[2:] == typ):
+                  out.append((start, i, typ)); start = None
+              if t.startswith("B-"):
+                  start, typ = i, t[2:]
+          return set(out)
+
+      gold = ["B-PER", "I-PER", "O", "B-LOC", "I-LOC", "I-LOC", "O"]
+      pred = ["B-PER", "I-PER", "O", "B-LOC", "I-LOC", "O", "B-ORG"]
+      acc = sum(g == p for g, p in zip(gold, pred)) / len(gold)
+      g, p = spans(gold), spans(pred)
+      tp = len(g & p)
+      prec, rec = tp / len(p), tp / len(g)
+      print(round(acc, 3), sorted(g - p), sorted(p - g))
+      print(round(prec, 3), round(rec, 3), round(2 * prec * rec / (prec + rec), 3))
+    answer: |
+      0.714 [(3, 6, 'LOC')] [(3, 5, 'LOC'), (6, 7, 'ORG')]
+      0.333 0.5 0.4
+    explanation: |
+      - **解析实体**：`spans` 遇到 `B-X` 开始一个实体，遇到不能延续它的标签（O、其他类型、新的 B）就结束，片段为左闭右开区间。gold 有 2 个实体：(0,2,PER)、(3,6,LOC)；pred 有 3 个：(0,2,PER)、(3,5,LOC)、(6,7,ORG)。
+      - **token 级准确率**：7 个位置中错了第 5、6 两个，$5/7\approx0.714$。
+      - **实体级**：只有 PER 完全匹配，tp = 1。LOC 的右边界少了一个字，按精确匹配既算一次漏召回（gold 中的 (3,6) 没被找到），又算一次误报（pred 中的 (3,5) 不对）；ORG 是凭空多出的误报。精确率 $1/3\approx0.333$，召回率 $1/2=0.5$，F1 $=0.4$。
+
+      **启示**：token 级准确率 71% 看起来不错，但实体级 F1 只有 0.4。O 标签占多数，准确率会被大量容易的 O 撑高，而一个边界错误就让整个实体作废。NER 的标准评测（CoNLL 方式，seqeval 等工具）报告实体级的精确匹配 P/R/F1。还要注意非法序列的处理约定：本代码忽略没有前导 B 的孤立 I-，一些工具则把它当作新实体的开始，结果会不同。
+
+  - id: FND-NLP-041
+    type: scenario
+    difficulty: 3
+    frequency: 3
+    points: [经典NLP任务]
+    tags: [传统NLP, 大模型, BERT, 选型]
+    question: |
+      公司现有一套基于 BERT 微调的工单处理流水线：意图分类（30 类）加命名实体识别（抽取订单号、商品名、地址），每天处理约 50 万条工单，单条延迟约 15 ms，准确率稳定。新任负责人提议「全部改成调用大模型 API，用提示词完成分类与抽取」。请比较传统 NLP 范式与大模型范式在这个场景下的优劣，并说明你会如何决策与落地。
+    answer: |
+      **1. 对比**
+      - **效果**：在类别固定、有充足领域标注数据的分类和抽取任务上，微调的 BERT 往往不输于零样本或少样本提示的大模型；大模型的优势在长尾意图、新意图、需要推理或理解复杂表述的工单，以及非结构化的输出。
+      - **延迟与吞吐**：BERT 约 15 ms；大模型 API 通常是数百毫秒到数秒，还受限流约束，50 万条每天的峰值需要评估配额。
+      - **成本**：按每条工单约 600 个输入 token、50 个输出 token 粗算，每天约 3.25 亿 token，长期调用费用远高于自建 BERT 推理；可以按实际单价代入估算。
+      - **可控性**：BERT 的输出天然落在 30 个类别和合法的实体片段里；大模型可能输出不在类别表中的标签、编造订单号，需要约束解码或 JSON Schema、后校验与重试。
+      - **数据安全**：工单含地址、订单等个人信息，调用外部 API 要评估合规；必要时私有化部署开源模型。
+      - **维护**：新增意图时，BERT 要补标注、重新训练；大模型改提示词即可，迭代快。
+
+      **2. 建议方案：分层混合，而不是一刀切**
+      - 高频、头部意图继续用 BERT，并为分类和抽取设置置信度阈值；
+      - 低置信度、未知意图、长而复杂的工单路由给大模型，大模型的输出也要做格式与业务校验（如订单号格式、类别白名单）；
+      - 用大模型批量标注或改写难样本，再蒸馏回小模型，持续提升 BERT 覆盖率；
+      - 大模型更适合补上 BERT 做不了的生成类需求，如工单摘要、回复草稿。
+
+      **3. 决策与落地流程**：在同一份按意图分层的测试集上，离线比较 BERT、大模型、混合方案的准确率和实体级 F1，同时估算延迟与成本；灰度上线混合方案，监控路由比例、人工复核率、投诉率；按成本与效果的变化调整阈值。
+    rubric:
+      - '从效果、延迟、成本、可控性、数据安全中至少比较四个方面（4 分）'
+      - '提出按置信度路由的混合方案或蒸馏等折中方案（3 分）'
+      - '给出离线评测、灰度与监控的决策流程（2 分）'
+      - '对成本或吞吐做出量化估算（1 分）'
+    explanation: |
+      **常见失分点**：认为大模型在所有 NLP 任务上都全面碾压微调的小模型；只谈效果，不算成本和延迟；忽略大模型输出越界、编造字段的风险；没有提出混合与蒸馏的折中；不提如何用同一测试集做公平比较。

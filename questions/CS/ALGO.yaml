@@ -1,0 +1,3047 @@
+domain: CS
+subcategory: ALGO
+questions:
+
+  - id: CS-ALGO-001
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [复杂度分析]
+    tags: [等比级数]
+    question: |
+      下面的函数中，外层循环让 `i` 依次取 1、2、4、8……，内层循环执行 `i` 次。它的时间复杂度（紧确界）是：
+
+      ```python
+      def f(n):
+          total, i = 0, 1
+          while i < n:
+              for _ in range(i):
+                  total += 1
+              i *= 2
+          return total
+      ```
+    options:
+      A: '$\Theta(\log n)$'
+      B: '$\Theta(n\log n)$'
+      C: '$\Theta(n)$'
+      D: '$\Theta(n^2)$'
+    answer: C
+    explanation: |
+      **结论**：内层的总工作量是一个等比数列的和，被 $2n$ 封顶，所以是 $\Theta(n)$。
+
+      设外层循环执行 $k$ 次，`i` 依次为 $1,2,4,\dots,2^{k-1}$，其中 $2^{k-1}<n\le2^k$（$n\ge2$）。内层总次数为 $1+2+\dots+2^{k-1}=2^k-1$，介于 $n-1$ 与 $2n-1$ 之间。例如 $n=10$ 时 `i` 取 1、2、4、8，共 15 次。
+
+      - A 错：只数了外层循环的次数，忽略了内层的工作量。
+      - B 错：「外层 $\log n$ 次 × 内层最多 $n$ 次」只是一个上界，并不紧：内层只有最后一轮接近 $n$，前面各轮依次减半。
+      - D 错：把它当成了两层都跑 $n$ 次的普通嵌套循环。
+
+      延伸：同样的「等比级数求和」论证，正是动态数组倍增扩容均摊 $O(1)$ 的原因。对比 `for i in range(n)` 里套一个 `j *= 2` 的 while 循环：外层每轮都要跑满 $\log n$ 次，那才是 $\Theta(n\log n)$。
+
+  - id: CS-ALGO-002
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [复杂度分析]
+    source: 'CPython 源码 Objects/listobject.c（列表扩容的过度分配公式 newsize + (newsize >> 3) + 6，再向下取整到 4 的倍数），https://github.com/python/cpython/blob/main/Objects/listobject.c；OpenJDK 源码 java.util.ArrayList#grow（首选增量 oldCapacity >> 1，即扩为 1.5 倍），https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/ArrayList.java'
+    tags: [均摊分析, 动态数组]
+    question: |
+      某动态数组初始容量为 1；存满后再追加元素时，先申请一块容量为原来 2 倍的新空间，把旧元素逐个复制过去，再写入新元素。从空数组开始连续 `append` 1000 个元素：
+
+      (1) 一共扩容几次？一共复制了多少次元素？
+      (2) 把「写入」和「复制」都算作 1 次操作，平均每次 `append` 是多少次操作？
+      (3) 若改为初始容量 100、每次只多扩 100 个位置，复制总次数是多少？元素个数 $n$ 很大时，两种扩容策略的均摊复杂度各是多少？
+    answer: '(1) 扩容 10 次，复制 1023 次；(2) 约 2.02 次；(3) 复制 4500 次；倍增扩容均摊 O(1)，固定增量扩容均摊 O(n)'
+    explanation: |
+      **(1)** 容量依次为 1→2→4→…→1024。扩容发生在追加第 2、3、5、9、…、513 个元素时，共 10 次；每次复制的元素数等于扩容前的容量：$1+2+4+\dots+512=1023$。
+
+      **(2)** 写入 1000 次 + 复制 1023 次 = 2023 次，平均 $2023/1000\approx2.02$ 次。一般地，$n$ 次追加的复制总数小于 $2n$，总代价小于 $3n$，均摊 $O(1)$。
+
+      **(3)** 追加第 101、201、…、901 个元素时扩容，共 9 次，复制 $100+200+\dots+900=4500$ 次，平均每次 5.5 次操作。一般地，复制总数约为 $100\times(1+2+\dots+n/100)\approx n^2/200$，总代价 $O(n^2)$，均摊 $O(n)$。
+
+      **要点**：按比例扩容（任何大于 1 的倍数），复制总量是等比级数，均摊 $O(1)$；按固定增量扩容，复制总量是等差级数，均摊 $O(n)$。CPython 的 list 每次约多分配 1/8（再加一个小常数），Java 的 ArrayList 扩为 1.5 倍，都是按比例增长。倍数越大，复制越少，但闲置空间越多，这是时间与空间的权衡。
+
+  - id: CS-ALGO-003
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [复杂度分析]
+    tags: [均摊分析]
+    question: |
+      Python 的 `list.append` 均摊时间复杂度是 O(1)，这意味着每一次 `append` 调用的耗时都不会超过某个与列表长度无关的常数。
+    answer: false
+    explanation: |
+      **错误**。均摊（amortized）复杂度描述的是「一串操作的总代价 ÷ 操作次数」的上界，不保证单次操作的上界。触发扩容的那一次 `append` 要复制全部 $n$ 个元素，是 $O(n)$；只是这样的操作很少，摊到每次只有常数。
+
+      还要区分两个概念：均摊分析针对**最坏情况下的操作序列**，不涉及概率；「平均情况」复杂度则是对随机输入取期望，例如快速排序平均 $O(n\log n)$。
+
+      工程含义：对时延敏感的系统，均摊 O(1) 的结构也会出现偶发的长停顿。例如哈希表一次性扩容（rehash）会卡住所有请求，Redis 的字典因此采用渐进式 rehash：同时保留新旧两张表，每次增删查改时顺带搬迁一小部分，把一次大停顿拆成许多小步。
+
+  - id: CS-ALGO-004
+    type: code_fill
+    difficulty: 2
+    frequency: 3
+    points: [哈希表]
+    tags: [前缀和]
+    question: |
+      给定整数数组 `nums`（元素可正、可负、可为 0）和整数 `k`，统计和恰好等于 `k` 的**连续**子数组个数。下面是 O(n) 的「前缀和 + 哈希表」解法，请补全两处空位。
+    code: |
+      from collections import defaultdict
+
+      def count_subarrays(nums: list[int], k: int) -> int:
+          seen = defaultdict(int)          # 前缀和 -> 出现次数
+          seen[____] = 1
+          prefix = ans = 0
+          for x in nums:
+              prefix += x
+              ans += seen[____]
+              seen[prefix] += 1
+          return ans
+    answer: ['0', 'prefix - k']
+    test: |
+      import random
+      assert count_subarrays([1, 1, 1], 2) == 2
+      assert count_subarrays([1, -1, 0], 0) == 3
+      assert count_subarrays([3], 3) == 1
+      assert count_subarrays([], 0) == 0
+      rng = random.Random(0)
+      for _ in range(300):
+          nums = [rng.randint(-3, 3) for _ in range(rng.randint(0, 15))]
+          k = rng.randint(-4, 4)
+          brute = sum(sum(nums[i:j]) == k for i in range(len(nums)) for j in range(i + 1, len(nums) + 1))
+          assert count_subarrays(nums, k) == brute
+    explanation: |
+      **思路**：记 $P_j$ 为前 $j$ 个元素之和，子数组 `nums[i:j]` 的和为 $P_j-P_i$。遍历到第 $j$ 个前缀时，以当前元素结尾、和为 $k$ 的子数组个数，就是此前出现过多少个 $P_i=P_j-k$。用哈希表给前缀和计数，时间、空间都是 $O(n)$。
+
+      - 第 1 空 `0`：空前缀 $P_0=0$ 要预先计入一次，否则会漏掉从下标 0 开始的子数组，例如 `nums=[3]`、`k=3`。
+      - 第 2 空 `prefix - k`：查询必须放在 `seen[prefix] += 1` **之前**。若先登记再查询，`k = 0` 时每个位置都会和自己配对，多数出一个「空子数组」。
+
+      **为什么不用滑动窗口**：滑动窗口依赖「右扩和变大、左缩和变小」的单调性，只适用于非负数组；有负数时要用前缀和。
+
+      **延伸**：同一思路可以求「和为 k 的最长子数组」（哈希表记录每个前缀和**最早**出现的位置），或「和能被 m 整除的子数组个数」（以 $P\bmod m$ 为键）。
+
+  - id: CS-ALGO-005
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [哈希表]
+    tags: [Bloom 过滤器, 海量数据]
+    question: |
+      预训练数据抓取要对约 $10^8$ 个 URL 判重，计划用 Bloom 过滤器：位数组共 $m$ 位，使用 $k$ 个独立的哈希函数，插入 $n$ 个元素后误判率近似为 $p\approx(1-e^{-kn/m})^k$。
+
+      (1) 目标误判率 1%，最省内存的 $m$ 约为多少 MiB？$k$ 应取多少？
+      (2) 若只有 64 MiB 内存，取最合适的整数 $k$，误判率约为多少？
+      (3) 这里的「误判」会造成什么后果？
+    answer: '(1) 约 114 MiB，k = 7；(2) k = 4，误判率约 7.6%；(3) 少量从未抓取过的 URL 被误判为已抓取而漏抓，不会导致重复抓取'
+    explanation: |
+      **公式**：给定 $m/n$ 时，使误判率最小的 $k=\frac{m}{n}\ln2$，此时 $p=(1/2)^k$；反过来，给定目标 $p$，所需位数 $m=-\dfrac{n\ln p}{(\ln2)^2}$。
+
+      **(1)** $m=\dfrac{10^8\times\ln100}{(\ln2)^2}=\dfrac{10^8\times4.605}{0.4805}\approx9.59\times10^8$ 位，即每个元素约 9.6 位；换算为 $9.59\times10^8/8/2^{20}\approx114$ MiB。$k=9.59\times0.693\approx6.6$，取 7，代回公式得 $p\approx1.0\%$。
+
+      **(2)** $m=64\times2^{20}\times8\approx5.37\times10^8$ 位，$m/n\approx5.37$，最优 $k\approx3.7$。取 $k=4$：$p=(1-e^{-4/5.37})^4=(1-0.475)^4\approx0.076$，约 7.6%（取 3 时约 7.8%）。
+
+      **(3)** Bloom 过滤器只会把「不存在」误判为「存在」，不会反过来：判为「不存在」的一定没出现过。所以后果是少量新 URL 被当成已抓取而漏掉，不会重复抓取。
+
+      **对比**：用哈希集合直接存 $10^8$ 个 URL 字符串，通常需要 10 GB 量级的内存；Bloom 过滤器用 1% 的漏抓换来约 114 MiB。代价是不能删除元素（需要删除时用计数 Bloom 过滤器），也无法列出已有的元素。
+    source: 'Broder & Mitzenmacher, Network Applications of Bloom Filters: A Survey (Internet Mathematics, 2004)'
+
+  - id: CS-ALGO-006
+    type: single
+    difficulty: 2
+    frequency: 1
+    points: [哈希表]
+    tags: [哈希洪水, SipHash]
+    question: |
+      某 Agent 网关会把请求 JSON 中**用户可控**的字段名放进哈希表做统计。安全评审提出要防范「哈希洪水（hash flooding）」攻击。下列说法正确的是：
+    options:
+      A: '把负载因子控制在 0.75 以下并及时扩容，就能保证每个桶里的键数有常数上界，每次查找都是 O(1)'
+      B: '攻击者能构造大量哈希值相同的键时，链地址法和开放寻址的 n 次插入总代价都可能退化到 $O(n^2)$'
+      C: '改用开放寻址法即可避免退化：冲突的键会被分散到后续的空槽里，不会在同一个桶上越积越长'
+      D: '对字符串使用固定、公开的哈希函数（如 FNV-1a）更安全：结果可复现，便于审计和跨进程分片'
+    answer: B
+    explanation: |
+      **结论**：哈希表的 O(1) 是**平均**意义上的，前提是键的哈希值分布均匀。攻击者既能控制键、又能算出哈希值时，就能让大量键落进同一个桶。
+
+      此时第 $i$ 次插入要和桶里（或探测序列上）已有的约 $i$ 个键逐个比较，总代价 $1+2+\dots+n=O(n^2)$，几万个键就能把 CPU 打满。
+
+      - A 错：负载因子只控制「平均每个桶有几个键」；扩容后，攻击者构造的键哈希值仍然相同，照样挤在一起，挡不住故意制造的冲突。
+      - C 错：冲突的键被放到后续槽位后，查找要沿探测序列逐个比较，探测序列同样越来越长，退化方式与链地址法相同。
+      - D 错：可复现对跨进程分片确实有用（见下文「副作用」），但安全上正好相反：固定、公开的哈希函数（如 FNV-1a）可以被攻击者离线算出大量碰撞。防御的关键是让攻击者**算不出**哈希值：CPython 从 3.3 起默认对 str 和 bytes 的哈希加随机盐（可用 `PYTHONHASHSEED` 控制），3.4 起改用带密钥的 SipHash（PEP 456）。
+
+      **其他防线**：限制单个请求的字段数与请求体大小；Java 8 起 HashMap 在某个桶已有至少 8 个节点、又要加入新键时（且表容量不小于 64），把链表转成红黑树，单桶最坏情况降到 $O(\log n)$。
+
+      **副作用**：由于随机盐，同一字符串在不同进程里的 `hash()` 不同，所以不能用内置 `hash()` 做跨进程的分片或一致性哈希，要用 MD5、xxHash 这类稳定的哈希函数。
+    source: 'PEP 456 – Secure and interchangeable hash algorithm, https://peps.python.org/pep-0456/'
+
+  - id: CS-ALGO-007
+    type: code_debug
+    difficulty: 1
+    frequency: 3
+    points: [双指针与滑动窗口, 哈希表]
+    tags: [最长无重复子串]
+    question: |
+      下面的函数求字符串中不含重复字符的最长子串长度。它在 `"abcabcbb"`、`"pwwkew"` 上都返回了正确结果，但在某些输入上结果偏大。请找出 bug 并修正。
+    code: |
+      def longest_unique(s: str) -> int:
+          last = {}                  # 字符 -> 最近一次出现的下标
+          left = best = 0
+          for right, ch in enumerate(s):
+              if ch in last:
+                  left = last[ch] + 1
+              last[ch] = right
+              best = max(best, right - left + 1)
+          return best
+    fixed_code: |
+      def longest_unique(s: str) -> int:
+          last = {}                  # 字符 -> 最近一次出现的下标
+          left = best = 0
+          for right, ch in enumerate(s):
+              if ch in last and last[ch] >= left:
+                  left = last[ch] + 1
+              last[ch] = right
+              best = max(best, right - left + 1)
+          return best
+    test: |
+      import random
+      assert longest_unique("") == 0
+      assert longest_unique("abcabcbb") == 3
+      assert longest_unique("bbbb") == 1
+      assert longest_unique("abba") == 2
+      assert longest_unique("tmmzuxt") == 5
+      rng = random.Random(0)
+      for _ in range(300):
+          s = "".join(rng.choice("abcd") for _ in range(rng.randint(0, 12)))
+          brute = max([j - i for i in range(len(s)) for j in range(i + 1, len(s) + 1)
+                       if len(set(s[i:j])) == j - i] or [0])
+          assert longest_unique(s) == brute, s
+    answer: |
+      **问题**：第 5～6 行只要字符出现过，就把 `left` 移到 `last[ch] + 1`。如果该字符上次出现的位置已经在窗口左边界**之前**，这一步会让 `left` 向左回退，窗口重新包含了早已排除的重复字符。
+
+      例如 `"abba"`：读到最后的 `a` 时，窗口本是 `"b"`（`left = 2`），却被改成 `left = 1`，窗口变成 `"bba"`，返回 3，正确答案是 2。`"tmmzuxt"` 同理会返回 6（正确答案 5）。
+
+      **修正**：只有上次出现的位置仍在窗口内时才移动左端，保证 `left` 单调不减：
+
+      ```python
+      if ch in last and last[ch] >= left:
+          left = last[ch] + 1
+      ```
+
+      也可以写成 `left = max(left, last[ch] + 1)`。
+    explanation: |
+      滑动窗口的不变量是「`s[left:right+1]` 中没有重复字符」，并且两个指针都只向右移动，总时间才是 $O(n)$。哈希表 `last` 记的是字符**全局**最近一次出现的位置，它可能早已滑出窗口，用它更新左端之前必须和当前的 `left` 比较。
+
+      测试这类代码时，除了常规用例，一定要构造「重复字符一个在窗口内、一个在窗口外」的输入，如 `"abba"`、`"tmmzuxt"`，再用 $O(n^2)$ 的暴力枚举做随机对拍。
+
+  - id: CS-ALGO-008
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [双指针与滑动窗口]
+    tags: [单调性, 前缀和]
+    question: |
+      求「和至少为 K 的最短连续子数组」。数组元素全为正数时，可以用双指针滑动窗口在 O(n) 内求解；数组含负数时，直接套用这个做法会出错（例如 `[5, -4, 3, 3]`、K = 6）。根本原因是：
+    options:
+      A: '负数破坏了单调性：窗口缩短时和可能反而变大，「缩到不满足就停」会漏掉更短的解'
+      B: '正负数交替累加时窗口和容易溢出，需要改用 64 位整数或大整数累加，算法本身不用改'
+      C: '有负数时最优解可能是空数组（和为 0），而双指针要求窗口至少含一个元素，无法表示它'
+      D: '滑动窗口要求数组有序：含负数时应先排序，让窗口和随右端扩张单调递增，再用双指针'
+    answer: A
+    explanation: |
+      **结论**：滑动窗口正确的前提是单调性。元素非负时，窗口变长和只增不减、变短和只减不增，所以「一旦缩到不满足就停」不会错过答案；有负数时这个前提不成立。
+
+      以 `[5, -4, 3, 3]`、K = 6 为例：右端扫到最后时窗口和为 7，记录长度 4；收缩时去掉 5，和变成 2，不再满足，于是停止，最终答案 4。但若继续去掉 -4，和会回到 6，真正的最短解是 `[3, 3]`，长度 2。
+
+      **正确做法**：前缀和加单调队列。对每个右端点 $j$，在队列中找满足 $P_j-P_i\ge K$ 的最靠右的 $i$；队列里只保留前缀和递增的下标（后来的前缀和更小、位置又更靠右，前面更大的就没用了）。每个下标进出队列各一次，总复杂度 O(n)。
+
+      - B 错：问题与数值范围无关（Python 整数也不会溢出），换成大整数后算法照样会漏解。
+      - C 错：K 为正数时空数组的和为 0，不可能满足条件；问题出在收缩判断上。
+      - D 错：子数组要求连续，排序会破坏原有的相邻关系，题目就变了。
+
+  - id: CS-ALGO-009
+    type: coding
+    difficulty: 2
+    frequency: 2
+    points: [双指针与滑动窗口, Agent工程化编程]
+    tags: [限流, TPM, 手撕]
+    question: |
+      大模型 API 常按「每分钟 token 数（TPM）」限流。实现一个基于**滑动日志**的 token 限流器：
+
+      ```python
+      class TokenRateLimiter:
+          def __init__(self, limit: int, window: float = 60.0): ...
+          def try_acquire(self, tokens: int, now: float) -> bool: ...
+          def used(self, now: float) -> int: ...
+      ```
+
+      - 时刻 `now` 的窗口是左开右闭区间 `(now - window, now]`：放行时间 `t` 满足 `t > now - window` 的请求才计入；
+      - `try_acquire`：若窗口内已用的 token 数加上 `tokens` 不超过 `limit`，就放行、记录并返回 `True`；否则返回 `False`，被拒绝的请求不占额度；
+      - `used(now)` 返回窗口内已放行的 token 总数；
+      - `limit`、`window`、`tokens` 不为正时抛出 `ValueError`；调用方保证 `now` 单调不减；
+      - 每次调用的均摊时间复杂度为 O(1)。
+    answer: |
+      from collections import deque
+
+
+      class TokenRateLimiter:
+          def __init__(self, limit, window=60.0):
+              if limit <= 0 or window <= 0:
+                  raise ValueError("limit 与 window 必须为正")
+              self.limit, self.window = limit, window
+              self.q = deque()               # (放行时间, token 数)，时间单调不减
+              self.total = 0                 # 窗口内的 token 总数
+
+          def _evict(self, now):
+              while self.q and self.q[0][0] <= now - self.window:
+                  self.total -= self.q.popleft()[1]
+
+          def used(self, now):
+              self._evict(now)
+              return self.total
+
+          def try_acquire(self, tokens, now):
+              if tokens <= 0:
+                  raise ValueError("tokens 必须为正")
+              self._evict(now)
+              if self.total + tokens > self.limit:
+                  return False               # 拒绝的请求不占额度
+              self.q.append((now, tokens))
+              self.total += tokens
+              return True
+    test: |
+      import random
+
+      lim = TokenRateLimiter(limit=100, window=60)
+      assert lim.try_acquire(60, now=0)
+      assert not lim.try_acquire(50, now=10)     # 60 + 50 > 100
+      assert lim.try_acquire(40, now=10)         # 恰好用满 100
+      assert lim.used(59.5) == 100
+      assert lim.used(60) == 40                  # t=0 的记录在 now=60 时滑出窗口
+      assert lim.try_acquire(60, now=60)
+      assert not lim.try_acquire(1, now=69.5)    # 窗口 (9.5, 69.5] 内已有 40 + 60
+      assert lim.try_acquire(1, now=70)          # t=10 的 40 个 token 滑出
+      assert not lim.try_acquire(101, now=10**6)
+      for bad in (lambda: TokenRateLimiter(0), lambda: TokenRateLimiter(10, window=0),
+                  lambda: lim.try_acquire(0, now=10**6)):
+          try:
+              bad()
+              raise AssertionError("应抛出 ValueError")
+          except ValueError:
+              pass
+
+      rng = random.Random(0)
+      for _ in range(200):                       # 与「保存全部记录、每次重新求和」的暴力实现对拍
+          limit, window = rng.randint(1, 50), rng.randint(1, 20)
+          lim, acc, t = TokenRateLimiter(limit, window), [], 0
+          for _ in range(100):
+              t += rng.randint(0, 5)
+              tok = rng.randint(1, 20)
+              ok = sum(x for ts, x in acc if ts > t - window) + tok <= limit
+              if ok:
+                  acc.append((t, tok))
+              assert lim.try_acquire(tok, now=t) == ok
+              assert lim.used(t) == sum(x for ts, x in acc if ts > t - window)
+    explanation: |
+      **思路**：用双端队列按时间顺序保存放行记录 `(t, tokens)`，同时维护窗口内的 token 总数 `total`。
+      1. 每次调用先从队头弹出 `t <= now - window` 的过期记录，并从 `total` 中扣掉；
+      2. 判断 `total + tokens <= limit`：放行就入队并累加，否则直接返回 `False`。
+
+      **复杂度**：每条记录最多入队一次、出队一次，n 次调用的总代价是 O(n)，均摊 O(1)；空间与窗口内的请求数成正比。若每次都对整个队列重新求和，单次调用就是 O(窗口内请求数)。
+
+      **与令牌桶对比**：滑动日志精确统计「最近 60 秒」，不会像固定窗口计数那样在窗口交界处放行近 2 倍的流量；代价是要存下窗口内的每一条记录。令牌桶只需保存两个数，并允许一定的突发。
+
+      **工程扩展**：多租户时用 `dict[租户, 限流器]`；多实例部署时，常把记录放进 Redis 有序集合（以时间为分值），用 Lua 脚本把「删除过期记录、求和、写入」做成一次原子操作。大模型请求的输出长度事先未知，可以先按「输入 token 数 + max_tokens」预占额度，请求结束后再按实际用量修正。
+
+  - id: CS-ALGO-010
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [二分查找]
+    tags: [二分答案, 流水线并行, 手撕]
+    question: |
+      流水线并行要把模型的各层**按顺序**切成若干个连续的阶段，每个阶段放在一张卡上，流水线的节拍由最慢的阶段决定。已知每层的耗时，实现：
+
+      ```python
+      def min_max_stage(costs: list[int], p: int) -> int: ...
+      ```
+
+      - 把 `costs` 切成**至多** `p` 段连续、非空的子数组，返回「各段耗时之和的最大值」的最小可能值；
+      - `1 <= len(costs) <= 10**5`，`1 <= costs[i] <= 10**9`，`p >= 1`（`p` 可以大于层数）；
+      - 时间复杂度要求 $O(n\log S)$，$S$ 为总耗时。
+
+      示例：`min_max_stage([4, 2, 3, 5, 1, 6], 3) == 8`，切法为 `[4, 2] | [3, 5] | [1, 6]`。
+    answer: |
+      def min_max_stage(costs, p):
+          def stages_needed(cap):            # 每段之和不超过 cap 时，贪心最少要切成几段
+              cnt, cur = 1, 0
+              for c in costs:
+                  if cur + c > cap:
+                      cnt, cur = cnt + 1, 0
+                  cur += c
+              return cnt
+
+          lo, hi = max(costs), sum(costs)    # 答案一定落在 [最大单层耗时, 总耗时] 之间
+          while lo < hi:
+              mid = (lo + hi) // 2
+              if stages_needed(mid) <= p:    # mid 可行：答案 <= mid
+                  hi = mid
+              else:                          # mid 不可行：答案 > mid
+                  lo = mid + 1
+          return lo
+    test: |
+      import random
+      from functools import lru_cache
+
+      def brute(costs, p):
+          n = len(costs)
+
+          @lru_cache(None)
+          def f(i, parts):                   # costs[i:] 切成至多 parts 段的最优值
+              if i == n:
+                  return 0
+              if parts == 0:
+                  return float("inf")
+              best, s = float("inf"), 0
+              for j in range(i, n):
+                  s += costs[j]
+                  best = min(best, max(s, f(j + 1, parts - 1)))
+              return best
+          return f(0, p)
+
+      assert min_max_stage([4, 2, 3, 5, 1, 6], 3) == 8
+      assert min_max_stage([4, 2, 3, 5, 1, 6], 1) == 21
+      assert min_max_stage([4, 2, 3, 5, 1, 6], 10) == 6
+      assert min_max_stage([7], 3) == 7
+      rng = random.Random(0)
+      for _ in range(300):
+          costs = [rng.randint(1, 20) for _ in range(rng.randint(1, 9))]
+          p = rng.randint(1, 10)
+          assert min_max_stage(costs, p) == brute(tuple(costs), p), (costs, p)
+      big = [rng.randint(1, 10**9) for _ in range(20000)]
+      r = min_max_stage(big, 8)
+      assert max(big) <= r <= sum(big)
+    explanation: |
+      **思路：在答案上二分**。
+      1. **单调性**：如果「每段之和不超过 $x$」时能切成不超过 $p$ 段，那么上限更大时也一定能，所以可行性关于 $x$ 单调，可以二分最小的可行 $x$；
+      2. **判定**：给定上限 $x$，从左到右贪心，当前段装不下就另起一段，得到的就是最少段数（任何可行切分的第一段都不会比贪心的第一段更长，归纳可证）；
+      3. **边界**：答案至少是最大的单层耗时，否则那一层放不进任何阶段；至多是总耗时，即全部放在一段。
+
+      **复杂度**：二分 $O(\log S)$ 次，每次判定 $O(n)$，共 $O(n\log S)$；$S\le10^{14}$ 时约 47 次判定。动态规划解法是 $O(n^2p)$，层数多时太慢。
+
+      **易错点**：
+      - `lo` 不能从 0 开始：上限小于某一层的耗时时，判定函数会多数出一个空段，可能把不可行误判为可行。例如 `costs=[10]`、`p=2` 会得到 0；
+      - `mid` 可行时应收缩到 `hi = mid`，而不是 `mid - 1`，否则会丢掉答案。
+
+      真实的流水线切分还要考虑每段的显存与阶段间的通信量，但核心仍是这种「最小化最大值」的模型。
+
+  - id: CS-ALGO-011
+    type: code_debug
+    difficulty: 2
+    frequency: 2
+    points: [二分查找]
+    tags: [二分答案, 死循环]
+    question: |
+      显存为 80 GB 的卡上，模型权重占 14 GB，每条序列的 KV Cache 占 1.25 GB。要用二分查找求最多能同时放下多少条序列。`fits(b)` 判断 `b` 条序列能否放下，它关于 `b` 单调（`b` 可行则 `b - 1` 也可行），并且 `fits(0)` 恒为真。下面的实现在某些输入下永远不返回，请指出原因并修正。
+    code: |
+      def max_batch(fits, hi):
+          """返回 [0, hi] 内最大的可行 b"""
+          lo = 0
+          while lo < hi:
+              mid = (lo + hi) // 2
+              if fits(mid):
+                  lo = mid
+              else:
+                  hi = mid - 1
+          return lo
+    fixed_code: |
+      def max_batch(fits, hi):
+          """返回 [0, hi] 内最大的可行 b"""
+          lo = 0
+          while lo < hi:
+              mid = (lo + hi + 1) // 2
+              if fits(mid):
+                  lo = mid
+              else:
+                  hi = mid - 1
+          return lo
+    test: |
+      def make_fits(ok):
+          calls = [0]
+
+          def fits(b):
+              calls[0] += 1
+              if calls[0] > 100:
+                  raise RuntimeError("fits 被调用超过 100 次，疑似死循环")
+              return ok(b)
+          return fits
+
+      assert max_batch(make_fits(lambda b: 14 + 1.25 * b <= 80), 1024) == 52
+      for limit in range(0, 40):
+          for hi in range(0, 40):
+              assert max_batch(make_fits(lambda b: b <= limit), hi) == min(limit, hi)
+    answer: |
+      **问题**：第 5 行 `mid = (lo + hi) // 2` 向下取整。区间缩到 `hi = lo + 1` 时，`mid == lo`；若 `fits(mid)` 为真，执行 `lo = mid` 后区间没有任何变化，循环永远不会结束。例如 `fits = lambda b: b <= 0`、`hi = 1` 时会立刻卡死。
+
+      **修正**：「找最大可行值」时 `mid` 要**向上取整**，保证 `mid > lo`，每一轮区间至少缩小 1：
+
+      ```python
+      mid = (lo + hi + 1) // 2
+      ```
+    explanation: |
+      **不变量**：`lo` 始终可行，答案在闭区间 `[lo, hi]` 内，`lo == hi` 时结束。两个分支都必须让区间严格变小：可行时 `lo = mid`，要求 `mid > lo`；不可行时 `hi = mid - 1`，要求 `mid >= lo`。向上取整同时满足这两点。
+
+      **配套规则**：
+      - 找最小可行值（`hi = mid`、`lo = mid + 1`）配向下取整；
+      - 找最大可行值（`lo = mid`、`hi = mid - 1`）配向上取整。
+
+      测试时给 `fits` 加一个调用计数，超过合理次数就报错，可以把「死循环」变成能断言的失败。本题由 $14+1.25b\le80$ 得 $b\le52.8$，答案为 52。
+
+  - id: CS-ALGO-012
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [二分查找]
+    tags: [二分答案]
+    question: |
+      「二分答案」只要求答案落在一个有界的整数区间内；即使可行性判定 `check(x)` 关于 `x` 不单调，也能用 $O(\log(\text{区间长度}))$ 次判定找到最小的可行 `x`。
+    answer: false
+    explanation: |
+      **错误**。二分答案的前提是判定函数**单调**：存在分界点 $x^*$，$x<x^*$ 时全不可行，$x\ge x^*$ 时全可行（F…FT…T）。只有这样，判定一次 `mid` 之后才能放心地丢掉一半区间。
+
+      反例：在 `[1, 20]` 上找最小的可行值，`check(x)` 只在 $x=3$ 和 $10\le x\le20$ 时为真。二分先测 `mid = 10`（真），区间收缩到 `[1, 10]`；再依次测 5、8、9（都为假），最后返回 10，漏掉了更小的 3。
+
+      所以用二分答案之前，先确认单调性：「batch 越大越放不下」「每段上限越大越容易切分」「给的时间越长越能完成」都是单调的；「恰好等于某个值」「模型在某个温度下答对」之类的条件通常不单调，只能逐个检查或换别的方法。
+
+  - id: CS-ALGO-013
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [栈与单调栈, Agent工程化编程]
+    tags: [流式 JSON, 工具调用, 手撕]
+    question: |
+      模型以流式方式输出工具调用的 JSON 参数，前端希望在生成过程中就能解析、展示「到目前为止的内容」。实现：
+
+      ```python
+      def close_json(prefix: str) -> str: ...
+      ```
+
+      返回最短的后缀 `suffix`，使 `prefix + suffix` 成为合法 JSON。输入保证：`prefix` 是某个合法 JSON 文本的前缀，并且**只需**补上未闭合的字符串引号和括号就能变成合法 JSON（不会停在 `{"a":` 这类还缺值的位置，也不会停在 `tru` 这类字面量中间或转义序列中间）。字符串里可能出现括号与转义字符。
+
+      | `prefix`（JSON 原文） | 返回值 |
+      |---|---|
+      | `{"a": [1, 2` | `]}` |
+      | `{"msg": "he said \"hi` | `"}` |
+      | `["}{", {"k": [` | `]}]` |
+      | `[1, {"t": true}]` | 空串 |
+    answer: |
+      def close_json(prefix):
+          stack = []                     # 尚未闭合的容器，存放对应的右括号
+          in_str = esc = False
+          for ch in prefix:
+              if in_str:
+                  if esc:
+                      esc = False        # 转义序列的第二个字符，原样跳过
+                  elif ch == "\\":
+                      esc = True
+                  elif ch == '"':
+                      in_str = False
+              elif ch == '"':
+                  in_str = True
+              elif ch in "[{":
+                  stack.append("]" if ch == "[" else "}")
+              elif ch in "]}":
+                  stack.pop()
+          return ('"' if in_str else "") + "".join(reversed(stack))
+    test: |
+      import json
+      import random
+      from itertools import product
+
+      assert close_json('{"a": [1, 2') == "]}"
+      assert close_json('{"msg": "he said \\"hi') == '"}'
+      assert close_json('["}{", {"k": [') == "]}]"
+      assert close_json('[{"k": "x\\\\"}, [') == "]]"
+      assert close_json('[1, {"t": true}]') == ""
+      assert close_json('"ab') == '"'
+
+      def oracle(prefix, max_depth=8):
+          """暴力：在「可选的引号 + 若干右括号」中找能让 json.loads 成功的最短后缀"""
+          for n in range(max_depth + 1):
+              for q in ("", '"'):
+                  for tail in product("]}", repeat=n):
+                      s = q + "".join(tail)
+                      try:
+                          json.loads(prefix + s)
+                          return s
+                      except ValueError:
+                          pass
+          return None
+
+      rng = random.Random(0)
+
+      def rand_value(d=0):
+          r = rng.random()
+          if d < 3 and r < 0.3:
+              return [rand_value(d + 1) for _ in range(rng.randint(0, 3))]
+          if d < 3 and r < 0.6:
+              return {rng.choice(["a", "b", "c{", "d]"]): rand_value(d + 1) for _ in range(rng.randint(0, 3))}
+          return rng.choice([1, -2.5, True, None, "x", 'q"uote', "back\\slash", "[{", "中文"])
+
+      for _ in range(100):                   # 随机 JSON 的每个前缀：凡是能补全的，都与暴力结果对拍
+          doc = json.dumps(rand_value(), ensure_ascii=False)
+          for i in range(len(doc) + 1):
+              want = oracle(doc[:i])
+              if want is not None:
+                  assert close_json(doc[:i]) == want, doc[:i]
+    explanation: |
+      **思路**：从左到右扫描一遍，用栈记录尚未闭合的 `[`、`{`，再用两个布尔量记录「是否在字符串内」「上一个字符是否是转义符 `\`」。
+      1. 字符串外：遇到 `"` 进入字符串；遇到 `[`、`{` 把对应的右括号入栈；遇到 `]`、`}` 出栈；
+      2. 字符串内：遇到 `\` 就跳过下一个字符（它可能是 `"`，也可能是另一个 `\`）；遇到未被转义的 `"` 才离开字符串；括号一律忽略；
+      3. 扫描结束：若仍在字符串内，先补一个 `"`，再把栈里的右括号从栈顶到栈底依次输出。
+
+      **复杂度**：$O(n)$ 时间，$O(\text{嵌套深度})$ 空间。流式场景下可以把状态（栈和两个布尔量）保存下来，新 token 到达时只扫描增量部分，总代价仍是线性的。
+
+      **易错点**：
+      - 不处理转义：`"he said \"hi` 中的 `\"` 会被误当成字符串结束；
+      - 把 `\\` 理解成「转义了后面的引号」：在 `"x\\"` 里，第二个反斜杠被第一个转义，后面的 `"` 才是真正的结束引号；
+      - 不区分字符串内外：字符串里的 `}`、`[` 会打乱括号栈。
+
+      **工程上**：真实的流式 JSON 解析器还要处理停在键名、冒号、逗号或字面量中间的情况（例如回退到上一个完整的值）。如果要求输出严格符合 JSON Schema，应在解码阶段用约束解码来保证。
+
+  - id: CS-ALGO-014
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [栈与单调栈]
+    tags: [下一个更大元素]
+    question: |
+      下面用单调栈计算：对每一天，还要再等几天 P99 时延才会出现**更高**的值（之后不再出现更高值则为 0）。输出是什么？
+    code: |
+      def days_until_higher(xs):
+          ans, stack = [0] * len(xs), []        # 栈中存下标，对应的值自底向上单调不增
+          for i, x in enumerate(xs):
+              while stack and xs[stack[-1]] < x:
+                  j = stack.pop()
+                  ans[j] = i - j
+              stack.append(i)
+          return ans, stack
+
+      p99 = [120, 90, 95, 90, 130, 80, 80, 100]
+      ans, rest = days_until_higher(p99)
+      print(ans)
+      print(rest)
+    answer: |
+      [4, 1, 2, 1, 0, 2, 1, 0]
+      [4, 7]
+    explanation: |
+      栈中保存「还没找到更高值」的下标，对应的值自底向上单调不增。新元素到来时，把栈顶所有**严格小于**它的下标弹出，这些下标的答案就是两个下标之差。
+
+      逐步执行：
+      - i = 2（95）弹出 1（90），ans[1] = 1；
+      - i = 4（130）依次弹出 3（90）、2（95）、0（120），ans[3] = 1，ans[2] = 2，ans[0] = 4；
+      - i = 6（80）遇到栈顶 5（80），二者相等，不弹出；
+      - i = 7（100）弹出 6、5，ans[6] = 1，ans[5] = 2。第 6 天的 80 与第 5 天相等，不算「更高」，所以第 5 天要等到第 7 天。
+
+      最后栈里剩下 `[4, 7]`：130 和 100 之后再没有更高的值，答案保持 0。
+
+      **易错点**：比较用 `<` 还是 `<=` 决定了「相等算不算更高」。若写成 `<=`，ans[5] 会变成 1。每个下标最多入栈、出栈各一次，总复杂度为 $O(n)$。
+
+  - id: CS-ALGO-015
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [栈与单调栈, 复杂度分析]
+    tags: [均摊分析]
+    question: |
+      用单调栈求每个元素右侧第一个更大的元素时，代码是外层 `for` 循环套内层 `while` 循环（内层不断弹出比当前元素小的栈顶），但总时间复杂度仍是 O(n)。最准确的理由是：
+    options:
+      A: '栈内元素保持单调，内层 while 每次最多只会弹出常数个元素'
+      B: '栈中元素单调递减，栈的大小始终是常数级，每次 while 的代价因而有常数上界'
+      C: '弹出时可以用二分查找定位截断位置，每个元素的处理只需 $O(\log n)$ 而不是 $O(n)$'
+      D: '每个下标最多入栈、出栈各一次，全部 while 迭代合计不超过 n 次'
+    answer: D
+    explanation: |
+      **结论**：这是聚合分析（aggregate analysis）：不看单次循环，而看整个过程的总操作数。每次 while 迭代都会弹出一个下标，而每个下标只会入栈一次，所以全部 while 迭代合计不超过 $n$ 次，加上 $n$ 次入栈，总共 $O(n)$。
+
+      - A 错：单次 while 可能弹出很多元素。例如 `[5, 4, 3, 2, 1, 6]`，处理 6 时一次弹出 5 个。
+      - B 错：输入严格递减时，所有下标都留在栈里，栈的大小是 $n$，并非常数级。
+      - C 错：单调栈只从栈顶逐个弹出，不做二分查找；即使每个元素都花 $O(\log n)$，合计也是 $O(n\log n)$，解释不了 $O(n)$。
+
+      延伸：同样的论证适用于滑动窗口（左右指针各自最多移动 $n$ 步）和单调队列。用势能法表述：令势能为栈的大小，入栈让势能加 1，每次弹出让势能减 1，均摊代价为常数。
+
+  - id: CS-ALGO-016
+    type: coding
+    difficulty: 2
+    frequency: 3
+    points: [堆与TopK, 哈希表]
+    tags: [Top-K, 手撕]
+    question: |
+      统计 Agent 日志中被调用得最多的工具名。实现：
+
+      ```python
+      def top_k_frequent(words: list[str], k: int) -> list[str]: ...
+      ```
+
+      - 返回出现次数最多的 `k` 个词，按次数从高到低排列，次数相同时按字典序升序；不同的词少于 `k` 个时全部返回；`k <= 0` 时返回空列表；
+      - 设共有 $n$ 个词、$m$ 个不同的词，要求时间复杂度为 $O(n+m\log k)$：维护大小不超过 `k` 的堆，不要对全部 $m$ 个词排序，也不要直接调用 `heapq.nlargest` / `heapq.nsmallest`。
+
+      示例：`top_k_frequent(["rag", "agent", "rag", "llm", "agent", "rag", "tool"], 2) == ["rag", "agent"]`。
+    answer: |
+      import heapq
+      from collections import Counter
+
+
+      class _Entry:
+          __slots__ = ("cnt", "word")
+
+          def __init__(self, cnt, word):
+              self.cnt, self.word = cnt, word
+
+          def __lt__(self, other):           # 「更差」的更小：次数少；次数相同则字典序大
+              if self.cnt != other.cnt:
+                  return self.cnt < other.cnt
+              return self.word > other.word
+
+
+      def top_k_frequent(words, k):
+          if k <= 0:
+              return []
+          heap = []                          # 小顶堆，堆顶是当前入选者中最差的一个
+          for word, cnt in Counter(words).items():
+              e = _Entry(cnt, word)
+              if len(heap) < k:
+                  heapq.heappush(heap, e)
+              elif heap[0] < e:              # 新词比堆顶好，替换堆顶
+                  heapq.heapreplace(heap, e)
+          out = []
+          while heap:
+              out.append(heapq.heappop(heap).word)
+          return out[::-1]                   # 弹出顺序是从差到好，反转
+    test: |
+      import random
+      from collections import Counter
+
+      assert top_k_frequent(["rag", "agent", "rag", "llm", "agent", "rag", "tool"], 2) == ["rag", "agent"]
+      assert top_k_frequent(["b", "a", "c", "a", "b", "c"], 2) == ["a", "b"]
+      assert top_k_frequent(["x", "y"], 5) == ["x", "y"]
+      assert top_k_frequent([], 3) == [] and top_k_frequent(["a"], 0) == []
+      rng = random.Random(0)
+      for _ in range(500):
+          words = [rng.choice("abcdefgh") * rng.randint(1, 2) for _ in range(rng.randint(0, 40))]
+          k = rng.randint(1, 12)
+          cnt = Counter(words)
+          assert top_k_frequent(words, k) == sorted(cnt, key=lambda w: (-cnt[w], w))[:k]
+    explanation: |
+      **思路**：先用 `Counter` 计数（$O(n)$），再维护大小为 $k$ 的**小顶堆**，堆顶是当前入选者中「最差」的一个：新词比堆顶好才替换堆顶。最后依次弹出（从差到好），反转即可。
+
+      **关键是比较规则**：「好」的定义是次数多，次数相同时字典序小。堆顶要放最差的，所以 `__lt__` 写成：次数少的更小；次数相同时**字典序大**的更小。如果直接把 `(次数, 词)` 元组放进小顶堆，次数相同时会把字典序小的词当成更差的先淘汰，结果正好反了：`["b", "a", "c", "a", "b", "c"]`、`k = 2` 会得到 `["c", "b"]`，正确答案是 `["a", "b"]`。
+
+      **复杂度**：计数 $O(n)$，堆操作 $O(m\log k)$，空间 $O(m)$。另一种 $O(n)$ 的做法是按次数分桶（桶的下标就是次数），再从高到低收集。
+
+      **工程上**：直接写 `heapq.nsmallest(k, cnt.items(), key=lambda kv: (-kv[1], kv[0]))` 即可，它内部同样维护大小为 $k$ 的堆。数据大到单机放不下时，先按词的哈希分片计数，每片求局部 Top-K，再归并。
+
+  - id: CS-ALGO-017
+    type: code_debug
+    difficulty: 2
+    frequency: 2
+    points: [堆与TopK]
+    tags: [heapq, 平手裁决]
+    question: |
+      下面的函数从检索结果中取得分最高的 `k` 篇文档。上线后偶发崩溃，报错 `TypeError: '<' not supported between instances of 'dict' and 'dict'`。请找出原因并修正，要求得分相同时保留先出现的文档。
+    code: |
+      import heapq
+
+      def top_docs(docs, k):
+          """docs 中每项形如 {"id": ..., "score": ...}；返回得分最高的 k 篇，按得分降序"""
+          heap = []
+          for d in docs:
+              heapq.heappush(heap, (d["score"], d))
+              if len(heap) > k:
+                  heapq.heappop(heap)
+          heap.sort(key=lambda t: t[0], reverse=True)
+          return [d for _, d in heap]
+    fixed_code: |
+      import heapq
+
+      def top_docs(docs, k):
+          """docs 中每项形如 {"id": ..., "score": ...}；返回得分最高的 k 篇，按得分降序"""
+          heap = []
+          for i, d in enumerate(docs):
+              heapq.heappush(heap, (d["score"], -i, d))   # -i：同分时先弹出后出现的
+              if len(heap) > k:
+                  heapq.heappop(heap)
+          heap.sort(key=lambda t: (-t[0], -t[1]))         # 得分降序，同分按出现顺序
+          return [d for _, _, d in heap]
+    test: |
+      docs = [{"id": "a", "score": 0.9}, {"id": "b", "score": 0.7},
+              {"id": "c", "score": 0.9}, {"id": "d", "score": 0.8}]
+      assert [d["id"] for d in top_docs(docs, 2)] == ["a", "c"]
+      assert [d["id"] for d in top_docs(docs, 3)] == ["a", "c", "d"]
+      same = [{"id": i, "score": 1.0} for i in range(6)]
+      assert [d["id"] for d in top_docs(same, 3)] == [0, 1, 2]
+      assert top_docs([], 3) == []
+    answer: |
+      **原因**：堆里存的是元组 `(score, d)`，元组按元素逐个比较：得分不同时只比较第一项；一旦两篇文档**得分相同**，就会接着比较第二项，也就是两个 dict，而 dict 之间不支持 `<`，于是抛出 TypeError。检索结果里同分并不罕见（重复文档、离散的打分特征等），所以表现为「偶发」。
+
+      **修正**：在得分后面插入一个一定不会相同的序号作为平手裁决（tie-breaker），dict 就永远不会被比较。用 `-i` 可以在同分时先淘汰后出现的文档：
+
+      ```python
+      for i, d in enumerate(docs):
+          heapq.heappush(heap, (d["score"], -i, d))
+          if len(heap) > k:
+              heapq.heappop(heap)
+      heap.sort(key=lambda t: (-t[0], -t[1]))
+      return [d for _, _, d in heap]
+      ```
+    explanation: |
+      堆（以及 `sorted`）对元素的唯一要求是能比较大小。凡是把「(优先级, 负载)」放进堆的写法，都要想到优先级相同时会不会比较到负载：负载是 dict、自定义对象或 numpy 数组时会直接报错；即使能比较（如字符串），也会引入意料之外的顺序。Python 文档在 heapq 的「优先队列实现说明」中推荐的就是「优先级、递增计数、任务」三元组。
+
+      更省事的写法是 `heapq.nlargest(k, docs, key=lambda d: d["score"])`：它只比较 key，并且与 `sorted(docs, key=..., reverse=True)[:k]` 等价，同分时保持原有顺序。
+    source: 'Python 文档：heapq，https://docs.python.org/3/library/heapq.html'
+
+  - id: CS-ALGO-018
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [堆与TopK]
+    tags: [Top-K, 海量数据]
+    question: |
+      日志里有 10 亿个请求耗时，机器内存只放得下几百万个数。要找出耗时最大的 1000 个，最合适的做法是：
+    options:
+      A: '把 10 亿个数全部读入内存，排序后取前 1000 个'
+      B: '维护一个大小为 1000 的小顶堆，新数比堆顶大就替换堆顶，扫描一遍即可'
+      C: '维护一个大小为 1000 的大顶堆，新数比堆顶小就替换堆顶，扫描一遍即可'
+      D: '把 10 亿个数全部建成一个小顶堆，再弹出 1000 次'
+    answer: B
+    explanation: |
+      **结论**：小顶堆的堆顶是「当前入选的 1000 个数里最小的那个」，也就是入选门槛。新数大于门槛才有资格入选，替换堆顶后门槛随之更新。只需扫描一遍，时间 $O(n\log k)$，内存 $O(k)$。
+
+      - A 错：要把 10 亿个数全部读入内存，超出限制（仅 8 字节整数就要 8 GB，Python 对象还要大得多）。
+      - C 错：大顶堆的堆顶是堆里最大的数，「比堆顶小就替换」会不断留下更小的数，最后得到的是最小的 1000 个。
+      - D 错：把 10 亿个数全部建成堆，同样要把它们都放进内存，超出限制。
+
+      **延伸**：数据分布在多台机器上时，每台各自求 Top-1000，再把这些候选合并求一次；快速选择平均 $O(n)$，但要求数据整体放在内存里，适合一次性的离线计算，不适合数据流。
+
+  - id: CS-ALGO-019
+    type: coding
+    difficulty: 3
+    frequency: 3
+    points: [链表]
+    tags: [K 个一组反转, 手撕]
+    question: |
+      实现链表的「K 个一组反转」：
+
+      ```python
+      class ListNode:
+          def __init__(self, val=0, next=None):
+              self.val, self.next = val, next
+
+      def reverse_k_group(head: ListNode | None, k: int) -> ListNode | None: ...
+      ```
+
+      - 从头开始每 `k` 个节点反转一次，最后不足 `k` 个的节点保持原顺序；`k >= 1`；
+      - 必须通过修改指针完成，不能只交换节点的值（测试会检查节点对象本身的顺序）；
+      - 时间复杂度 O(n)，额外空间 O(1)。
+
+      示例：`1→2→3→4→5`，`k = 2` 得到 `2→1→4→3→5`；`k = 3` 得到 `3→2→1→4→5`。
+    answer: |
+      class ListNode:
+          def __init__(self, val=0, next=None):
+              self.val, self.next = val, next
+
+
+      def reverse_k_group(head, k):
+          dummy = ListNode(0, head)
+          tail = dummy                           # 已处理部分的尾节点
+          while True:
+              node = tail                        # 先确认后面还有 k 个节点
+              for _ in range(k):
+                  node = node.next
+                  if node is None:
+                      return dummy.next          # 不足 k 个：保持原样
+              first, nxt = tail.next, node.next  # 本组首节点、下一组首节点
+              prev, cur = nxt, first             # 组内原地反转，反转后的尾直接接上下一组
+              while cur is not nxt:
+                  cur.next, prev, cur = prev, cur, cur.next
+              tail.next = prev                   # prev 是本组反转后的头
+              tail = first                       # 原来的首节点成了本组的尾
+    test: |
+      import random
+
+      def build(vals):
+          nodes = [ListNode(v) for v in vals]
+          for a, b in zip(nodes, nodes[1:]):
+              a.next = b
+          return (nodes[0] if nodes else None), nodes
+
+      def collect(head):
+          out = []
+          while head is not None:
+              out.append(head)
+              head = head.next
+              assert len(out) <= 10**4, "链表出现了环"
+          return out
+
+      def expect_order(n, k):
+          order = []
+          for s in range(0, n - n % k, k):
+              order += list(range(s + k - 1, s - 1, -1))
+          return order + list(range(n - n % k, n))
+
+      assert reverse_k_group(None, 3) is None
+      head, nodes = build([1, 2, 3, 4, 5])
+      assert [x.val for x in collect(reverse_k_group(head, 2))] == [2, 1, 4, 3, 5]
+      head, nodes = build([1, 2, 3, 4, 5])
+      assert [x.val for x in collect(reverse_k_group(head, 3))] == [3, 2, 1, 4, 5]
+      rng = random.Random(0)
+      for _ in range(300):
+          n, k = rng.randint(0, 12), rng.randint(1, 6)
+          head, nodes = build([rng.randint(0, 3) for _ in range(n)])   # 值可以重复
+          got = collect(reverse_k_group(head, k))
+          assert got == [nodes[i] for i in expect_order(n, k)]          # 检查的是节点对象的顺序
+    explanation: |
+      **思路**：用哑节点 `dummy` 统一处理头节点；`tail` 指向已处理部分的尾节点。每一轮：
+      1. 从 `tail` 往后数 `k` 步，不够 `k` 个就直接返回，剩余部分保持原样；
+      2. 记下本组首节点 `first` 和下一组首节点 `nxt`，在组内做标准的原地反转。把 `prev` 初始化为 `nxt`，反转完成时本组的新尾（原来的 `first`）就自动接上了下一组；
+      3. 让 `tail.next` 指向本组的新头 `prev`，再把 `tail` 移到 `first`，进入下一轮。
+
+      **复杂度**：每个节点被「数」一次、反转一次，O(n) 时间，O(1) 额外空间。
+
+      **易错点**：
+      - 反转前没先确认够 `k` 个，导致最后一组被错误反转；
+      - 反转后忘了把上一组的尾接到本组的新头，或者本组的尾没接上下一组，链表断开或成环；
+      - `cur.next, prev, cur = prev, cur, cur.next` 这种多重赋值依赖「右边先全部求值」，拆成多行时一定要先保存 `cur.next`。
+
+      面试中常见的追问是递归写法（空间 O(n/k)）以及「从尾部开始分组」的变体（先求长度，跳过开头 `n % k` 个节点即可）。
+
+  - id: CS-ALGO-020
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [链表]
+    tags: [Floyd 判圈, 快慢指针]
+    question: |
+      单链表依次为 A→B→C→D→E→F→G→H→I，且 I 的 next 指回 F（A～E 不在环上，F、G、H、I 构成长度为 4 的环）。用 Floyd 判圈：慢指针每次走 1 步、快指针每次走 2 步，同时从 A 出发。两者第一次相遇时，慢指针走了 ____ 步，相遇点是节点 ____；然后把其中一个指针放回 A，两个指针都改为每次走 1 步，再各走 ____ 步后相遇于节点 ____。
+    answer: ['8', 'I', '5', 'F']
+    explanation: |
+      **第一次相遇**：设环外部分长 $a=5$，环长 $L=4$。慢指针走 $t$ 步、快指针走 $2t$ 步，二者都在环上（$t\ge a$）且位置相同，要求 $2t-t=t$ 是 $L$ 的倍数。满足 $t\ge5$ 的最小的 4 的倍数是 8。慢指针走 8 步：A→B→C→D→E→F→G→H→I，停在 **I**；快指针走 16 步，进环后又绕了整数圈，也在 I。
+
+      **找入口**：相遇时慢指针在环上距入口 $(t-a)\bmod L=3$ 步的位置。从这里再走 $a$ 步，到达距入口 $(t-a+a)\bmod L=t\bmod L=0$ 步处，即入口。而另一个从 A 出发的指针走 $a$ 步也恰好到达入口，所以两者再各走 **5** 步，在入口 **F** 相遇（之前一个在环外、一个在环上，不可能提前相遇）。
+
+      **结论**：Floyd 算法用 O(1) 空间判断是否有环并求出入口；若用哈希集合记录访问过的节点则需要 O(n) 空间。求环长只需在相遇点让一个指针绕一圈计数。
+
+  - id: CS-ALGO-021
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [链表, 双指针与滑动窗口]
+    tags: [相交链表]
+    question: |
+      两个单链表在某个节点之后合并成同一段（Y 字形）。经典解法：指针 `pa` 从链表 A 的头出发、`pb` 从链表 B 的头出发，每次各走一步；某个指针走到末尾（`None`）后，下一步转到另一个链表的头继续走，直到 `pa is pb` 为止，返回 `pa`。关于这个算法，下列说法正确的是：
+    options:
+      A: '只有两个链表长度相同时才能找到交点；长度不同时两个指针始终错开，会一直循环下去'
+      B: '若两个链表不相交，两个指针会在两条链表之间无限交替地走下去，所以必须先比较两条链表的尾节点'
+      C: '切换链表抵消了长度差：两个指针走过相同的步数后同时到达交点；不相交时会同时变成 None，循环结束'
+      D: '该算法需要用哈希集合记录其中一条链表的全部节点，额外空间与这条链表的长度成正比'
+    answer: C
+    explanation: |
+      **结论**：「走完自己的再走对方的」让两个指针走过的总路程相同，从而消除了长度差。
+
+      `pa` 走过 A 独有的 $a$ 个节点、公共的 $c$ 个节点，再走 B 独有的 $b$ 个节点，到达交点；`pb` 走 $b+c+a$ 个节点也到达交点，两者同时到达。若不相交（$c=0$），两者都在走完 $a+b$ 个节点后同时变成 `None`，`pa is pb` 成立，返回 `None`。
+
+      - A 错：长度不同恰恰是这个技巧要解决的问题，切换链表后长度差被抵消。
+      - B 错：不相交时两个指针都在走完 $a+b$ 个节点后同时到达 `None`，`pa is pb` 成立，循环自然结束，不必先比较尾节点。
+      - D 错：只用两个指针，额外空间 O(1)；用哈希集合记录 A 的所有节点的做法才需要 O(a + c) 的空间。
+
+      另一种常见解法是先分别求出两个链表的长度，让长链表的指针先走「长度差」步，再同步前进。
+
+  - id: CS-ALGO-022
+    type: coding
+    difficulty: 2
+    frequency: 3
+    points: [树与遍历]
+    tags: [最近公共祖先, 手撕]
+    question: |
+      实现二叉树中两个节点的最近公共祖先（LCA）：
+
+      ```python
+      class TreeNode:
+          def __init__(self, val, left=None, right=None):
+              self.val, self.left, self.right = val, left, right
+
+      def lowest_common_ancestor(root: TreeNode, p: TreeNode, q: TreeNode) -> TreeNode: ...
+      ```
+
+      - 普通二叉树（不是二叉搜索树），节点值**可能重复**，所以要按节点对象本身判断；
+      - `p`、`q` 保证在树中，可以是同一个节点；一个节点也算作它自己的祖先；
+      - 树高不超过 500，时间复杂度 O(n)。
+    answer: |
+      class TreeNode:
+          def __init__(self, val, left=None, right=None):
+              self.val, self.left, self.right = val, left, right
+
+
+      def lowest_common_ancestor(root, p, q):
+          if root is None or root is p or root is q:
+              return root                        # 找到 p 或 q（或走到空）就向上报告
+          left = lowest_common_ancestor(root.left, p, q)
+          right = lowest_common_ancestor(root.right, p, q)
+          if left is not None and right is not None:
+              return root                        # p、q 分居两侧：root 就是分叉点
+          return left if left is not None else right
+    test: |
+      import random
+
+      def random_tree(n, rng):
+          nodes = [TreeNode(rng.randint(0, 2)) for _ in range(n)]   # 值可以重复
+          parent = {}
+          for i in range(1, n):
+              while True:
+                  p = rng.randrange(i)
+                  side = rng.choice(["left", "right"])
+                  if getattr(nodes[p], side) is None:
+                      setattr(nodes[p], side, nodes[i])
+                      parent[nodes[i]] = nodes[p]
+                      break
+          return nodes, parent
+
+      def brute(parent, p, q):                   # 暴力：p 的祖先集合，再从 q 往上找
+          anc = set()
+          while p is not None:
+              anc.add(p)
+              p = parent.get(p)
+          while q not in anc:
+              q = parent[q]
+          return q
+
+      a, b, c, d, e = (TreeNode(v) for v in (3, 5, 1, 6, 2))
+      a.left, a.right, b.left, b.right = b, c, d, e
+      assert lowest_common_ancestor(a, d, e) is b
+      assert lowest_common_ancestor(a, d, c) is a
+      assert lowest_common_ancestor(a, b, e) is b
+      assert lowest_common_ancestor(a, e, e) is e
+      rng = random.Random(0)
+      for _ in range(300):
+          nodes, parent = random_tree(rng.randint(1, 30), rng)
+          p, q = rng.choice(nodes), rng.choice(nodes)
+          assert lowest_common_ancestor(nodes[0], p, q) is brute(parent, p, q)
+    explanation: |
+      **思路**：后序遍历，让每棵子树向上报告「我这里找到了什么」：
+      - 当前节点是空、`p` 或 `q` 时，直接返回它自己；
+      - 否则分别问左右子树：两边都有返回值，说明 `p`、`q` 分居两侧，当前节点就是最近的分叉点；只有一边有，就把那一边的结果继续往上传。
+
+      为什么遇到 `p` 就可以直接返回、不再往下找 `q`？如果 `q` 在 `p` 的子树里，答案就是 `p`；如果不在，`q` 一定在别的分支，会由上层的某个节点把两边汇合。
+
+      **复杂度**：每个节点访问一次，O(n) 时间，O(h) 递归栈空间。
+
+      **易错点**：用 `==` 比较节点值而不是 `is` 比较节点对象，值重复时会出错；树很深（比如退化成链）时递归会超过 Python 默认约 1000 层的限制，可以改用迭代：先用栈遍历记录每个节点的父节点，再把 `p` 的祖先放进集合，从 `q` 往上找第一个在集合里的节点。若是二叉搜索树，则可以利用大小关系，从根往下走一条路径即可。
+
+  - id: CS-ALGO-023
+    type: code_debug
+    difficulty: 1
+    frequency: 3
+    points: [树与遍历]
+    tags: [二叉搜索树]
+    question: |
+      下面的函数判断一棵二叉树是否是二叉搜索树（左子树所有节点都小于根，右子树所有节点都大于根，不允许重复值）。它对某些不合法的树也返回 `True`，请找出 bug 并修正。
+    code: |
+      class TreeNode:
+          def __init__(self, val, left=None, right=None):
+              self.val, self.left, self.right = val, left, right
+
+
+      def is_bst(node):
+          if node is None:
+              return True
+          if node.left is not None and node.left.val >= node.val:
+              return False
+          if node.right is not None and node.right.val <= node.val:
+              return False
+          return is_bst(node.left) and is_bst(node.right)
+    fixed_code: |
+      class TreeNode:
+          def __init__(self, val, left=None, right=None):
+              self.val, self.left, self.right = val, left, right
+
+
+      def is_bst(node, lo=float("-inf"), hi=float("inf")):
+          if node is None:
+              return True
+          if not lo < node.val < hi:
+              return False
+          return is_bst(node.left, lo, node.val) and is_bst(node.right, node.val, hi)
+    test: |
+      import random
+
+      T = TreeNode
+      assert is_bst(None)
+      assert is_bst(T(5, T(3, T(1), T(4)), T(8, None, T(9))))
+      assert not is_bst(T(5, T(3, None, T(6)), T(8)))       # 6 在 5 的左子树里
+      assert not is_bst(T(5, T(3), T(8, T(4))))             # 4 在 5 的右子树里
+      assert not is_bst(T(5, T(5)))                          # 不允许重复值
+
+      def inorder(node, out):
+          if node:
+              inorder(node.left, out)
+              out.append(node.val)
+              inorder(node.right, out)
+          return out
+
+      rng = random.Random(0)
+      for _ in range(500):
+          nodes = [T(rng.randint(0, 9)) for _ in range(rng.randint(1, 8))]
+          for i in range(1, len(nodes)):
+              while True:
+                  p = rng.randrange(i)
+                  side = rng.choice(["left", "right"])
+                  if getattr(nodes[p], side) is None:
+                      setattr(nodes[p], side, nodes[i])
+                      break
+          vals = inorder(nodes[0], [])
+          assert is_bst(nodes[0]) == all(x < y for x, y in zip(vals, vals[1:]))
+    answer: |
+      **问题**：第 9～12 行只比较了节点与它的**直接孩子**。二叉搜索树的约束是对整棵子树的：左子树中所有节点都要小于根。例如根为 5、左孩子为 3、3 的右孩子为 6：每对父子关系都合法，但 6 出现在 5 的左子树里，原函数却返回 `True`。
+
+      **修正**：向下递归时传递取值范围 `(lo, hi)`，每个节点都必须严格落在祖先们给出的上下界之内：
+
+      ```python
+      def is_bst(node, lo=float("-inf"), hi=float("inf")):
+          if node is None:
+              return True
+          if not lo < node.val < hi:
+              return False
+          return is_bst(node.left, lo, node.val) and is_bst(node.right, node.val, hi)
+      ```
+    explanation: |
+      进入左子树时，上界收紧为当前节点的值；进入右子树时，下界收紧为当前节点的值。这样每个节点都同时受到所有祖先的约束。
+
+      等价的做法是中序遍历：二叉搜索树的中序遍历结果严格递增，只要记住上一个访问的值并逐个比较即可，测试中的对拍正是用了这条性质。
+
+      这是面试中非常常见的错误：局部条件（父子关系）成立，不等于全局条件（子树关系）成立。树很深时，两种写法都可以改成用显式栈的迭代版本。
+
+  - id: CS-ALGO-024
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [树与遍历]
+    tags: [遍历序列, 重建二叉树]
+    question: |
+      一棵二叉树的节点值互不相同，前序遍历为 `G B A F E C`，中序遍历为 `B F A G E C`。它的后序遍历为 ____，层序遍历为 ____。
+    answer: [['F A B C E G', 'FABCEG', 'F,A,B,C,E,G', 'F、A、B、C、E、G'], ['G B E A C F', 'GBEACF', 'G,B,E,A,C,F', 'G、B、E、A、C、F']]
+    explanation: |
+      **重建**：前序的第一个是根 G；在中序中找到 G，左边 `B F A` 是左子树，右边 `E C` 是右子树。
+      - 左子树的前序为 `B A F`：根是 B；中序 `B F A` 中 B 左边为空，右边 `F A` 是 B 的右子树；其前序 `A F` 说明根是 A，中序 `F A` 说明 F 是 A 的左孩子；
+      - 右子树的前序为 `E C`：根是 E；中序 `E C` 说明 C 是 E 的右孩子。
+
+      ```text
+              G
+             / \
+            B   E
+             \   \
+              A   C
+             /
+            F
+      ```
+
+      **后序**（左、右、根）：`F A B C E G`；**层序**（按层从左到右）：`G B E A C F`。
+
+      **延伸**：节点值互不相同时，「前序 + 中序」或「后序 + 中序」都能唯一确定一棵二叉树；但「前序 + 后序」不能，因为只有一个孩子的节点无法判断孩子在左还是在右（例如根 1 只有一个孩子 2，前序都是 `1 2`、后序都是 `2 1`）。
+
+  - id: CS-ALGO-025
+    type: coding
+    difficulty: 2
+    frequency: 3
+    points: [图搜索]
+    tags: [岛屿数量, BFS, 手撕]
+    question: |
+      实现网格中的「岛屿数量」：
+
+      ```python
+      def num_islands(grid: list[str]) -> int: ...
+      ```
+
+      - `grid` 是若干等长字符串，`'1'` 表示陆地、`'0'` 表示水；上下左右相邻的陆地属于同一个岛屿（斜对角不算）；
+      - 网格最大为 300 × 300，可能整片都是陆地。注意 Python 默认的递归深度约为 1000，**递归版 DFS 在这种输入上会栈溢出**，请写不依赖递归的实现；
+      - `grid` 为空列表时返回 0，不要修改输入。
+    answer: |
+      from collections import deque
+
+
+      def num_islands(grid):
+          if not grid:
+              return 0
+          m, n = len(grid), len(grid[0])
+          seen = [[False] * n for _ in range(m)]
+          count = 0
+          for i in range(m):
+              for j in range(n):
+                  if grid[i][j] != "1" or seen[i][j]:
+                      continue
+                  count += 1                     # 发现一个新岛屿，用 BFS 把它整个标记掉
+                  seen[i][j] = True
+                  queue = deque([(i, j)])
+                  while queue:
+                      x, y = queue.popleft()
+                      for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                          if 0 <= nx < m and 0 <= ny < n and grid[nx][ny] == "1" and not seen[nx][ny]:
+                              seen[nx][ny] = True        # 入队时就标记，避免重复入队
+                              queue.append((nx, ny))
+          return count
+    test: |
+      import random
+
+      assert num_islands([]) == 0
+      assert num_islands(["11000", "11000", "00100", "00011"]) == 3
+      assert num_islands(["111", "010", "111"]) == 1
+      assert num_islands(["101", "010", "101"]) == 5           # 斜对角不算相邻
+      assert num_islands(["1" * 300] * 300) == 1               # 9 万个格子连成一片
+      assert num_islands(["".join("10"[(i + j) % 2] for j in range(300)) for i in range(300)]) == 45000
+
+      def brute(grid):                                         # 并查集对拍
+          m, n = len(grid), len(grid[0])
+          parent = list(range(m * n))
+
+          def find(x):
+              while parent[x] != x:
+                  x = parent[x]
+              return x
+          for i in range(m):
+              for j in range(n):
+                  if grid[i][j] == "1":
+                      for x, y in ((i + 1, j), (i, j + 1)):
+                          if x < m and y < n and grid[x][y] == "1":
+                              parent[find(i * n + j)] = find(x * n + y)
+          return len({find(i * n + j) for i in range(m) for j in range(n) if grid[i][j] == "1"})
+
+      rng = random.Random(0)
+      for _ in range(200):
+          m, n = rng.randint(1, 8), rng.randint(1, 8)
+          grid = ["".join(rng.choice("01") for _ in range(n)) for _ in range(m)]
+          assert num_islands(grid) == brute(grid)
+    explanation: |
+      **思路**：逐格扫描，遇到一个尚未访问的陆地，岛屿数加 1，再用 BFS（或显式栈的 DFS）把与它连通的整片陆地都标记为已访问。每个格子只会入队一次，时间和空间都是 $O(mn)$。
+
+      **为什么不用递归**：递归 DFS 的深度等于搜索路径的长度，整片陆地时可达 $mn$ 量级。300 × 300 的全陆地网格会触发 `RecursionError`；调大 `sys.setrecursionlimit` 也可能让解释器的 C 栈溢出而直接崩溃。线上代码遇到「深度由数据决定」的递归，都应改写成显式栈或队列。
+
+      **易错点**：
+      - 出队时才标记已访问，同一个格子会被多个邻居重复入队；
+      - 用修改输入的方式（把 `'1'` 改成 `'0'`）做标记，会破坏调用方的数据，这里的字符串本身也不可修改；
+      - 把斜对角也算作相邻。
+
+      **扩展**：动态加入陆地、实时询问岛屿数量时，用并查集更合适（每次加入只需合并相邻的陆地）。
+
+  - id: CS-ALGO-026
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [图搜索]
+    tags: [BFS]
+    question: |
+      用 BFS 求无权图中从起点到各点的最短距离。标准写法是在**入队时**把节点标记为已访问。有人改成在**出队时**标记：队列里存 `(节点, 距离)`，出队后若该节点已访问就跳过，否则标记、记录距离，并把所有邻居入队。关于这一改动，下列说法正确的是：
+    options:
+      A: '距离结果会出错：同一个点可能先经由一条更长的路径出队并被标记，之后更短的路径会被跳过'
+      B: '会陷入死循环：出队前没有标记，图中的环会让同一批节点被反复入队，队列永远不空'
+      C: '两种写法完全等价：每个节点仍只会入队一次，只是把标记操作挪到了出队的位置'
+      D: '距离仍然正确，但同一个点可能被多次入队，入队总次数从 O(V) 增加到 O(E)'
+    answer: D
+    explanation: |
+      **结论**：结果正确，但效率变差。
+
+      BFS 的队列按距离单调不减的顺序出队，所以一个节点**第一次出队**时携带的距离一定是最短的，后面再出队的副本都会被「已访问」跳过，距离不会出错。
+
+      代价在于：一个节点在第一次出队之前，可能已经被它的多个邻居分别放进队列。每个节点只会被展开一次，展开时把所有邻居入队，所以入队总次数最多是所有节点的度数之和，即 $O(E)$；而入队时标记的写法每个节点只入队一次，是 $O(V)$。稠密图中 $E$ 可达 $V^2$ 量级，差别很明显。
+
+      - A 错：出队顺序按距离单调不减，一个点第一次出队时携带的就是最短距离，不会先被更长的路径标记。
+      - B 错：每个节点只会被展开一次，入队总次数有上界 $O(E)$，不会无限循环。
+      - C 错：出队时才标记，同一个点在第一次出队前可能已被多个邻居分别放入队列；结果相同，但空间和时间的上界不同。
+
+      **对比**：Dijkstra 恰好相反，必须在**出队时**才确认最短距离，入堆时的距离只是暂定值，因为带权图中先被发现不等于路径更短。
+
+  - id: CS-ALGO-027
+    type: code_fill
+    difficulty: 2
+    frequency: 2
+    points: [图搜索]
+    tags: [并查集, 连通分量, 实体对齐]
+    question: |
+      知识库中同一个实体常有多个别名。给定若干「同义」对，凡是能通过同义关系传递连通的名字都属于同一个实体，用组内字典序最小的名字作为规范名。补全下面的并查集（路径压缩 + 按大小合并）中的四处空位。
+    code: |
+      def canonical_names(pairs: list[tuple[str, str]]) -> dict[str, str]:
+          parent, size = {}, {}
+
+          def find(x):
+              if x not in parent:
+                  parent[x], size[x] = x, 1
+              root = x
+              while parent[root] != root:
+                  root = ____
+              while parent[x] != root:            # 路径压缩：沿途节点直接挂到根上
+                  parent[x], x = ____, parent[x]
+              return root
+
+          def union(a, b):
+              ra, rb = find(a), find(b)
+              if ra == rb:
+                  return
+              if size[ra] < size[rb]:             # 按大小合并：小树挂到大树下
+                  ra, rb = rb, ra
+              parent[____] = ra
+              size[ra] += ____
+
+          for a, b in pairs:
+              union(a, b)
+          groups = {}
+          for x in parent:
+              groups.setdefault(find(x), []).append(x)
+          result = {}
+          for g in groups.values():
+              name = min(g)                       # 每组只求一次最小值
+              for x in g:
+                  result[x] = name
+          return result
+    answer: ['parent[root]', 'root', 'rb', 'size[rb]']
+    test: |
+      import random
+
+      got = canonical_names([("GPT-4o", "4o"), ("gpt4o", "4o"), ("Claude", "claude-3"), ("x", "x")])
+      assert got == {"GPT-4o": "4o", "4o": "4o", "gpt4o": "4o", "Claude": "Claude", "claude-3": "Claude", "x": "x"}
+      assert canonical_names([]) == {}
+
+      rng = random.Random(0)
+      for _ in range(300):
+          names = [f"n{i}" for i in range(rng.randint(1, 12))]
+          pairs = [(rng.choice(names), rng.choice(names)) for _ in range(rng.randint(0, 10))]
+          adj = {}
+          for a, b in pairs:
+              adj.setdefault(a, set()).add(b)
+              adj.setdefault(b, set()).add(a)
+          expect = {}
+          for s in adj:                          # 暴力：DFS 求连通分量
+              if s in expect:
+                  continue
+              comp, stack = {s}, [s]
+              while stack:
+                  for v in adj[stack.pop()]:
+                      if v not in comp:
+                          comp.add(v)
+                          stack.append(v)
+              for x in comp:
+                  expect[x] = min(comp)
+          assert canonical_names(pairs) == expect
+
+      chain = [(f"v{i}", f"v{i + 1}") for i in range(100000)]   # 10 万次合并，要求接近线性
+      res = canonical_names(chain)
+      assert len(res) == 100001 and res["v99999"] == "v0"
+    explanation: |
+      - 第 1 空 `parent[root]`：沿父指针一直走到根（父节点是自己的节点）。
+      - 第 2 空 `root`：路径压缩，把沿途每个节点的父指针直接改成根。多重赋值右边先求值，`parent[x]` 取到的是旧的父节点，所以 `x` 能继续沿原路径前进。
+      - 第 3、4 空 `rb`、`size[rb]`：交换后 `ra` 是较大的树，把小树的根 `rb` 挂到 `ra` 下，并累加大小。
+
+      **为什么要两个优化**：只按大小合并，树高不超过 $O(\log n)$；再加上路径压缩，单次操作的均摊复杂度是 $O(\alpha(n))$（反阿克曼函数，实际中不超过 4 或 5），10 万次合并的链式输入也能很快完成。不做任何优化时，链式输入会让树退化成长链，`find` 变成 $O(n)$。
+
+      **注意**：并查集求的是传递闭包，「A 像 B、B 像 C」就会把 A、C 归入一组。别名合并、文档近似去重等场景要警惕这种链式传递把本不相同的实体连在一起，必要时对组的大小或组内相似度做二次校验。
+
+  - id: CS-ALGO-028
+    type: code_fill
+    difficulty: 2
+    frequency: 2
+    points: [拓扑排序, 图搜索]
+    tags: [环检测, 三色标记, DFS]
+    question: |
+      规划器生成的任务依赖图如果有环，任务就永远无法开始。为了让模型修正计划，需要把**具体的环**反馈给它。补全下面基于三色标记 DFS 的函数中的三处空位。
+    code: |
+      def find_cycle(graph: dict[str, list[str]]) -> list[str] | None:
+          """graph[u] 是 u 的后继列表（u 完成后才能开始的任务）。返回一个环，如 ['a', 'b', 'a']；无环返回 None"""
+          WHITE, GRAY, BLACK = 0, 1, 2           # 未访问 / 在当前 DFS 路径上 / 已完成
+          color = {u: WHITE for u in graph}
+          for vs in graph.values():
+              for v in vs:
+                  color.setdefault(v, WHITE)
+          path = []                              # 当前 DFS 路径
+
+          def dfs(u):
+              color[u] = GRAY
+              path.append(u)
+              for v in graph.get(u, []):
+                  if color[v] == ____:           # 指回当前路径上的点：找到环
+                      return path[____:] + [v]
+                  if color[v] == WHITE:
+                      cycle = dfs(v)
+                      if cycle:
+                          return cycle
+              path.pop()
+              color[u] = ____
+              return None
+
+          for u in color:
+              if color[u] == WHITE:
+                  cycle = dfs(u)
+                  if cycle:
+                      return cycle
+          return None
+    answer: ['GRAY', 'path.index(v)', 'BLACK']
+    test: |
+      import random
+      from collections import deque
+
+      def has_cycle(graph):                      # Kahn 算法判环，用来对拍
+          nodes = set(graph) | {v for vs in graph.values() for v in vs}
+          indeg = {u: 0 for u in nodes}
+          for vs in graph.values():
+              for v in vs:
+                  indeg[v] += 1
+          q = deque(u for u in nodes if indeg[u] == 0)
+          seen = 0
+          while q:
+              u = q.popleft()
+              seen += 1
+              for v in graph.get(u, []):
+                  indeg[v] -= 1
+                  if indeg[v] == 0:
+                      q.append(v)
+          return seen < len(nodes)
+
+      def valid_cycle(graph, cyc):
+          return (len(cyc) >= 2 and cyc[0] == cyc[-1] and len(set(cyc[:-1])) == len(cyc) - 1
+                  and all(b in graph.get(a, []) for a, b in zip(cyc, cyc[1:])))
+
+      assert find_cycle({"plan": ["search", "code"], "search": ["write"], "code": ["write"]}) is None
+      assert find_cycle({}) is None
+      g = {"a": ["b"], "b": ["c"], "c": ["a"], "d": ["a"]}
+      c = find_cycle(g)
+      assert valid_cycle(g, c) and len(c) == 4
+      assert find_cycle({"x": ["x"]}) == ["x", "x"]
+      g = {"a": ["b", "c"], "b": ["d"], "c": ["d"], "d": [], "e": ["f"], "f": ["g"], "g": ["e"]}
+      assert valid_cycle(g, find_cycle(g))       # 菱形 a→b→d、a→c→d 不是环
+      rng = random.Random(0)
+      for _ in range(500):
+          n = rng.randint(1, 8)
+          graph = {f"t{i}": [f"t{j}" for j in range(n) if rng.random() < 0.2] for i in range(n)}
+          cyc = find_cycle(graph)
+          assert (cyc is not None) == has_cycle(graph)
+          if cyc is not None:
+              assert valid_cycle(graph, cyc), (graph, cyc)
+    explanation: |
+      **三种颜色**：白色是还没访问；灰色是「已进入、尚未完成」，即位于当前 DFS 路径上；黑色是它的所有后继都已探索完毕。
+
+      - 第 1 空 `GRAY`：沿边走到一个灰色节点，说明从它出发又绕回了它自己（回边），环就是路径上从它开始的那一段；
+      - 第 2 空 `path.index(v)`：从环的起点截取当前路径，再补上 `v` 让首尾相同；
+      - 第 3 空 `BLACK`：节点的后继全部处理完、离开路径时，标记为已完成。
+
+      **为什么不能「遇到访问过的点就报环」**：菱形依赖 `a→b→d`、`a→c→d` 中，从 `c` 走到 `d` 时 `d` 已经是黑色，但这并不是环。只有指向**灰色**节点的边才意味着环。
+
+      **与 Kahn 算法对比**：Kahn 算法通过「处理过的节点数少于总数」能判断有环，但不能直接给出环本身；DFS 三色法能给出具体的环，便于生成「任务 a → b → c → a 形成循环依赖」这样可操作的错误信息。DFS 的总复杂度为 $O(V+E)$；图很大时应改写为显式栈，避免递归过深。
+
+  - id: CS-ALGO-029
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [拓扑排序, 动态规划, Agent工程化编程]
+    tags: [关键路径, 任务调度, 手撕]
+    question: |
+      Agent 规划出一组带依赖的工具调用，执行器的并发数不受限制：一个任务的所有前置任务都完成后立即开始。估计整个计划最少需要多长时间，并找出决定总时长的关键路径。实现：
+
+      ```python
+      def earliest_finish(tasks: dict[str, tuple[int, list[str]]]) -> tuple[int, list[str]]: ...
+      ```
+
+      - `tasks[name] = (耗时, 前置任务列表)`，耗时为非负整数；前置任务都在 `tasks` 中，列表里可能有重复；
+      - 返回 `(总时长, 关键路径)`：关键路径是一条依赖链，链上相邻两项之间确有依赖关系，且耗时之和等于总时长，按执行顺序列出；若有多条，返回任意一条；
+      - 有循环依赖时抛出 `ValueError`；`tasks` 为空时返回 `(0, [])`；时间复杂度 $O(V+E)$。
+    answer: |
+      from collections import deque
+
+
+      def earliest_finish(tasks):
+          indeg = {t: 0 for t in tasks}
+          children = {t: [] for t in tasks}
+          for t, (_, deps) in tasks.items():
+              for d in set(deps):                # 重复的依赖只算一次
+                  indeg[t] += 1
+                  children[d].append(t)
+          start = {t: 0 for t in tasks}          # 最早开始时间
+          prev = {t: None for t in tasks}        # 决定最早开始时间的那个前置任务
+          finish = {}
+          queue = deque(t for t in tasks if indeg[t] == 0)
+          while queue:                           # 按拓扑序推进
+              t = queue.popleft()
+              finish[t] = start[t] + tasks[t][0]
+              for c in children[t]:
+                  if prev[c] is None or finish[t] > start[c]:
+                      start[c], prev[c] = finish[t], t
+                  indeg[c] -= 1
+                  if indeg[c] == 0:
+                      queue.append(c)
+          if len(finish) < len(tasks):
+              raise ValueError("存在循环依赖")
+          if not tasks:
+              return 0, []
+          end = max(finish, key=finish.get)      # 最晚完成的任务是关键路径的终点
+          path = []
+          while end is not None:                 # 沿 prev 回溯出关键路径
+              path.append(end)
+              end = prev[end]
+          return finish[path[0]], path[::-1]
+    test: |
+      import random
+      from functools import lru_cache
+
+      tasks = {
+          "plan": (2, []),
+          "search_a": (6, ["plan"]),
+          "search_b": (4, ["plan"]),
+          "read_db": (3, []),
+          "merge": (4, ["search_a", "search_b"]),
+          "write": (3, ["merge", "read_db"]),
+          "review": (2, ["write"]),
+      }
+      assert earliest_finish(tasks) == (17, ["plan", "search_a", "merge", "write", "review"])
+      assert earliest_finish({}) == (0, [])
+      assert earliest_finish({"a": (5, []), "b": (3, [])}) == (5, ["a"])
+      assert earliest_finish({"a": (1, []), "b": (2, ["a", "a"])}) == (3, ["a", "b"])
+      for bad in ({"a": (1, ["b"]), "b": (1, ["a"])}, {"a": (1, ["a"])}):
+          try:
+              earliest_finish(bad)
+              raise AssertionError("应检测出循环依赖")
+          except ValueError:
+              pass
+
+      rng = random.Random(0)
+      for _ in range(300):
+          n = rng.randint(1, 9)
+          tasks = {f"t{i}": (rng.randint(0, 9), [f"t{j}" for j in range(i) if rng.random() < 0.35])
+                   for i in range(n)}
+
+          @lru_cache(None)
+          def fin(t):
+              dur, deps = tasks[t]
+              return dur + max((fin(d) for d in deps), default=0)
+
+          total, path = earliest_finish(tasks)
+          assert total == max(fin(t) for t in tasks)
+          assert sum(tasks[t][0] for t in path) == total
+          assert all(a in tasks[b][1] for a, b in zip(path, path[1:]))
+    explanation: |
+      **思路**：并发不受限时，任务 $t$ 的最早开始时间等于它所有前置任务完成时间的最大值，最早完成时间 = 最早开始 + 耗时。这是 DAG 上的最长路径问题，按拓扑序做一遍动态规划即可：
+      1. Kahn 算法：入度为 0 的任务先处理；处理一个任务时计算它的完成时间，并用它更新每个后继的最早开始时间；
+      2. 更新时记下「是哪个前置任务决定了最早开始时间」（`prev`），这就是关键路径上的前一项；
+      3. 处理完的任务数少于总数，说明有环；
+      4. 总时长是所有任务完成时间的最大值，从那个任务沿 `prev` 回溯即得关键路径。
+
+      **复杂度**：每个任务、每条依赖各处理一次，$O(V+E)$。
+
+      **为什么关心关键路径**：总时长只由关键路径决定。想让整个计划更快，就要缩短关键路径上的任务（换更快的工具、拆分、缓存），优化非关键任务对总时长没有帮助。示例中关键路径是 `plan → search_a → merge → write → review`（2 + 6 + 4 + 3 + 2 = 17），`search_b` 和 `read_db` 都有空闲余量。
+
+      **局限**：真实执行器有并发上限、工具有限流，这时最优调度一般是 NP 难问题，工程上常用「就绪任务中优先执行关键路径更长的」这类启发式规则。
+
+  - id: CS-ALGO-030
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [拓扑排序]
+    tags: [Kahn 算法, DFS]
+    question: |
+      关于有向图的拓扑排序，下列说法**正确**的有：
+    options:
+      A: 'DAG 在忽略边的方向后若是连通的，它的拓扑序就唯一确定，不存在多种合法排列'
+      B: 'Kahn 算法结束时，若输出的节点数少于图中节点总数，说明图中存在环'
+      C: '用 DFS 求拓扑序时，只要沿边走到一个已经访问过的节点，就说明图中有环'
+      D: '对 DAG 做 DFS，按节点「首次被访问」的先后顺序（即前序）记录下来，这个序列本身就是一个拓扑序'
+      E: 'Kahn 算法用最小堆代替队列存放入度为 0 的节点，可得到字典序最小的拓扑序，复杂度 $O(V\log V+E)$'
+    answer: [B, E]
+    explanation: |
+      **结论**：B、E 正确。
+
+      - A 错：连通不等于唯一，例如 a→b、a→c 是连通的，但 b 与 c 的先后可以互换。只有当拓扑序中每一对相邻节点之间都有边（图中存在一条经过所有节点的路径）时，拓扑序才唯一。像「检索」与「读文件」互不依赖时，二者谁先谁后都可以。
+      - B 对：环上的节点入度永远减不到 0，不会被输出，所以输出数量不足就说明有环。
+      - C 错：只有走到**仍在当前 DFS 路径上**（灰色）的节点才说明有环；走到已经完成（黑色）的节点很正常，例如菱形依赖 `a→b→d`、`a→c→d` 中第二次到达 `d`。
+      - D 错：前序不是拓扑序。反例：边 a→c、b→c，从 a 开始 DFS，前序为 a、c、b，而 b 必须排在 c 之前。正确做法是按节点「完成」（所有后继都已访问完）的先后顺序记录，再整体逆序：若有边 $u\to v$，则 $v$ 一定先于 $u$ 完成，逆序后每条边都从前指向后。
+      - E 对：每一步都从当前可选的节点中取最小的，得到字典序最小的拓扑序。每个节点进出堆各一次，共 $O(V\log V)$，再加上处理每条边的 $O(E)$。
+
+      Agent 场景下，拓扑序用于决定工具调用的执行顺序，同一「层」（同时变为就绪）的任务可以并发执行；规划结果由模型生成，执行前必须检查是否有环。
+  - id: CS-ALGO-031
+    type: coding
+    difficulty: 2
+    frequency: 3
+    points: [最短路径]
+    tags: [Dijkstra, 手撕]
+    question: |
+      模型网关要在多个机房之间转发请求，边权为链路时延（ms）。实现带路径还原的 Dijkstra：
+
+      ```python
+      def shortest_path(graph: dict[str, list[tuple[str, float]]], src: str, dst: str) -> tuple[float, list[str]]: ...
+      ```
+
+      - `graph[u]` 是 `(v, w)` 列表，表示一条 `u → v`、权重为 `w` 的有向边，`w >= 0`；同一对节点之间可能有多条边；有的节点只作为终点出现，不在 `graph` 的键中；
+      - 返回 `(最短距离, 路径)`，路径包含起点和终点；不可达时返回 `(math.inf, [])`；`src == dst` 时返回 `(0, [src])`；
+      - 使用二叉堆，时间复杂度 $O((V+E)\log V)$。
+    answer: |
+      import heapq
+      import math
+
+
+      def shortest_path(graph, src, dst):
+          dist, prev = {src: 0}, {}
+          heap = [(0, src)]
+          while heap:
+              d, u = heapq.heappop(heap)
+              if d > dist[u]:
+                  continue                       # 过期条目：u 已以更短的距离出过堆
+              if u == dst:
+                  break                          # 终点出堆时，它的距离已经确定
+              for v, w in graph.get(u, []):
+                  nd = d + w
+                  if nd < dist.get(v, math.inf):
+                      dist[v], prev[v] = nd, u
+                      heapq.heappush(heap, (nd, v))
+          if dst not in dist:
+              return math.inf, []
+          path = [dst]
+          while path[-1] != src:                 # 沿前驱指针回溯
+              path.append(prev[path[-1]])
+          return dist[dst], path[::-1]
+    test: |
+      import math
+      import random
+
+      g = {"bj": [("sh", 30), ("gz", 70)], "sh": [("gz", 25), ("sz", 60)], "gz": [("sz", 8)]}
+      assert shortest_path(g, "bj", "sz") == (63, ["bj", "sh", "gz", "sz"])
+      assert shortest_path(g, "bj", "bj") == (0, ["bj"])
+      assert shortest_path(g, "sz", "bj") == (math.inf, [])
+      assert shortest_path({"a": [("b", 0), ("b", 5)], "b": [("c", 0)]}, "a", "c") == (0, ["a", "b", "c"])
+
+      rng = random.Random(0)
+      for _ in range(300):
+          n = rng.randint(1, 7)
+          edges = [(f"v{rng.randrange(n)}", f"v{rng.randrange(n)}", rng.randint(0, 9))
+                   for _ in range(rng.randint(0, 15))]
+          graph = {}
+          for u, v, w in edges:
+              graph.setdefault(u, []).append((v, w))
+          src, dst = f"v{rng.randrange(n)}", f"v{rng.randrange(n)}"
+          bf = {src: 0}                          # Bellman-Ford 对拍
+          for _ in range(n):
+              for u, v, w in edges:
+                  if u in bf and bf[u] + w < bf.get(v, math.inf):
+                      bf[v] = bf[u] + w
+          cost, path = shortest_path(graph, src, dst)
+          assert cost == bf.get(dst, math.inf)
+          if path:
+              assert path[0] == src and path[-1] == dst
+              assert sum(min(w for x, w in graph[a] if x == b) for a, b in zip(path, path[1:])) == cost
+          else:
+              assert dst not in bf
+    explanation: |
+      **思路**：堆中存 `(暂定距离, 节点)`，每次弹出距离最小的节点。边权非负时，弹出的那一刻它的距离就是最终的最短距离，再用它去松弛邻居；松弛成功时记录前驱 `prev[v] = u`，最后从终点沿前驱回溯得到路径。
+
+      **两个细节**：
+      - **懒删除**：Python 的 `heapq` 不支持「降低某个元素的键值」，于是每次松弛都压入新条目，旧条目留在堆里。弹出时若 `d > dist[u]` 说明是过期条目，直接跳过；
+      - **提前结束**：只求单个终点时，终点出堆即可停止。
+
+      **复杂度**：每条边最多压入一个条目，堆中元素为 $O(E)$，总复杂度 $O(E\log E)=O(E\log V)$，加上节点遍历即 $O((V+E)\log V)$。
+
+      **易错点**：在**入堆时**就把节点标记为「已确定」是错误的，带权图中先被发现的路径不一定最短；有负权边时 Dijkstra 不再适用，要用 Bellman-Ford（$O(VE)$）；路径可能有并列最短的多条，测试时应校验路径的合法性与总长度，而不是比对某一条具体路径。
+
+  - id: CS-ALGO-032
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [最短路径]
+    tags: [Dijkstra, Bellman-Ford, 负权边]
+    question: |
+      下面的代码分别用「出堆即确定」的 Dijkstra 和 Bellman-Ford 计算一张含负权边的图的最短距离。输出是什么？
+    code: |
+      import heapq
+
+      def dijkstra(graph, src):
+          dist, done = {src: 0}, set()
+          heap = [(0, src)]
+          while heap:
+              d, u = heapq.heappop(heap)
+              if u in done:
+                  continue
+              done.add(u)                        # 出堆即认定 u 的最短距离已确定
+              for v, w in graph.get(u, []):
+                  if v not in done and d + w < dist.get(v, float("inf")):
+                      dist[v] = d + w
+                      heapq.heappush(heap, (d + w, v))
+          return dist
+
+      def bellman_ford(edges, src, n):
+          dist = {src: 0}
+          for _ in range(n - 1):                 # 松弛 n-1 轮
+              for u, v, w in edges:
+                  if u in dist and dist[u] + w < dist.get(v, float("inf")):
+                      dist[v] = dist[u] + w
+          return dist
+
+      edges = [("S", "A", 2), ("S", "B", 5), ("B", "A", -4), ("A", "T", 3)]
+      graph = {}
+      for u, v, w in edges:
+          graph.setdefault(u, []).append((v, w))
+      print(sorted(dijkstra(graph, "S").items()))
+      print(sorted(bellman_ford(edges, "S", 4).items()))
+    answer: |
+      [('A', 2), ('B', 5), ('S', 0), ('T', 5)]
+      [('A', 1), ('B', 5), ('S', 0), ('T', 4)]
+    explanation: |
+      **Dijkstra 的执行过程**：
+      1. 弹出 S（0），松弛得 A = 2、B = 5；
+      2. 弹出 A（2），A 被认定为已确定，松弛得 T = 5；
+      3. 弹出 B（5）（与 T 同为 5，按节点名 `'B' < 'T'` 先弹出 B）。沿 `B→A` 可以得到 5 − 4 = 1 < 2，但 A 已在 `done` 中，不再更新；
+      4. 弹出 T（5）。结果 A = 2、T = 5，都是错的。
+
+      **Bellman-Ford**：第一轮按边的顺序松弛，依次得到 A = 2、B = 5、A = 1（经 B）、T = 4，之后几轮不再变化。真实最短距离是 A = 1（S→B→A）、T = 4（S→B→A→T）。
+
+      **原因**：Dijkstra 的贪心依据是「其他路径都要经过距离更大的节点，而边权非负，绕路只会更长」。负权边让「先绕远再走负边」的路径反而更短，这个依据不再成立。
+
+      **结论**：有负权边（且无负环）时用 Bellman-Ford，复杂度 $O(VE)$，还能检测负环（第 $V$ 轮仍能松弛就说明有负环）。去掉 `done` 集合、允许节点重复出堆的写法在本例中能得到正确结果，但最坏情况下需要指数级时间，不能作为处理负权边的通用方案。
+    source: 'Sedgewick & Wayne, Algorithms 4th ed., 4.4 Shortest Paths, https://algs4.cs.princeton.edu/44sp/'
+
+  - id: CS-ALGO-033
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [最短路径]
+    tags: [Dijkstra]
+    question: |
+      有向图的边为：S→A 4，S→B 1，B→A 2，B→C 5，A→C 1，A→T 6，C→T 3。从 S 出发运行 Dijkstra，各节点按最短距离被确定（出堆）的顺序为 ____，S 到 T 的最短距离为 ____，对应的路径为 ____。
+    answer: [['S B A C T', 'SBACT', 'S,B,A,C,T', 'S、B、A、C、T', 'S→B→A→C→T'], '7', ['S→B→A→C→T', 'S-B-A-C-T', 'S B A C T', 'SBACT']]
+    explanation: |
+      逐步执行（括号中为暂定距离）：
+      1. 弹出 S（0）：A = 4，B = 1；
+      2. 弹出 B（1）：A 更新为 1 + 2 = 3，C = 1 + 5 = 6；
+      3. 弹出 A（3）：C 更新为 3 + 1 = 4，T = 3 + 6 = 9；
+      4. 弹出 C（4）：T 更新为 4 + 3 = 7；
+      5. 弹出 T（7）。
+
+      出堆顺序为 S、B、A、C、T，最短距离为 7，路径 S→B→A→C→T（1 + 2 + 1 + 3 = 7）。
+
+      注意两处「暂定值被改写」：A 一开始是 4（直达），后来经 B 变成 3；T 一开始是 9（经 A 直达），后来经 C 变成 7。这正说明暂定距离只有在出堆时才能确定。
+
+  - id: CS-ALGO-034
+    type: coding
+    difficulty: 2
+    frequency: 3
+    points: [动态规划, 字符串算法]
+    tags: [编辑距离, WER, 手撕]
+    question: |
+      语音识别常用词错误率（WER）评估：WER = (S + D + I) / N，其中 S、D、I 分别是把参考文本变成识别结果所需的替换、删除、插入次数（取总次数最少的方案），N 是参考文本的词数。实现：
+
+      ```python
+      def wer(ref: str, hyp: str) -> float: ...
+      ```
+
+      - 按空白切分成词；参考文本切分后为空时抛出 `ValueError`；
+      - 设两段文本分别有 m、n 个词，时间复杂度 $O(mn)$，额外空间 $O(n)$。
+
+      示例：`wer("the cat sat on the mat", "the cat sit on mat")` 等于 2/6。
+    answer: |
+      def wer(ref: str, hyp: str) -> float:
+          r, h = ref.split(), hyp.split()
+          if not r:
+              raise ValueError("参考文本不能为空")
+          dp = list(range(len(h) + 1))           # dp[j]：r 的前 i 个词变成 h 的前 j 个词的最少编辑次数
+          for i in range(1, len(r) + 1):
+              diag, dp[0] = dp[0], i             # diag 保存左上角的 dp[i-1][j-1]
+              for j in range(1, len(h) + 1):
+                  cur = dp[j]
+                  dp[j] = min(dp[j] + 1,                          # 删除 r[i-1]
+                              dp[j - 1] + 1,                      # 插入 h[j-1]
+                              diag + (r[i - 1] != h[j - 1]))      # 替换（相同则不计）
+                  diag = cur
+          return dp[-1] / len(r)
+    test: |
+      import random
+      from functools import lru_cache
+
+      assert wer("the cat sat", "the cat sat") == 0
+      assert abs(wer("the cat sat on the mat", "the cat sit on mat") - 2 / 6) < 1e-12
+      assert wer("a b", "a b c d e") == 1.5                  # 插入多时 WER 可以大于 1
+      assert wer("a b c", "") == 1.0
+      assert wer("  hello   world ", "hello world") == 0
+      try:
+          wer("   ", "x")
+          raise AssertionError("参考文本为空应报错")
+      except ValueError:
+          pass
+
+      rng = random.Random(0)
+      for _ in range(400):
+          r = [rng.choice("abc") for _ in range(rng.randint(1, 7))]
+          h = [rng.choice("abc") for _ in range(rng.randint(0, 7))]
+
+          @lru_cache(None)
+          def ed(i, j):                          # 记忆化递归作为参照
+              if i == 0 or j == 0:
+                  return i + j
+              return min(ed(i - 1, j) + 1, ed(i, j - 1) + 1, ed(i - 1, j - 1) + (r[i - 1] != h[j - 1]))
+
+          assert abs(wer(" ".join(r), " ".join(h)) - ed(len(r), len(h)) / len(r)) < 1e-12
+    explanation: |
+      **状态**：$dp[i][j]$ 为参考文本前 $i$ 个词变成识别结果前 $j$ 个词的最少编辑次数：
+
+      $$dp[i][j]=\min\big(dp[i-1][j]+1,\ dp[i][j-1]+1,\ dp[i-1][j-1]+[r_i\ne h_j]\big)$$
+
+      三项分别对应删除、插入、替换（词相同则代价为 0）；边界为 $dp[i][0]=i$、$dp[0][j]=j$。
+
+      **滚动数组**：第 $i$ 行只依赖第 $i-1$ 行，用一维数组即可。覆盖 `dp[j]` 之前，`dp[j]` 是上一行的值（「上方」），`dp[j-1]` 已是本行的新值（「左方」），而「左上方」已经被覆盖，必须用 `diag` 提前保存，这是最容易写错的地方。
+
+      **示例**：`the cat sat on the mat` → `the cat sit on mat`：sat→sit 替换 1 次，删除第二个 the 1 次，共 2 次，WER = 2/6 ≈ 33.3%。
+
+      **注意**：WER 的分母是参考文本的词数，识别结果中插入的词很多时 WER 可以超过 100%。中文通常按字计算字错误率（CER），把 `split()` 换成 `list()` 即可。同样的动态规划也用于文本相似度、拼写纠错和比较 Agent 的工具调用序列。
+
+  - id: CS-ALGO-035
+    type: code_debug
+    difficulty: 2
+    frequency: 2
+    points: [动态规划]
+    tags: [0/1 背包, 上下文预算]
+    question: |
+      RAG 检索到若干文本片段，每个片段有 token 数和相关性分数。要在 token 预算内选出一些片段（每个最多选一次），使总分最大。下面用一维数组实现的 0/1 背包算出的结果有时偏大，请找出 bug 并修正。
+    code: |
+      def best_score(chunks, budget):
+          """chunks: [(token 数, 分数), ...]，每个片段最多选一次；返回预算内的最高总分"""
+          dp = [0] * (budget + 1)                # dp[c]：已考虑的片段在 c 个 token 内的最高总分
+          for cost, score in chunks:
+              for c in range(cost, budget + 1):
+                  dp[c] = max(dp[c], dp[c - cost] + score)
+          return dp[budget]
+    fixed_code: |
+      def best_score(chunks, budget):
+          """chunks: [(token 数, 分数), ...]，每个片段最多选一次；返回预算内的最高总分"""
+          dp = [0] * (budget + 1)                # dp[c]：已考虑的片段在 c 个 token 内的最高总分
+          for cost, score in chunks:
+              for c in range(budget, cost - 1, -1):
+                  dp[c] = max(dp[c], dp[c - cost] + score)
+          return dp[budget]
+    test: |
+      import random
+      from itertools import combinations
+
+      assert best_score([(3, 5)], 6) == 5                    # 同一个片段不能选两次
+      assert best_score([(300, 6), (200, 5), (250, 5)], 500) == 11
+      assert best_score([], 100) == 0
+      assert best_score([(120, 9)], 100) == 0
+
+      rng = random.Random(0)
+      for _ in range(300):
+          chunks = [(rng.randint(1, 10), rng.randint(0, 20)) for _ in range(rng.randint(0, 7))]
+          budget = rng.randint(0, 25)
+          brute = max(sum(s for _, s in combo)
+                      for r in range(len(chunks) + 1) for combo in combinations(chunks, r)
+                      if sum(c for c, _ in combo) <= budget)
+          assert best_score(chunks, budget) == brute
+    answer: |
+      **问题**：第 5 行的容量循环是从小到大。计算 `dp[c]` 时用到的 `dp[c - cost]` 可能**在本轮已经更新过**，也就是已经包含了当前这个片段，于是同一个片段被选了多次，算成了「完全背包」。例如只有一个 `(3, 5)` 的片段、预算 6 时，`dp[3] = 5` 之后 `dp[6] = dp[3] + 5 = 10`，相当于选了两次。
+
+      **修正**：容量从大到小遍历，保证 `dp[c - cost]` 仍是上一轮（不含当前片段）的值：
+
+      ```python
+      for c in range(budget, cost - 1, -1):
+          dp[c] = max(dp[c], dp[c - cost] + score)
+      ```
+    explanation: |
+      二维写法是 $dp[i][c]=\max(dp[i-1][c],\ dp[i-1][c-w_i]+v_i)$，右边都来自上一行 $i-1$。压缩成一维后，倒序遍历容量，才能在覆盖 `dp[c]` 时保证 `dp[c - cost]` 尚未被本轮改写；正序遍历则对应「每件物品可以无限次选取」的完全背包。
+
+      复杂度为 $O(n\cdot\text{budget})$，是伪多项式时间：预算为 8000 个 token、候选片段 100 个时约 80 万次运算，完全可以接受。
+
+      **为什么不按「分数 / token」贪心**：0/1 背包不能贪心。例如预算 500、片段为 (260, 7)、(250, 6)、(250, 6)：按单位分数先选 (260, 7)，剩下的 240 个 token 放不下任何片段，总分 7；最优是两个 250，总分 12。只有物品可以切分（分数背包）时，按单位价值贪心才是最优的。
+
+  - id: CS-ALGO-036
+    type: code_fill
+    difficulty: 2
+    frequency: 3
+    points: [动态规划, 二分查找]
+    tags: [最长递增子序列, bisect]
+    question: |
+      用 $O(n\log n)$ 的方法求最长递增子序列的长度：`tails[i]` 保存所有长度为 `i + 1` 的递增子序列中最小的结尾元素。`strict=True` 求严格递增子序列，`strict=False` 求不下降子序列。补全三处空位。
+    code: |
+      from bisect import bisect_left, bisect_right
+
+
+      def lis_length(nums: list[int], strict: bool = True) -> int:
+          tails = []
+          find = ____ if strict else ____
+          for x in nums:
+              i = find(tails, x)
+              if i == len(tails):
+                  tails.append(x)                # x 能接在最长的子序列后面：长度加 1
+              else:
+                  tails[____] = x                # 用更小的 x 替换，给后面的元素留出空间
+          return len(tails)
+    answer: ['bisect_left', 'bisect_right', 'i']
+    test: |
+      import random
+
+      assert lis_length([10, 9, 2, 5, 3, 7, 101, 18]) == 4
+      assert lis_length([7, 7, 7, 7]) == 1
+      assert lis_length([7, 7, 7, 7], strict=False) == 4
+      assert lis_length([]) == 0
+      assert lis_length([3, 1, 2, 2, 3], strict=False) == 4
+
+      rng = random.Random(0)
+      for _ in range(500):
+          nums = [rng.randint(0, 6) for _ in range(rng.randint(0, 12))]
+          for strict in (True, False):
+              best = [1] * len(nums)             # O(n^2) 动态规划对拍
+              for i in range(len(nums)):
+                  for j in range(i):
+                      if nums[j] < nums[i] or (not strict and nums[j] == nums[i]):
+                          best[i] = max(best[i], best[j] + 1)
+              assert lis_length(nums, strict) == max(best, default=0)
+    explanation: |
+      **为什么 `tails` 有序**：长度更长的递增子序列，结尾不可能比更短的还小，所以 `tails` 单调递增，可以二分。
+
+      - 严格递增用 `bisect_left`：找第一个 **≥ x** 的位置。与 `x` 相等的结尾不能再接 `x`，所以用 `x` 替换它（相等时替换不改变任何东西）；
+      - 不下降用 `bisect_right`：找第一个 **> x** 的位置，相等的元素可以接在后面；
+      - 第三空 `i`：找到的位置上用 `x` 替换，结尾变小，后续元素更容易接上；位置等于长度时说明 `x` 比所有结尾都大，追加。
+
+      两个函数用反时，`[7, 7, 7, 7]` 的严格递增结果会变成 4，不下降结果也会出错。
+
+      **复杂度**：每个元素一次二分，$O(n\log n)$；朴素 DP 为 $O(n^2)$。
+
+      **常见误解**：`tails` 本身**不是**一个最长递增子序列，它只保证长度正确。例如 `[3, 4, 1]` 结束时 `tails = [1, 4]`，而 1 在 4 之后出现。要输出具体序列，需要额外记录每个元素在 `tails` 中的位置和前驱。
+
+  - id: CS-ALGO-037
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [动态规划]
+    tags: [贪心, 零钱兑换]
+    question: |
+      关于「用最少枚数的硬币凑出指定金额（每种面额数量不限）」这个问题，下列说法正确的是：
+    options:
+      A: '面额 {1, 3, 4}、金额 6 时，每次取最大可用面额的贪心要 3 枚（4 + 1 + 1），最优只需 2 枚'
+      B: '面额中包含 1 时，贪心能凑出任意金额，而且每一步都取最大面额，凑出的枚数就是最少的'
+      C: '动态规划按面额逐种更新一维 dp 表，时间复杂度只与面额的种类数有关，与金额大小无关'
+      D: '贪心之所以会失败，是因为 4 不是质数；只用 1 和质数作面额时，贪心就能得到最优'
+    answer: A
+    explanation: |
+      **结论**：贪心只在特定的面额体系下最优，一般情况要用动态规划。
+
+      动态规划：$dp[0]=0$，$dp[x]=\min_{c\le x}dp[x-c]+1$。对 {1, 3, 4}：$dp[1]=1$、$dp[2]=2$、$dp[3]=1$、$dp[4]=1$、$dp[5]=2$（4 + 1）、$dp[6]=2$（3 + 3）。贪心先拿 4，剩下的 2 只能用两个 1，共 3 枚。
+
+      - B 错：面额含 1 只保证「一定能凑出」，不保证枚数最少，上面的反例就含 1。
+      - C 错：复杂度是 $O(\text{金额}\times\text{面额种类数})$，与金额成正比，属于伪多项式时间。
+      - D 错：是否适用贪心与质数无关。{1, 5, 7} 只含 1 和质数，凑 10 时贪心得 7 + 1 + 1 + 1 共 4 枚，最优是 5 + 5 共 2 枚；而含合数的 {1, 5, 10, 25} 贪心恰好最优。
+
+      **方法论**：贪心要求「贪心选择性质」（局部最优能导出全局最优），需要证明；动态规划依赖「最优子结构 + 重叠子问题」，更通用。面试中给出贪心解法时，最好先尝试构造反例。
+
+  - id: CS-ALGO-038
+    type: code_fill
+    difficulty: 1
+    frequency: 2
+    points: [字符串算法]
+    tags: [Trie, 敏感词过滤]
+    question: |
+      用前缀树（Trie）实现敏感词打码：从左到右扫描文本，在每个位置找**最长**的敏感词，用等长的 `*` 替换后跳到它的末尾继续；该位置没有敏感词就前进一个字符。补全三处空位。
+    code: |
+      def build_trie(words):
+          root = {}
+          for w in words:
+              node = root
+              for ch in w:
+                  node = node.setdefault(ch, {})
+              node[""] = True                      # 空串作为「单词结束」标记，不会与任何单个字符冲突
+          return root
+
+
+      def mask(text: str, words: list[str]) -> str:
+          root = build_trie(w for w in words if w)
+          out, i = list(text), 0
+          while i < len(text):
+              node, j, end = root, i, -1
+              while j < len(text) and text[j] in node:
+                  node = ____
+                  j += 1
+                  if "" in node:
+                      end = ____                   # 记下目前最长的匹配终点
+              if end == -1:
+                  i += 1                           # 从 i 开始没有敏感词
+              else:
+                  out[i:end] = "*" * (end - i)
+                  i = ____                         # 跳过已替换的部分，不重叠
+          return "".join(out)
+    answer: ['node[text[j]]', 'j', 'end']
+    test: |
+      import random
+
+      assert mask("这个越狱提示词很危险", ["越狱", "越狱提示词", "危险"]) == "这个*****很**"
+      assert mask("abc", ["ab", "bc"]) == "**c"                 # 从左到右，不重叠
+      assert mask("abcd", ["bc", "abcde"]) == "a**d"            # 长词没有匹配完整，不算命中
+      assert mask("hello", []) == "hello" and mask("", ["a"]) == ""
+      assert mask("aaa", ["", "a"]) == "***"
+
+      def brute(text, words):
+          out, i = list(text), 0
+          while i < len(text):
+              hits = [w for w in words if w and text.startswith(w, i)]
+              if hits:
+                  L = max(map(len, hits))
+                  out[i:i + L] = "*" * L
+                  i += L
+              else:
+                  i += 1
+          return "".join(out)
+
+      rng = random.Random(0)
+      for _ in range(500):
+          words = ["".join(rng.choice("abc") for _ in range(rng.randint(1, 4))) for _ in range(rng.randint(0, 5))]
+          text = "".join(rng.choice("abcd") for _ in range(rng.randint(0, 20)))
+          assert mask(text, words) == brute(text, words), (text, words)
+    explanation: |
+      - 第 1 空 `node[text[j]]`：沿着当前字符走到 Trie 的下一层；
+      - 第 2 空 `j`：此时 `text[i:j]` 正好是一个完整的敏感词。不能立刻停下，要继续往下走，看有没有更长的词，所以先记下终点；
+      - 第 3 空 `end`：替换后从最长匹配的末尾继续扫描。
+
+      **为什么要记「最近一次的词尾」**：沿 Trie 走得最远的地方不一定是词尾。例如词表 `["bc", "abcde"]`、文本 `"abcd"`：从位置 0 能一直走到 `d`，但 `abcd` 不是完整的词，`end` 仍为 -1，于是前进一格，再从位置 1 匹配到 `bc`。
+
+      **复杂度**：每个起点最多向后走「最长敏感词长度」$L$ 步，总时间 $O(nL)$。词表很大、文本很长时，可以用 Aho-Corasick 自动机，在 Trie 上加失配指针，一次扫描找出所有匹配，复杂度约为 $O(n+\text{匹配数})$。
+
+      **工程上**：真实的内容安全系统还要处理全半角、大小写、插入干扰符号（如「越 狱」「越*狱」）等变形，通常先做文本归一化再匹配；同一套 Trie 也用于最长匹配分词和约束解码中「哪些 token 仍然合法」的判断。
+
+  - id: CS-ALGO-039
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [字符串算法, Agent工程化编程]
+    tags: [停止串, 流式输出, 手撕]
+    question: |
+      实现推理服务的 `stop` 参数：模型输出以文本片段（chunk）的形式陆续到达，一旦出现任一停止串，就截断输出并结束。停止串可能被拆在两个片段之间，所以不能逐片段简单查找；同时又要尽量早地把安全的文本推给用户。
+
+      ```python
+      class StopDetector:
+          def __init__(self, stops: list[str]): ...
+          def feed(self, chunk: str) -> tuple[str, bool]: ...   # 返回（本次可以输出的文本, 是否已停止）
+          def flush(self) -> str: ...                           # 流正常结束时调用，返回剩余文本
+      ```
+
+      - **截断位置**：设到目前为止收到的全部文本为 T。从左到右逐字符看，在第一个「某个停止串恰好在此结束」的位置停止；若同时有多个停止串在这里结束，取开始位置最早的那个；最终输出为 T 中该停止串开始之前的部分；
+      - **尽早输出**：每次 `feed` 后若未停止，已输出的文本必须恰好是 T 去掉「最长的、是某个停止串真前缀的后缀」之后的部分，即只扣住可能成为停止串开头的那一截；
+      - 停止之后再调用 `feed` 返回 `("", True)`，`flush` 返回空串；停止串列表中有空串时抛出 `ValueError`；停止串列表可以为空。
+
+      示例：停止串为 `["\nObservation:"]`，依次收到 `"Thought: 先查天气\nObs"` 和 `"ervation: 晴"`，两次 `feed` 分别返回 `("Thought: 先查天气", False)` 和 `("", True)`。
+    answer: |
+      class StopDetector:
+          def __init__(self, stops: list[str]):
+              if any(not s for s in stops):
+                  raise ValueError("停止串不能为空")
+              self.stops = list(stops)
+              self.buf = ""                            # 还没有输出的文本
+              self.stopped = False
+
+          def feed(self, chunk: str) -> tuple[str, bool]:
+              if self.stopped:
+                  return "", True
+              self.buf += chunk
+              best = None                              # (结束位置, 开始位置)：结束最早者优先
+              for s in self.stops:
+                  i = self.buf.find(s)
+                  if i != -1 and (best is None or (i + len(s), i) < best):
+                      best = (i + len(s), i)
+              if best is not None:
+                  out, self.buf, self.stopped = self.buf[:best[1]], "", True
+                  return out, True
+              keep = 0                                 # 末尾可能是某个停止串开头的最长部分，先扣住
+              for s in self.stops:
+                  for k in range(min(len(s) - 1, len(self.buf)), keep, -1):
+                      if self.buf.endswith(s[:k]):
+                          keep = k
+                          break
+              cut = len(self.buf) - keep
+              out, self.buf = self.buf[:cut], self.buf[cut:]
+              return out, False
+
+          def flush(self) -> str:
+              if self.stopped:
+                  return ""
+              out, self.buf = self.buf, ""
+              return out
+    test: |
+      import random
+
+      d = StopDetector(["\nObservation:"])
+      assert d.feed("Thought: 先查天气\nObs") == ("Thought: 先查天气", False)
+      assert d.feed("ervation: 晴") == ("", True)
+      assert d.feed("更多文本") == ("", True) and d.flush() == ""
+
+      d = StopDetector(["</answer>"])
+      assert d.feed("答案 </ans") == ("答案 ", False)
+      assert d.feed("wer 是 3") == ("</answer 是 3", False)          # 虚惊一场，原样放出
+      assert d.flush() == ""
+
+      d = StopDetector(["abcd", "c"])
+      assert d.feed("xabcd") == ("xab", True)        # "c" 先完整出现
+      d = StopDetector(["ab", "b"])
+      assert d.feed("zab") == ("z", True)            # 同时结束时取开始更早的
+      d = StopDetector([])
+      assert d.feed("abc") == ("abc", False) and d.flush() == ""
+      try:
+          StopDetector(["ok", ""])
+          raise AssertionError("空停止串应报错")
+      except ValueError:
+          pass
+
+      def oracle(text, stops):                       # 逐字符扫描：第一个完整出现的停止串处截断
+          for e in range(1, len(text) + 1):
+              starts = [e - len(s) for s in stops if e >= len(s) and text[e - len(s):e] == s]
+              if starts:
+                  return text[:min(starts)], True
+          return text, False
+
+      def longest_hold(text, stops):
+          return max([k for s in stops for k in range(1, len(s)) if k <= len(text) and text.endswith(s[:k])] or [0])
+
+      rng = random.Random(0)
+      for _ in range(2000):                          # 随机文本、随机切片，与逐字符扫描的结果对拍
+          stops = ["".join(rng.choice("ab") for _ in range(rng.randint(1, 4))) for _ in range(rng.randint(0, 3))]
+          text = "".join(rng.choice("abc") for _ in range(rng.randint(0, 15)))
+          d, emitted, fed, stopped, i = StopDetector(stops), "", "", False, 0
+          while i < len(text):
+              step = rng.randint(1, 4)
+              chunk = text[i:i + step]
+              i += step
+              out, stopped = d.feed(chunk)
+              emitted += out
+              fed += chunk
+              if stopped:
+                  break
+              assert emitted == fed[:len(fed) - longest_hold(fed, stops)]
+          if not stopped:
+              emitted += d.flush()
+          assert (emitted, stopped) == oracle(text, stops), (text, stops)
+    explanation: |
+      **思路**：维护一个「尚未输出」的缓冲区 `buf`，每收到一个片段：
+      1. 在 `buf` 中查找每个停止串的第一次出现，取结束位置最早的（结束位置相同取开始更早的）。找到就输出它之前的文本，并进入停止状态；
+      2. 没找到时，`buf` 的末尾仍可能是某个停止串的开头（比如收到了 `"\nObs"`），这部分要先扣住；扣住的长度取「是某个停止串真前缀的最长后缀」，其余部分立即输出。
+
+      **为什么只需在 `buf` 里找**：任何还没出现完整的停止串，它已经到达的部分一定是 T 的后缀、并且是该停止串的真前缀，所以一定在被扣住的那一截里，不会出现在已输出的文本中。同理可证扣住的长度每次最多增加一个片段的长度。
+
+      **复杂度**：每次 `feed` 的查找与 `buf` 长度成正比，而 `buf` 不会超过「最长停止串长度 + 片段长度」；求扣住长度对每个停止串最多比较 $L^2$ 个字符（$L$ 为停止串长度），停止串通常很短，开销可以忽略。停止串很多时可以用 Aho-Corasick 自动机，扣住的长度就是自动机当前状态的深度。
+
+      **易错点**：只在每个新片段里查找，漏掉跨片段的停止串；为了保险把整个停止串长度的文本都扣住，导致输出不必要地延迟；停止后没有丢弃后续片段。
+
+      **Agent 场景**：ReAct 风格的提示词常把 `"\nObservation:"` 设为停止串，防止模型自己编造工具的返回结果；流式输出时，被扣住的几个字符就是用户看到的「最后一点延迟」。
+
+  - id: CS-ALGO-040
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [字符串算法]
+    tags: [KMP, 前缀函数]
+    question: |
+      KMP 算法中，模式串 p 的前缀函数 $\pi[i]$ 定义为子串 `p[0..i]` 的「相等的真前缀与真后缀」的最大长度。对模式串 `aabaaab`，前缀函数为 ____（写成列表）；在文本中已经匹配了 `aabaa` 这 5 个字符、下一个字符失配时，文本指针不动，模式串从下标 ____ 继续比较；该模式串在文本 `aabaaabaaab` 中出现的起始下标为 ____。
+    answer: [['[0, 1, 0, 1, 2, 2, 3]', '[0,1,0,1,2,2,3]', '0 1 0 1 2 2 3'], '2', ['0, 4', '0 和 4', '0,4', '[0, 4]', '0 4']]
+    explanation: |
+      **逐位计算**（$k$ 为上一位的 $\pi$ 值，失配时沿 $k=\pi[k-1]$ 回退）：
+      - $\pi[0]=0$；
+      - i = 1（a）：与 p[0] = a 相等，$\pi=1$；
+      - i = 2（b）：p[1] = a ≠ b，回退到 $k=\pi[0]=0$，p[0] = a ≠ b，$\pi=0$；
+      - i = 3（a）：p[0] = a，$\pi=1$；
+      - i = 4（a）：p[1] = a，$\pi=2$；
+      - i = 5（a）：p[2] = b ≠ a，回退到 $k=\pi[1]=1$，p[1] = a 相等，$\pi=2$；
+      - i = 6（b）：p[2] = b，$\pi=3$。
+
+      **失配时**：已匹配的 `aabaa` 的最长相等前后缀是 `aa`（$\pi[4]=2$），说明文本中刚匹配过的最后两个字符正好是 `aa`，可以直接从 p[2] 继续比较，文本指针不用回退。这是 KMP 能做到 $O(n+m)$ 的原因。
+
+      **重叠出现**：在 `aabaaabaaab` 中，下标 0 处完整匹配后，模式串跳到 $\pi[6]=3$（已匹配的末尾 `aab` 正是开头的 `aab`）继续，于是在下标 4 处又匹配一次，两次出现共享了中间的 `aab`。
+
+      注意：不少教材使用 next 数组，它与前缀函数相差一位或整体减 1，做题前要先确认定义。
+
+  - id: CS-ALGO-041
+    type: multiple
+    difficulty: 2
+    frequency: 1
+    points: [字符串算法]
+    tags: [KMP, Rabin-Karp, Aho-Corasick, Trie]
+    question: |
+      关于字符串匹配算法，下列说法**正确**的有：
+    options:
+      A: 'Aho-Corasick 自动机一次扫描即可同时查找多个模式串，适合敏感词过滤'
+      B: 'KMP 的前缀函数（失配表）同时取决于模式串和文本，每换一段文本都要重新计算'
+      C: 'Rabin-Karp 用滚动哈希 O(1) 更新窗口哈希值，哈希相等时仍需逐字符核对，最坏 O(nm)'
+      D: 'KMP 匹配时文本指针从不回退，在长为 n 的文本中查找长为 m 的模式串共需 O(n + m)'
+      E: 'Trie 前缀树上的一次查询，时间与词典中单词的数量成正比，词典越大查询越慢'
+    answer: [A, C, D]
+    explanation: |
+      **结论**：A、C、D 正确。
+
+      - A 对：Aho-Corasick 在 Trie 上增加失配指针，相当于把 KMP 推广到多模式串，一次扫描即可报告所有命中，总时间约为 O(n + 模式串总长 + 匹配次数)。
+      - B 错：前缀函数只与模式串有关，预处理一次即可用于任意文本。
+      - C 对：窗口滑动一位时，减去移出字符的贡献、乘以底数、再加上移入字符，O(1) 更新。哈希可能冲突，相等时要逐字符核对；冲突很多（或真实匹配很多）时退化为 O(nm)，平均情况为 O(n + m)。它的优势是方便扩展到多模式串和二维匹配。
+      - D 对：失配时模式串按前缀函数回退，文本指针只前进不后退，匹配阶段 O(n)，预处理前缀函数 O(m)。
+      - E 错：Trie 查询沿着查询串逐字符往下走，时间与查询串的长度成正比，与词典大小无关，这正是它适合前缀补全和分词的原因。
+
+      Agent 场景下，这些算法分别对应：流式输出中的停止串检测（单模式或少量模式）、敏感词与提示注入关键词过滤（多模式）、约束解码中的合法前缀判断（Trie）。
+  - id: CS-ALGO-042
+    type: code_output
+    difficulty: 1
+    frequency: 2
+    points: [排序算法]
+    tags: [稳定排序, 多关键字排序]
+    question: |
+      下面的代码对检索结果做两次排序，再用一次元组键排序。输出是什么？（Python 的 `sorted` 是稳定排序。）
+    code: |
+      docs = [
+          ("d1", 0.80, "2024-03"),
+          ("d2", 0.95, "2024-01"),
+          ("d3", 0.80, "2023-12"),
+          ("d4", 0.95, "2024-05"),
+          ("d5", 0.80, "2024-03"),
+      ]
+      by_time = sorted(docs, key=lambda d: d[2], reverse=True)      # 第一次：按时间从新到旧
+      ranked = sorted(by_time, key=lambda d: d[1], reverse=True)    # 第二次：按分数从高到低
+      print([d[0] for d in ranked])
+      once = sorted(docs, key=lambda d: (-d[1], d[2]))
+      print([d[0] for d in once])
+    answer: |
+      ['d4', 'd2', 'd1', 'd5', 'd3']
+      ['d2', 'd4', 'd3', 'd1', 'd5']
+    explanation: |
+      **第一行**：先按时间从新到旧，得到 d4（2024-05）、d1、d5（都是 2024-03，保持原顺序）、d2（2024-01）、d3（2023-12）。再按分数从高到低做**稳定**排序：同分的元素保持上一步的相对顺序，于是 0.95 组是 d4、d2，0.80 组是 d1、d5、d3。效果等价于「分数降序，同分按时间降序」。
+
+      `reverse=True` 不会破坏稳定性：Python 文档明确说明，反向排序时键相等的元素仍保持原来的顺序，并不是先正序排好再整体翻转。
+
+      **第二行**：元组键 `(-分数, 时间)` 表示分数降序、同分按时间**升序**：0.95 组为 d2（2024-01）、d4（2024-05），0.80 组为 d3（2023-12），然后 d1、d5 时间相同，保持原顺序。
+
+      **要点**：多关键字排序有两种写法：一次排序用元组键；或者利用稳定性，**先按次要键、后按主要键**分多次排序。后者在各个键的升降方向不同、又不方便取负（例如字符串降序）时很有用。快速排序、堆排序这类不稳定的算法不能这样用。
+    source: 'Python 文档：Sorting Techniques，https://docs.python.org/3/howto/sorting.html'
+
+  - id: CS-ALGO-043
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [排序算法, 堆与TopK]
+    tags: [外部排序, 多路归并]
+    question: |
+      机器内存只有 1 GB，要把 100 GB 的日志按时间排序。可以先把数据分成约 100 个能放进内存的块，每块读入内存排好序后写回磁盘；再为每个有序块分配一小段读缓冲，用一个大小约为块数的最小堆做多路归并。这样整个过程大约只需把全部数据读、写各两遍。
+    answer: true
+    explanation: |
+      **正确**。这是经典的外部归并排序：
+      1. **生成有序段**：每次读入不到 1 GB 的数据，在内存中排序后写回，得到约 100 个有序段。第一遍：读 100 GB、写 100 GB；
+      2. **多路归并**：给每个有序段分配约几 MB 的读缓冲，把各段的当前最小元素放进大小约为 100 的最小堆；每次弹出堆顶写入输出缓冲，再从该元素所在的段补充下一个元素。第二遍：读 100 GB、写 100 GB。每个元素出入堆一次，比较开销为 $O(n\log k)$，$k$ 为段数。
+
+      瓶颈通常是磁盘 IO 而不是比较次数，所以要尽量减少遍数：段数超过一次能归并的路数（受缓冲区大小限制）时，就需要多轮归并，多读写几遍。
+
+      同样的「堆 + 多路归并」模式还用于合并多个有序的检索结果列表、MapReduce 中 Reduce 端合并多个已排序的 Map 输出，以及 LSM 树存储引擎的 compaction。
+
+  - id: CS-ALGO-044
+    type: multiple
+    difficulty: 1
+    frequency: 2
+    points: [排序算法]
+    tags: [稳定性, 复杂度下界]
+    question: |
+      关于排序算法，下列说法**正确**的有：
+    options:
+      A: '比较排序最坏至少需要 Ω(n log n) 次比较；计数排序能做到 O(n + k)，因为它不靠比较决定顺序'
+      B: '堆排序是稳定排序：建堆和调整时只交换父子节点，相等元素之间不会发生交换'
+      C: '快速排序平均 O(n log n)、最坏 O(n²)；改为随机选取枢轴后，最坏时间复杂度也降为 O(n log n)'
+      D: '插入排序即使在近乎有序的输入上也需要 O(n²) 次比较，所以 Timsort 等工程实现都弃用了它'
+      E: '归并排序是稳定的，最坏时间复杂度为 O(n log n)，但通常需要 O(n) 的额外空间'
+    answer: [A, E]
+    explanation: |
+      **结论**：A、E 正确。
+
+      - A 对：比较排序可以看成一棵判定树，叶子要覆盖 $n!$ 种排列，树高至少 $\log_2 n!=\Theta(n\log n)$。计数排序直接用键值作下标，适用于取值范围 $k$ 不大的整数，例如按 token id 统计排序。
+      - B 错：堆排序会把堆顶与末尾元素交换，跨越很远的距离，相等元素的相对顺序会被打乱，不稳定。
+      - C 错：随机化只是让「每次都选到最差枢轴」的概率变得极小，对任何输入的**期望**复杂度都是 O(n log n)，但运气极差时仍是 O(n²)，最坏情况的上界没有改变。要保证最坏 O(n log n)，可以用「中位数的中位数」选枢轴，或像 introsort 那样在递归过深时改用堆排序。大量重复元素时还应使用三路划分，否则也会退化。
+      - D 错：插入排序在近乎有序的数据上接近 O(n)，常数也很小。CPython 的排序（Timsort）对较短的片段使用二分插入排序，常见的 `std::sort` 实现（introsort）在区间很小时也会切换到插入排序。
+      - E 对：合并时遇到相等元素先取左半边的，就能保持稳定；数组上的归并需要辅助数组。
+  - id: CS-ALGO-045
+    type: coding
+    difficulty: 2
+    frequency: 2
+    points: [随机采样算法, 二分查找]
+    tags: [加权采样, 前缀和, 手撕]
+    question: |
+      预训练数据按配比混合，例如网页、代码、书籍、论文的权重为 0.6、0.2、0.1、0.1。实现按权重随机选取数据源的采样器：
+
+      ```python
+      class WeightedSampler:
+          def __init__(self, weights: list[float]): ...
+          def sample(self, rng) -> int: ...
+      ```
+
+      - 权重非负、至少有一个为正，否则抛出 `ValueError`（空列表也算非法）；
+      - 预处理 O(n)，每次采样 O(log n)；
+      - 采样规则：设 `prefix` 为权重的前缀和、`total` 为总和，每次调用恰好一次 `rng.random()` 得到 u，返回满足 `u * total < prefix[i]` 的最小下标 i。这样下标 i 被选中的概率为 `weights[i] / total`，权重为 0 的下标永远不会被选中。
+    answer: |
+      import bisect
+      import itertools
+
+
+      class WeightedSampler:
+          def __init__(self, weights):
+              if not weights or any(w < 0 for w in weights) or sum(weights) <= 0:
+                  raise ValueError("权重必须非负，且至少有一个为正")
+              self.prefix = list(itertools.accumulate(weights))   # 前缀和，单调不减
+              self.total = self.prefix[-1]
+
+          def sample(self, rng):
+              x = rng.random() * self.total                       # x 落在 [0, total) 上
+              return bisect.bisect_right(self.prefix, x)          # 第一个满足 x < prefix[i] 的 i
+    test: |
+      import random
+      from collections import Counter
+
+      class FakeRng:
+          def __init__(self, us):
+              self.us = iter(us)
+
+          def random(self):
+              return next(self.us)
+
+      s = WeightedSampler([2, 0, 1, 1])                 # 前缀和 [2, 2, 3, 4]
+      us = [0.0, 0.49, 0.5, 0.74, 0.75, 0.999]
+      assert [s.sample(FakeRng([u])) for u in us] == [0, 0, 2, 2, 3, 3]
+
+      mix = WeightedSampler([0.6, 0.2, 0.1, 0.1])
+      rng = random.Random(0)
+      cnt = Counter(mix.sample(rng) for _ in range(40000))
+      for i, p in enumerate([0.6, 0.2, 0.1, 0.1]):
+          assert abs(cnt[i] / 40000 - p) < 0.01
+      z = WeightedSampler([0, 0, 5, 0])
+      assert {z.sample(rng) for _ in range(1000)} == {2}
+      for bad in ([], [0, 0], [1, -1, 2]):
+          try:
+              WeightedSampler(bad)
+              raise AssertionError("应抛出 ValueError")
+          except ValueError:
+              pass
+      big = WeightedSampler([rng.random() for _ in range(100000)])
+      assert all(0 <= big.sample(rng) < 100000 for _ in range(100000))
+    explanation: |
+      **思路**：把每个下标看成数轴上一段长度为 $w_i$ 的区间，首尾相接铺满 $[0,\text{total})$；在这条线段上均匀撒一个点，落在哪一段就选哪个下标，概率恰好与段长成正比。前缀和给出各段的右端点，二分查找「第一个右端点大于该点」的段即可。
+
+      **边界**：要用 `bisect_right`（找第一个**大于** x 的前缀和），每个下标对应左闭右开区间 $[\text{prefix}[i-1],\ \text{prefix}[i])$。权重为 0 的段长度为 0，它的前缀和与前一段相同，`bisect_right` 会越过它，所以永远不会被选中。若改用 `bisect_left`，区间变成左开右闭：x 恰好等于某个前缀和时结果与规定不符（上例中 u = 0.5 会返回 0 而不是 2）；更糟的是，权重为 0 的首个下标会在 u = 0 时被选中（例如权重 `[0, 1]`）。
+
+      **复杂度**：预处理 O(n)，每次采样 O(log n)。需要海量采样时可以用别名法（alias method），预处理 O(n) 后每次 O(1)；权重会动态变化时可以用树状数组维护前缀和，更新与采样都是 O(log n)。
+
+      **相关场景**：加权轮询负载均衡、按配比混合训练数据、按优先级回放经验等，都会用到这个模板。
+
+  - id: CS-ALGO-046
+    type: code_debug
+    difficulty: 2
+    frequency: 2
+    points: [随机采样算法]
+    tags: [Fisher-Yates, 洗牌]
+    question: |
+      下面的洗牌函数被用来打乱评测题目中选项的顺序，以消除位置偏差。统计发现某些排列出现得比其他排列更频繁。请指出 bug 并修正。（`randrange(k)` 返回 [0, k) 内均匀分布的随机整数。）
+    code: |
+      def shuffle(a, randrange):
+          """原地打乱列表 a"""
+          n = len(a)
+          for i in range(n):
+              j = randrange(n)
+              a[i], a[j] = a[j], a[i]
+    fixed_code: |
+      def shuffle(a, randrange):
+          """原地打乱列表 a"""
+          n = len(a)
+          for i in range(n - 1, 0, -1):
+              j = randrange(i + 1)                 # 只在 [0, i] 中选
+              a[i], a[j] = a[j], a[i]
+    test: |
+      from collections import Counter
+      from fractions import Fraction
+      from math import factorial
+
+      def distribution(n):
+          """枚举 randrange 所有可能的返回序列（按概率加权），统计每种排列出现的精确概率"""
+          dist, choices = Counter(), []            # choices：本次运行中各次调用的 [取值, 上界]
+          while True:
+              pos = [0]
+
+              def randrange(k):
+                  i = pos[0]
+                  if i == len(choices):
+                      choices.append([0, k])
+                  pos[0] += 1
+                  return choices[i][0]
+
+              a = list(range(n))
+              shuffle(a, randrange)
+              p = Fraction(1)
+              for _, k in choices:
+                  p /= k
+              dist[tuple(a)] += p
+              while choices and choices[-1][0] + 1 == choices[-1][1]:   # 像里程表一样进位
+                  choices.pop()
+              if not choices:
+                  return dist
+              choices[-1][0] += 1
+
+      for n in range(1, 6):
+          dist = distribution(n)
+          assert len(dist) == factorial(n), n
+          assert all(p == Fraction(1, factorial(n)) for p in dist.values()), n
+    answer: |
+      **问题**：第 5 行每一步都在整个 `[0, n)` 中选交换对象。$n$ 步共有 $n^n$ 种等可能的随机序列，而排列有 $n!$ 种。$n\ge3$ 时 $n!$ 不能整除 $n^n$（如 $3^3=27$ 不是 6 的倍数），所以各排列不可能等概率。$n=3$ 时，各排列的概率是 4/27 或 5/27，而不是 1/6。
+
+      **修正**：Fisher-Yates 洗牌，第 $i$ 步只在尚未确定的位置 `[0, i]` 中选：
+
+      ```python
+      for i in range(n - 1, 0, -1):
+          j = randrange(i + 1)
+          a[i], a[j] = a[j], a[i]
+      ```
+    explanation: |
+      **为什么 Fisher-Yates 是均匀的**：从后往前，第一步从 $n$ 个元素中等概率选一个放在最后一位，第二步从剩下的 $n-1$ 个中选一个放在倒数第二位……随机选择的序列共有 $n\cdot(n-1)\cdots2=n!$ 种，与排列一一对应，所以每种排列的概率恰为 $1/n!$。时间 O(n)，原地完成。
+
+      测试没有用统计检验，而是把 `randrange` 的所有返回序列都枚举一遍，精确计算每种排列的概率：修正后的版本对 $n\le5$ 都恰好均匀，原版本在 $n=3$ 时就不均匀。
+
+      **工程提示**：Python 的 `random.shuffle` 就是 Fisher-Yates 实现。打乱训练数据、few-shot 示例或选项顺序时，直接用标准库并固定种子即可复现。Python 文档还提醒：序列很长时，排列总数会超过伪随机数生成器的周期，绝大多数排列根本不可能生成，但这一般不影响统计用途。
+
+  - id: CS-ALGO-047
+    type: multiple
+    difficulty: 3
+    frequency: 1
+    points: [随机采样算法]
+    tags: [Gumbel-Max, 加权蓄水池, 蓄水池抽样]
+    question: |
+      关于随机采样技巧，下列说法**正确**的有：
+    options:
+      A: '对加噪后的 logits 取前 k 大（Gumbel-Top-k），等价于按 softmax 概率依次做 k 次**不放回**抽样'
+      B: 'Gumbel-Max：给每个 logit 加上独立的标准 Gumbel 噪声后取 argmax，得到的下标恰好服从 softmax(logits)'
+      C: 'Gumbel-Max 也适用于温度采样：把 logits 除以 T 后再加 Gumbel 噪声取 argmax，结果服从 softmax(logits / T)'
+      D: 'Efraimidis–Spirakis：取 $u_i\sim U(0,1)$，以 $u_i^{1/w_i}$ 为键保留最大的 k 个，一次扫描即可完成加权不放回抽样'
+      E: '标准蓄水池抽样（k = 1）中，第 i 个元素到来时以固定的 1/2 概率替换池中元素，最终每个元素被选中的概率相同，都是 1/n'
+    answer: [A, B, C, D]
+    explanation: |
+      **结论**：A、B、C、D 正确。
+
+      - A 对：Kool 等（2019）证明了 Gumbel-Top-k 等价于不放回的依次抽样，并据此提出了随机束搜索（Stochastic Beam Search）。
+      - B 对：标准 Gumbel 噪声可写成 $g_i=-\log(-\log U_i)$（$U_i$ 在 (0,1) 上均匀分布）。可以证明 $P(\arg\max_i(x_i+g_i)=j)=e^{x_j}/\sum_ie^{x_i}$。好处是把「采样」变成「加噪声后取最大」，便于并行，也是 Gumbel-Softmax 等可微松弛的基础。
+      - C 对：Gumbel-Max 对任意一组 logits 都成立，把 logits 换成 logits / T 即得 softmax(logits / T) 分布。顺序不能颠倒：温度要在加噪之前作用于 logits；若先加噪再除以 T，argmax 不受 T 影响；若先取 argmax 再除以 T，就只是确定性的贪心解码。
+      - D 对：这是 A-Res 算法：维护一个大小为 k 的小顶堆保存键最大的元素，一次扫描完成，内存只需 O(k)，适合数据流。对键取对数得 $\log u_i/w_i$，与 Gumbel-Top-k 本质上是同一件事。
+      - E 错：第 $i$ 个元素应以 $1/i$ 的概率替换。这样它最终留下的概率为 $\frac1i\cdot\frac{i}{i+1}\cdots\frac{n-1}{n}=\frac1n$。固定 1/2 会让越靠后的元素越容易被选中，最后一个元素有 1/2 的概率。
+    source: 'Kool, van Hoof & Welling, Stochastic Beams and Where to Find Them: The Gumbel-Top-k Trick for Sampling Sequences Without Replacement, arXiv:1903.06059；Efraimidis & Spirakis, Weighted random sampling with a reservoir (Information Processing Letters, 2006)'
+
+  - id: CS-ALGO-048
+    type: coding
+    difficulty: 2
+    frequency: 3
+    points: [LRU缓存, 链表, 哈希表]
+    tags: [LRU, 双向链表, 手撕]
+    question: |
+      Embedding 和工具结果缓存通常按占用的字节数限制容量，而不是按条目数。实现按大小计容量的 LRU 缓存（**不得**使用 `OrderedDict`，用哈希表 + 双向链表）：
+
+      ```python
+      class SizedLRU:
+          def __init__(self, capacity: int): ...
+          def get(self, key): ...                       # 命中返回值，并标记为最近使用；未命中返回 None
+          def put(self, key, value, size: int) -> None: ...
+          def keys(self) -> list: ...                   # 按「最久未使用 → 最近使用」的顺序返回所有 key
+      ```
+
+      - 用属性 `total` 表示当前所有条目的大小之和，任何时候都不超过 `capacity`；
+      - `put`：写入或更新条目并标记为最近使用；超出容量时从最久未使用的一端依次淘汰（不会淘汰刚写入的条目）；
+      - 单个条目的 `size` 大于 `capacity` 时不缓存它；若该 key 原本在缓存中，旧条目也一并删除，避免之后读到过期的旧值；
+      - `capacity <= 0` 或 `size < 0` 时抛出 `ValueError`；`get` 为 O(1)，`put` 除淘汰外为 O(1)。
+    answer: |
+      class _Node:
+          __slots__ = ("key", "val", "size", "prev", "next")
+
+          def __init__(self, key=None, val=None, size=0):
+              self.key, self.val, self.size = key, val, size
+              self.prev = self.next = None
+
+
+      class SizedLRU:
+          def __init__(self, capacity: int):
+              if capacity <= 0:
+                  raise ValueError("capacity 必须为正")
+              self.capacity, self.total, self.map = capacity, 0, {}
+              self.head, self.tail = _Node(), _Node()      # 哨兵：head 之后最旧，tail 之前最新
+              self.head.next, self.tail.prev = self.tail, self.head
+
+          def _unlink(self, node):
+              node.prev.next, node.next.prev = node.next, node.prev
+
+          def _append(self, node):                         # 挂到最新的一端
+              node.prev, node.next = self.tail.prev, self.tail
+              self.tail.prev.next = node
+              self.tail.prev = node
+
+          def _remove(self, node):
+              self._unlink(node)
+              del self.map[node.key]                       # 节点里存 key，淘汰时才能删哈希表项
+              self.total -= node.size
+
+          def get(self, key):
+              node = self.map.get(key)
+              if node is None:
+                  return None
+              self._unlink(node)
+              self._append(node)
+              return node.val
+
+          def put(self, key, value, size: int) -> None:
+              if size < 0:
+                  raise ValueError("size 不能为负")
+              if key in self.map:
+                  self._remove(self.map[key])              # 先删旧条目，再按新大小放入
+              if size > self.capacity:
+                  return                                   # 单条就超过容量：不缓存
+              node = _Node(key, value, size)
+              self.map[key] = node
+              self._append(node)
+              self.total += size
+              while self.total > self.capacity:            # 从最旧的一端淘汰
+                  self._remove(self.head.next)
+
+          def keys(self) -> list:
+              out, node = [], self.head.next
+              while node is not self.tail:
+                  out.append(node.key)
+                  node = node.next
+              return out
+    test: |
+      import random
+
+      c = SizedLRU(100)
+      c.put("emb:a", "va", 40)
+      c.put("emb:b", "vb", 40)
+      assert c.get("emb:a") == "va"                    # a 变成最近使用
+      c.put("emb:c", "vc", 30)                         # 110 > 100：淘汰最久未使用的 b
+      assert c.keys() == ["emb:a", "emb:c"] and c.total == 70 and c.get("emb:b") is None
+      c.put("emb:a", "va2", 90)                        # 更新 a 并变大：淘汰 c
+      assert c.keys() == ["emb:a"] and c.total == 90 and c.get("emb:a") == "va2"
+      c.put("emb:a", "huge", 101)                      # 单条超过容量：不缓存，旧值也删除
+      assert c.get("emb:a") is None and c.keys() == [] and c.total == 0
+      c.put("z", 0, 0)
+      assert c.keys() == ["z"]
+      for bad in (lambda: SizedLRU(0), lambda: c.put("x", 1, -1)):
+          try:
+              bad()
+              raise AssertionError("应抛出 ValueError")
+          except ValueError:
+              pass
+
+      rng = random.Random(0)
+      for _ in range(200):                             # 与「用列表维护顺序」的朴素实现对拍
+          cap = rng.randint(1, 30)
+          c, ref = SizedLRU(cap), []                   # ref：[(key, val, size)]，从旧到新
+          for _ in range(200):
+              k = rng.randrange(8)
+              if rng.random() < 0.5:
+                  hit = [e for e in ref if e[0] == k]
+                  if hit:
+                      ref.remove(hit[0])
+                      ref.append(hit[0])
+                  assert c.get(k) == (hit[0][1] if hit else None)
+              else:
+                  v, s = rng.randrange(100), rng.randint(0, 12)
+                  ref = [e for e in ref if e[0] != k]
+                  if s <= cap:
+                      ref.append((k, v, s))
+                      while sum(e[2] for e in ref) > cap:
+                          ref.pop(0)
+                  c.put(k, v, s)
+              assert c.keys() == [e[0] for e in ref] and c.total == sum(e[2] for e in ref)
+    explanation: |
+      **结构**：哈希表负责 O(1) 地从 key 找到链表节点；双向链表按使用时间排列，`head` 之后最旧、`tail` 之前最新，负责 O(1) 地摘除与插入。两个哨兵节点省去了空链表、头尾节点的边界判断。
+
+      **与按条数计容量的区别**：一次 `put` 可能要淘汰多个旧条目，用 `while` 循环从最旧的一端淘汰，直到总大小不超过容量。每个条目只会被淘汰一次，所以淘汰的总代价摊到每次 `put` 仍是 O(1)。新条目挂在最新的一端，且自身大小不超过容量，所以循环不会把它淘汰掉。
+
+      **易错点**：
+      - 节点里不存 key，淘汰时就无法删除对应的哈希表项；
+      - 更新已有 key 时忘了先扣除旧的大小，`total` 越算越大；
+      - 新值放不下时只是「不写入」，却保留了旧值，之后会读到过期数据；
+      - `get` 也会修改链表，多线程使用时读操作同样要加锁。
+
+      Python 中可以先写 `OrderedDict` 版本（它内部就是哈希表 + 双向链表），面试官通常会追问手写链表的版本。
+
+  - id: CS-ALGO-049
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [LRU缓存]
+    tags: [LFU, 手撕]
+    question: |
+      实现 O(1) 的 LFU（最不经常使用）缓存：
+
+      ```python
+      class LFUCache:
+          def __init__(self, capacity: int): ...
+          def get(self, key): ...            # 命中返回值；未命中返回 None
+          def put(self, key, value) -> None: ...
+      ```
+
+      - 每个 key 记录使用次数：新写入的 key 次数为 1；`get` 命中或 `put` 更新已有 key 时，次数加 1；
+      - 缓存已满又要写入**新** key 时，先淘汰使用次数最少的 key；次数相同时，淘汰其中最久未被使用（`get` 或 `put`）的那个；
+      - `capacity` 为 0 时不缓存任何内容，为负数时抛出 `ValueError`；`get`、`put` 的平均时间复杂度为 O(1)；
+      - 可以使用 `collections` 中的数据结构。
+    answer: |
+      from collections import OrderedDict, defaultdict
+
+
+      class LFUCache:
+          def __init__(self, capacity: int):
+              if capacity < 0:
+                  raise ValueError("capacity 不能为负")
+              self.cap = capacity
+              self.vals, self.freq = {}, {}                # key -> 值；key -> 使用次数
+              self.buckets = defaultdict(OrderedDict)     # 次数 -> 这些 key，最久未使用的在前
+              self.min_freq = 0
+
+          def _touch(self, key):                          # 使用次数加 1，挪到新桶的最新端
+              f = self.freq[key]
+              del self.buckets[f][key]
+              if not self.buckets[f]:
+                  del self.buckets[f]
+                  if self.min_freq == f:
+                      self.min_freq = f + 1
+              self.freq[key] = f + 1
+              self.buckets[f + 1][key] = None
+
+          def get(self, key):
+              if key not in self.vals:
+                  return None
+              self._touch(key)
+              return self.vals[key]
+
+          def put(self, key, value) -> None:
+              if self.cap == 0:
+                  return
+              if key in self.vals:
+                  self.vals[key] = value
+                  self._touch(key)
+                  return
+              if len(self.vals) == self.cap:              # 淘汰：次数最少的桶里最久未使用的 key
+                  old, _ = self.buckets[self.min_freq].popitem(last=False)
+                  if not self.buckets[self.min_freq]:
+                      del self.buckets[self.min_freq]
+                  del self.vals[old], self.freq[old]
+              self.vals[key], self.freq[key] = value, 1
+              self.buckets[1][key] = None
+              self.min_freq = 1                           # 新 key 的次数是 1，一定是最小的
+    test: |
+      import random
+
+      c = LFUCache(2)
+      c.put("a", 1)
+      c.put("b", 2)
+      assert c.get("a") == 1                          # a 用了 2 次，b 用了 1 次
+      c.put("c", 3)                                   # 淘汰次数最少的 b
+      assert c.get("b") is None and c.get("c") == 3   # 现在 a、c 各用了 2 次
+      c.put("d", 4)                                   # 次数相同，淘汰最久未使用的 a
+      assert c.get("a") is None and c.get("c") == 3 and c.get("d") == 4
+      c.put("c", 30)                                  # 更新也算一次使用
+      assert c.get("c") == 30
+      z = LFUCache(0)
+      z.put("x", 1)
+      assert z.get("x") is None
+      try:
+          LFUCache(-1)
+          raise AssertionError("应抛出 ValueError")
+      except ValueError:
+          pass
+
+      rng = random.Random(0)
+      for _ in range(300):                            # 与朴素实现对拍：淘汰 (次数, 最近使用时刻) 最小者
+          cap = rng.randint(1, 5)
+          c, ref, tick = LFUCache(cap), {}, 0          # ref: key -> [值, 次数, 最近使用时刻]
+          for _ in range(200):
+              tick += 1
+              k = rng.randrange(8)
+              if rng.random() < 0.5:
+                  e = ref.get(k)
+                  if e:
+                      e[1] += 1
+                      e[2] = tick
+                  assert c.get(k) == (e[0] if e else None)
+              else:
+                  v = rng.randrange(100)
+                  if k in ref:
+                      ref[k][0] = v
+                      ref[k][1] += 1
+                      ref[k][2] = tick
+                  else:
+                      if len(ref) == cap:
+                          victim = min(ref, key=lambda x: (ref[x][1], ref[x][2]))
+                          del ref[victim]
+                      ref[k] = [v, 1, tick]
+                  c.put(k, v)
+              assert set(c.vals) == set(ref)
+    explanation: |
+      **数据结构**：
+      - `vals`、`freq` 两个哈希表：key → 值、key → 使用次数；
+      - `buckets`：使用次数 → 有序字典，同一次数的 key 按最近使用排列（最久未使用的在前），负责「同次数时淘汰最久未使用的」；
+      - `min_freq`：当前最小的使用次数，淘汰时直接定位到对应的桶。
+
+      **关键在于 `min_freq` 的维护**：
+      - 某个 key 的次数从 f 变成 f + 1，若 f 桶因此变空且 f 恰好是最小次数，则最小次数变为 f + 1（这个 key 自己就在 f + 1 桶里）；
+      - 插入新 key 后，最小次数一定是 1。
+
+      这样不需要扫描就能找到淘汰对象，所有操作都是平均 O(1)。若用堆按 (次数, 时间) 排序，则每次操作是 O(log n)。
+
+      **LFU 的弱点**：历史上很热、现在已经不再访问的 key 次数很高，很难被淘汰（缓存「老化」问题）。实践中常配合次数衰减或窗口统计，例如 Caffeine 使用的 W-TinyLFU，用一个小的 LRU 窗口加上近似频率统计来决定新条目能否进入主缓存。
+
+  - id: CS-ALGO-050
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [LRU缓存]
+    tags: [TTL, 并发, 分布式缓存]
+    question: |
+      你已经写好了一个 LRU 缓存（哈希表 + 双向链表）。面试官要求把它用来缓存 Agent 的工具调用结果，并继续追问：(1) 怎样支持每个条目的过期时间（TTL）？(2) 怎样支持多线程高并发访问？(3) 服务部署成多个进程、多台机器后怎么办？请说明设计思路与取舍。
+    answer: |
+      **(1) TTL**
+      - 节点里增加过期时刻 `expire_at`，用单调时钟（如 `time.monotonic()`）计算，不受系统改时间的影响；
+      - 惰性删除：`get` 时发现已过期，就删除并按未命中处理；
+      - 只靠惰性删除，过期但再没被访问的条目会一直占着容量，所以还要定期清理：按过期时间建最小堆或时间轮，或者像 Redis 那样定期抽样检查带过期时间的 key；淘汰时优先淘汰已过期的条目；
+      - 给 TTL 加随机抖动，避免大量条目在同一时刻集中过期，回源请求被瞬间放大。
+
+      **(2) 高并发**
+      - `get` 也要移动链表节点，所以读操作同样必须加锁；GIL 不能保证「查哈希表 + 移动节点」这种复合操作的原子性；
+      - 一把全局锁会成为瓶颈：按 `hash(key) % N` 分成 N 个分段，每段一把锁、一个独立的 LRU，结果是近似的全局 LRU；
+      - 缩短持锁时间：未命中时不要在锁内调用工具或模型；对同一个 key 合并并发的回源请求（single flight），避免缓存击穿时同时发出大量相同的昂贵调用；
+      - 进一步优化：命中时只把访问记录写入缓冲区、批量更新链表（Caffeine 的做法），或改用近似 LRU（如 CLOCK），避免每次命中都改链表。
+
+      **(3) 多进程、多机**
+      - 每个进程各自缓存，命中率低、彼此还可能不一致；改为共享缓存（如 Redis），设置 TTL 和淘汰策略（Redis 的 LRU 是基于采样的近似 LRU）；
+      - 常见做法是两级缓存：进程内的小 L1（TTL 很短）+ 共享的 L2；数据更新时通过消息通知失效，或者只依赖短 TTL；
+      - 多个缓存节点之间用一致性哈希分片，扩缩容时只迁移少量 key；
+      - 缓存键要包含工具名、规范化后的参数和工具版本；有副作用的工具（下单、发邮件）绝不能缓存；结果与用户权限相关时，键里要带上用户或租户，防止越权读到别人的数据。
+    rubric:
+      - '讲清 TTL 的实现：过期时间戳、惰性删除，并补充定期清理或优先淘汰过期条目（3 分）'
+      - '指出 get 也要加锁，并给出分段锁、缩短持锁时间、合并并发回源等至少两项并发优化（4 分）'
+      - '给出多进程或多机的方案（共享缓存、两级缓存、一致性哈希、失效通知等）（2 分）'
+      - '提到缓存键设计、副作用工具不能缓存或权限隔离等工程细节（1 分）'
+    explanation: |
+      **常见失分点**：认为「读操作不改数据，不用加锁」，忽略了 LRU 的 `get` 会移动链表节点；用系统时间而不是单调时钟计算过期；只做惰性删除，让过期条目长期占用容量；没有考虑缓存击穿时大量相同请求同时回源；把有副作用、或依赖用户权限的工具结果也放进共享缓存。回答时最好先说单机、再说并发、最后说分布式，层层递进。
+
+  - id: CS-ALGO-051
+    type: single
+    difficulty: 2
+    frequency: 1
+    points: [LRU缓存]
+    tags: [缓存污染, W-TinyLFU]
+    question: |
+      某检索服务用 LRU 缓存热门查询的 Embedding，平时命中率约 80%。每天凌晨有一个离线任务，把全量历史文档（数量远大于缓存容量，每条只访问一次）各查询一遍。之后的一小时里，在线流量的命中率跌到 20% 左右。最合理的解释与对策是：
+    options:
+      A: 'LRU 每次访问都要在链表里线性查找节点，离线任务把链表撑长后操作退化为 O(n)，大量请求超时未命中；应换成纯哈希表实现'
+      B: '离线任务写入的 key 太多，哈希冲突让桶链变长、查找超时而被当作未命中；应把哈希表的初始容量调大几倍'
+      C: '一次性扫描把只访问一次的冷数据挤进缓存、淘汰了热点（缓存污染）；可让离线任务绕过缓存，或改用 2Q、W-TinyLFU 等抗扫描策略'
+      D: '缓存容量相对全量文档太小，热点被正常淘汰；只有把容量扩大到能放下全部历史文档的 Embedding，命中率才能恢复'
+    answer: C
+    explanation: |
+      **结论**：这是 LRU 的经典弱点：它只看「最近有没有用过」，一次性的顺序扫描会让大量冷数据都变成「最近使用」，把热点全部挤出去。扫描结束后热点要重新回源加载，命中率需要一段时间才能恢复。
+
+      **对策**：
+      - 最直接：离线任务不读写在线缓存（或者用单独的缓存）；
+      - 换用抗扫描的策略：2Q、LRU-K 要求条目被访问两次才进入主缓存；W-TinyLFU（Caffeine 使用）用近似频率统计做准入判断，新条目只有比将被淘汰的条目更「常用」才能进入；MySQL InnoDB 的缓冲池也把新读入的页先放在 LRU 链表的「旧区」中段，而不是直接放到头部，以抵抗全表扫描的冲击。
+
+      - A 错：LRU 用哈希表加双向链表实现，get、put 都是 O(1)，不需要在链表里查找；问题不在速度，而在淘汰决策。
+      - B 错：哈希表会自动扩容，冲突不会让命中率下降；命中率取决于缓存里装的是哪些数据。
+      - D 错：扩容成本高，也不是唯一办法；只要不让扫描污染缓存，原来的容量就足以达到 80% 的命中率。
+
+  - id: CS-ALGO-052
+    type: coding
+    difficulty: 2
+    frequency: 2
+    points: [Agent工程化编程]
+    tags: [JSON Merge Patch, 嵌套 JSON, 手撕]
+    question: |
+      Agent 平台的配置由「默认配置 + 租户覆盖」合并而成，覆盖部分采用 JSON Merge Patch（RFC 7396）的语义。实现：
+
+      ```python
+      def merge_patch(target, patch) -> tuple[object, list[str]]: ...
+      ```
+
+      合并规则（target、patch 都是由 dict、list、str、数字、bool、None 组成的 JSON 值）：
+      - patch 不是 dict 时，结果就是 patch 本身（数组也整体替换，不逐元素合并）；
+      - patch 是 dict 时：若 target 不是 dict，先把 target 当作空 dict；然后对 patch 的每个键值对：值为 None 表示删除 target 中的该键（不存在则忽略），否则对该键递归合并；
+      - **类型冲突**：合并过程中，某个位置的原值与补丁值都存在（都不是 None）且恰好一个是 dict 时，按上面的规则处理，同时把该位置的路径记入冲突列表。根路径为 `"$"`，子路径为 `"$.键1.键2"`，按遍历补丁的顺序记录；
+      - 返回 `(合并结果, 冲突路径列表)`；不得修改输入，结果也不能与输入共享可变对象。
+    answer: |
+      import copy
+
+
+      def merge_patch(target, patch):
+          conflicts = []
+
+          def merge(t, p, path):
+              if not isinstance(p, dict):                  # 补丁不是对象：整体替换
+                  if isinstance(t, dict) and p is not None:
+                      conflicts.append(path)
+                  return copy.deepcopy(p)
+              if not isinstance(t, dict):                  # 补丁是对象、原值不是：原值作废
+                  if t is not None:
+                      conflicts.append(path)
+                  t = {}
+              for k, v in p.items():
+                  if v is None:
+                      t.pop(k, None)                       # None 表示删除该键
+                  else:
+                      t[k] = merge(t.get(k), v, f"{path}.{k}")
+              return t
+
+          return merge(copy.deepcopy(target), patch, "$"), conflicts
+    test: |
+      import copy
+      import json
+
+      cases = [                                        # RFC 7396 附录 A 中的部分用例
+          ('{"a":"b"}', '{"a":"c"}', '{"a":"c"}'),
+          ('{"a":"b"}', '{"b":"c"}', '{"a":"b","b":"c"}'),
+          ('{"a":"b"}', '{"a":null}', '{}'),
+          ('{"a":["b"]}', '{"a":"c"}', '{"a":"c"}'),
+          ('{"a":{"b":"c"}}', '{"a":{"b":"d","c":null}}', '{"a":{"b":"d"}}'),
+          ('{"a":[{"b":"c"}]}', '{"a":[1]}', '{"a":[1]}'),
+          ('["a","b"]', '["c","d"]', '["c","d"]'),
+          ('{"a":"b"}', '["c"]', '["c"]'),
+          ('{"a":"foo"}', 'null', 'null'),
+          ('{"e":null}', '{"a":1}', '{"e":null,"a":1}'),
+          ('[1,2]', '{"a":"b","c":null}', '{"a":"b"}'),
+          ('{}', '{"a":{"bb":{"ccc":null}}}', '{"a":{"bb":{}}}'),
+      ]
+      for t, p, want in cases:
+          assert merge_patch(json.loads(t), json.loads(p))[0] == json.loads(want), (t, p)
+
+      base = {"model": "m1", "tools": {"search": {"top_k": 5, "sites": ["a.com"]}, "code": True},
+              "retry": {"max": 3}, "stop": ["\n"]}
+      over = {"tools": {"search": {"top_k": 8, "sites": None}, "code": {"timeout": 30}},
+              "retry": 2, "stop": {"strings": ["END"]}, "temperature": 0.2}
+      snap_b, snap_o = copy.deepcopy(base), copy.deepcopy(over)
+      merged, conflicts = merge_patch(base, over)
+      assert merged == {"model": "m1", "tools": {"search": {"top_k": 8}, "code": {"timeout": 30}},
+                        "retry": 2, "stop": {"strings": ["END"]}, "temperature": 0.2}
+      assert conflicts == ["$.tools.code", "$.retry", "$.stop"]
+      assert base == snap_b and over == snap_o                 # 输入没有被修改
+      merged["stop"]["strings"].append("X")
+      merged["model"] = "changed"
+      assert over == snap_o and base == snap_b                 # 结果不与输入共享可变对象
+      assert merge_patch({"a": [1]}, {"a": [2]}) == ({"a": [2]}, [])      # 数组之间替换，不算冲突
+      assert merge_patch({"a": {"x": 1}}, {"a": None}) == ({}, [])        # 删除不算冲突
+      assert merge_patch(None, {"a": 1}) == ({"a": 1}, [])
+      assert merge_patch(5, {"a": 1}) == ({"a": 1}, ["$"])
+    explanation: |
+      **思路**：先深拷贝 target，在副本上递归地应用补丁，补丁中的值写入前也深拷贝一份，保证结果与输入互不影响。递归函数按补丁的类型分两种情况：
+      1. 补丁不是 dict：直接替换。数组也是整体替换，所以 RFC 7396 无法只修改数组中的某个元素；
+      2. 补丁是 dict：原值不是 dict 就丢弃，从空 dict 开始；再逐键处理，None 删除，其他值递归合并。
+
+      **为什么要报告类型冲突**：dict 与非 dict 相遇时，合并语义从「递归合并」悄悄变成了「整体替换」。例如默认配置里 `"retry": {"max": 3}`，租户写成 `"retry": 2`，整个 retry 对象就被一个数字替换了，下游读取 `retry.max` 时会出错。把这些路径记下来报警或审计，比静默覆盖安全得多。
+
+      **局限**：Merge Patch 用 null 表示删除，所以无法把某个字段显式设为 null；也不能对数组做增删改。需要精确操作时用 JSON Patch（RFC 6902），它由 add、remove、replace 等操作序列组成。
+
+      **易错点**：直接修改传入的 target（调用方的默认配置被悄悄改掉）；浅拷贝导致结果和输入共享内层列表；把 None 当作普通值写进结果；对数组做逐元素合并（不符合 RFC 7396）。
+    source: 'RFC 7396 JSON Merge Patch, https://www.rfc-editor.org/rfc/rfc7396'
+
+  - id: CS-ALGO-053
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [Agent工程化编程]
+    tags: [上下文截断, 工具调用, 手撕]
+    question: |
+      多轮 Agent 对话超出上下文窗口时，需要按 token 预算截断历史。实现：
+
+      ```python
+      def fit_history(messages: list[dict], budget: int) -> list[dict]: ...
+      ```
+
+      - 每条消息形如 `{"role": ..., "tokens": 整数, ...}`，role 为 `system`、`user`、`assistant`、`tool` 之一；system 消息只出现在开头，并且总是保留；
+      - 带非空 `tool_calls` 字段的 assistant 消息，与紧随其后的连续 tool 消息组成一个**单元**；其余每条非 system 消息各自是一个单元。单元要么整体保留、要么整体丢弃，否则会出现「有调用无结果」或「有结果无调用」的非法消息序列；
+      - 在所有满足以下条件的单元后缀中，选**最长**的一个：以 user 消息开头，并且加上全部 system 消息后 token 总数不超过 `budget`；
+      - 返回 system 消息加上选中的后缀（保持原顺序、原 dict 对象），不修改输入；不存在满足条件的后缀时抛出 `ValueError`；时间复杂度 O(n)。
+    answer: |
+      def fit_history(messages: list[dict], budget: int) -> list[dict]:
+          n_sys = 0
+          while n_sys < len(messages) and messages[n_sys]["role"] == "system":
+              n_sys += 1
+          system, rest = messages[:n_sys], messages[n_sys:]
+          units, i = [], 0
+          while i < len(rest):                         # 切分成不可拆的单元
+              j = i + 1
+              if rest[i]["role"] == "assistant" and rest[i].get("tool_calls"):
+                  while j < len(rest) and rest[j]["role"] == "tool":
+                      j += 1                           # 工具调用与它的结果绑在一起
+              units.append(rest[i:j])
+              i = j
+          used = sum(m["tokens"] for m in system)
+          start = len(units)
+          while start > 0:                             # 从最新的单元往前装，装不下就停
+              cost = sum(m["tokens"] for m in units[start - 1])
+              if used + cost > budget:
+                  break
+              used += cost
+              start -= 1
+          while start < len(units) and units[start][0]["role"] != "user":
+              start += 1                               # 保留部分必须以 user 消息开头
+          if start == len(units):
+              raise ValueError("预算不足以保留任何对话")
+          return system + [m for unit in units[start:] for m in unit]
+    test: |
+      import random
+
+      def sys_(t): return {"role": "system", "tokens": t}
+      def user(t): return {"role": "user", "tokens": t}
+      def asst(t, calls=None):
+          m = {"role": "assistant", "tokens": t}
+          if calls:
+              m["tool_calls"] = calls
+          return m
+      def tool(cid, t): return {"role": "tool", "tool_call_id": cid, "tokens": t}
+
+      msgs = [sys_(50),
+              user(20), asst(15, ["c1"]), tool("c1", 200), asst(30),
+              user(10), asst(15, ["c2", "c3"]), tool("c2", 180), tool("c3", 160), asst(25),
+              user(8)]
+      snapshot = list(msgs)
+      assert fit_history(msgs, 713) == msgs                          # 总共 713，全部放得下
+      got = fit_history(msgs, 450)
+      assert got == [msgs[0]] + msgs[5:] and all(a is b for a, b in zip(got, [msgs[0]] + msgs[5:]))
+      assert fit_history(msgs, 440) == [msgs[0], msgs[10]]           # 第二轮的 user 放不下，这一轮整体丢弃
+      for b in (57, 49):
+          try:
+              fit_history(msgs, b)
+              raise AssertionError("预算不足应报错")
+          except ValueError:
+              pass
+      assert msgs == snapshot                                        # 不修改输入
+      assert fit_history([user(5)], 5) == [{"role": "user", "tokens": 5}]
+
+      def units_of(rest):
+          units, i = [], 0
+          while i < len(rest):
+              j = i + 1
+              if rest[i]["role"] == "assistant" and rest[i].get("tool_calls"):
+                  while j < len(rest) and rest[j]["role"] == "tool":
+                      j += 1
+              units.append(rest[i:j])
+              i = j
+          return units
+
+      rng = random.Random(0)
+      for _ in range(500):                            # 对拍：枚举所有合法后缀，取最长的
+          msgs = [sys_(rng.randint(0, 20)) for _ in range(rng.randint(0, 2))]
+          n_sys = len(msgs)
+          for _ in range(rng.randint(1, 6)):
+              msgs.append(user(rng.randint(1, 30)))
+              for _ in range(rng.randint(0, 2)):
+                  if rng.random() < 0.5:
+                      k = rng.randint(1, 2)
+                      msgs.append(asst(rng.randint(1, 20), [f"c{x}" for x in range(k)]))
+                      msgs += [tool(f"c{x}", rng.randint(1, 50)) for x in range(k)]
+                  else:
+                      msgs.append(asst(rng.randint(1, 30)))
+          budget = rng.randint(0, 300)
+          units = units_of(msgs[n_sys:])
+          base = sum(m["tokens"] for m in msgs[:n_sys])
+          ok = [s for s in range(len(units)) if units[s][0]["role"] == "user"
+                and base + sum(m["tokens"] for u in units[s:] for m in u) <= budget]
+          try:
+              got = fit_history(msgs, budget)
+              assert ok and got == msgs[:n_sys] + [m for u in units[min(ok):] for m in u]
+          except ValueError:
+              assert not ok
+    explanation: |
+      **思路**：
+      1. 分离开头的 system 消息，再把其余消息切成单元：遇到带 `tool_calls` 的 assistant 消息，就把后面紧跟的 tool 消息都并进来；
+      2. 从最新的单元往前累加，直到再加一个就超出预算为止，得到「放得下的最长后缀」；
+      3. 后缀的开头若不是 user，就继续往后丢单元，直到以 user 开头。
+
+      **为什么这样就是最长的合法后缀**：比第 2 步结果更长的后缀一定放不下；在放得下的后缀中，越靠前开始的越长，所以第一个以 user 开头的单元就是答案。每个单元只被访问常数次，总复杂度 O(n)。
+
+      **为什么不跳过放不下的单元去装更早的消息**：那样会在历史中间挖洞，模型看到的对话不连贯，可能把后一轮的回答和前一轮的问题错配。
+
+      **示例**：预算 440 时，最新的三个单元（第二轮的工具调用 355 + 回答 25 + 最后的 user 8，加上 system 50 共 438）放得下，但再加第二轮的 user（10）就超了。于是第二轮的工具调用和回答因为缺少对应的提问而被整体丢弃，只剩 system 和最后一句。这说明单纯截断的代价很大，实践中常配合摘要：把被丢弃的部分压缩成一段摘要放在 system 之后，或者把很长的工具结果替换成简短的引用。
+
+      **易错点**：只按消息逐条截断，留下孤立的 tool 消息，调用模型 API 时会因消息序列不合法而报错；忘了把 system 的 token 计入预算；修改了调用方传入的列表。
+
+  - id: CS-ALGO-054
+    type: design
+    difficulty: 3
+    frequency: 2
+    points: [Agent工程化编程, 拓扑排序]
+    tags: [DAG 调度, 工作流引擎]
+    question: |
+      请设计一个 Agent 工作流的 DAG 执行引擎：规划器（大模型）输出一组带依赖关系的工具调用，由引擎负责执行。要求：
+      1. 依赖满足后尽快并发执行，全局并发上限可配置，部分工具还有各自的限流；
+      2. 能处理失败：可重试的错误要重试，不可恢复时按策略跳过下游或取消整个计划；
+      3. 进程崩溃后能从断点继续，不重复执行已经成功的步骤；
+      4. 执行过程中，规划器可以追加新任务；
+      5. 便于排查问题。
+
+      请给出核心数据结构、调度算法和关键设计。
+    answer: |
+      **1. 计划校验（执行前）**
+      - 检查每个依赖引用的任务都存在、工具名存在、参数通过 Schema 校验；
+      - 用 Kahn 算法或 DFS 三色标记检测环，有环时把具体的环（如 a → b → c → a）反馈给规划器修正；
+      - 限制节点数与扇出，防止模型生成规模失控的计划。
+
+      **2. 核心数据结构**
+      - 任务表：id → {工具、参数、状态（PENDING / READY / RUNNING / SUCCEEDED / FAILED / SKIPPED / CANCELLED）、尝试次数、结果引用}；
+      - 邻接表 `children` 与剩余入度 `indeg`（只统计尚未完成的前置任务）；
+      - 就绪队列：优先级堆，键为「剩余关键路径长度」，让长链上的任务先跑，缩短总耗时；
+      - 运行集合，以及全局信号量、按工具划分的并发上限或令牌桶。
+
+      **3. 调度循环（事件驱动）**
+      - 初始时把入度为 0 的任务放进就绪队列；
+      - 循环：在全局并发和该工具的限流都允许时，从就绪队列取任务提交执行（如 asyncio 任务）；然后等待任一任务结束（`asyncio.wait(..., return_when=FIRST_COMPLETED)`）；
+      - 成功：先持久化结果，再把每个后继的入度减 1，减到 0 就放进就绪队列；
+      - 失败：超时、限流、5xx 等可重试错误按指数退避加抖动重试；参数错误等确定性错误不重试，按策略处理：fail-fast 取消全部运行中的任务，或者沿后继做 BFS 把下游标记为 SKIPPED，也可以把错误交给规划器重新规划；
+      - 复杂度：每个任务、每条边处理常数次，加上堆操作，为 $O((V+E)\log V)$。
+
+      **4. 持久化与恢复**
+      - 每次状态变化写入事件日志或数据库（任务状态、结果或结果的对象存储地址）；
+      - 恢复时根据已成功的任务重建 `indeg`，已成功的直接跳过；崩溃时处于 RUNNING 的任务可能已经执行过，所以有副作用的工具必须带幂等键（工作流 ID + 任务 ID），或在重试前先查询下游的执行状态。
+
+      **5. 动态追加**
+      - 新任务加入时，检查依赖是否存在、加入后是否成环；已经成功的依赖不计入入度；
+      - 计划带版本号，追加与取消都记录在事件日志里，保证恢复时可以重放。
+
+      **6. 数据传递与超时取消**
+      - 下游参数通过引用上游结果（如 `"$t3.output"`）在执行时解析；大结果放对象存储，只传引用，避免撑爆模型上下文；
+      - 每个任务有超时，整个计划有总截止时间；取消时向运行中的任务传播取消信号并做清理。
+
+      **7. 可观测性**
+      - 一个计划对应一条 trace，每个任务是一个 span，记录排队时长、执行时长、重试次数、token 与成本；
+      - 提供 DAG 可视化，标出关键路径与失败节点，便于定位「慢在哪里、错在哪里」。
+
+      **8. 风险**：模型生成不存在的工具或依赖、计划成环、扇出爆炸、热点工具限流导致排队、高危工具（支付、删除）需要插入人工审批节点。
+    rubric:
+      - '执行前校验依赖与参数，并检测环、把环反馈给规划器（2 分）'
+      - '给出入度表、就绪队列（可带优先级）、并发与限流控制的事件驱动调度算法（3 分）'
+      - '区分可重试与不可重试错误，并给出跳过下游、取消或重新规划等策略（2 分）'
+      - '通过持久化状态与幂等键实现断点续跑且不重复执行副作用（2 分）'
+      - '涉及动态追加任务、结果传递或可观测性中的至少一项（1 分）'
+    explanation: |
+      **常见失分点**：只写一个拓扑排序就结束，没有并发控制和失败处理；执行前不检测环，导致引擎永远等待；任务成功后先更新内存状态、后持久化，崩溃时丢失进度；忽略「运行中崩溃」的任务可能已经产生副作用；把所有错误都无差别地重试。高分回答通常先校验、再调度、再容错与恢复，最后补上可观测性，每一部分都说清对应的数据结构。
+
+  - id: CS-ALGO-055
+    type: scenario
+    difficulty: 2
+    frequency: 3
+    points: [堆与TopK, 哈希表]
+    tags: [海量数据, Top-K, 分治]
+    question: |
+      搜索日志中有约 100 亿条用户查询（约 1 TB），需要找出出现次数最多的 100 个查询。只有一台机器：内存 16 GB，磁盘空间充足。请给出方案，并估算主要开销。如果查询是实时流入的，需要每分钟更新一次最近一小时的 Top-100，方案要怎样调整？
+    answer: |
+      **1. 分析**：100 亿条查询中不同查询的数量可能有数亿（长尾很长），每个都放进哈希表计数，加上键本身和哈希表的开销，内存需求远超 16 GB，不能一次性全量计数。
+
+      **2. 单机方案：哈希分片 + 局部计数 + 堆**
+      - 第一遍扫描：按 `hash(query) % 1000` 把每条查询追加写入 1000 个分片文件。同一个查询一定落在同一个分片，每个分片平均约 1 GB；
+      - 逐个处理分片：用哈希表计数，再用大小为 100 的小顶堆取出该分片的 Top-100；
+      - 合并：因为同一个查询只出现在一个分片里，分片内的计数就是全局计数，把 1000 个分片的 Top-100（共 10 万个候选）再取一次 Top-100 即为答案；
+      - 倾斜处理：某个分片因为热门查询特别集中而放不下时，换一个哈希函数把它再拆分；
+      - 开销估算：读 1 TB、写 1 TB、再读 1 TB，约 3 TB 的磁盘 IO；按 500 MB/s 估算约 6000 秒，即 1.5～2 小时。计数阶段的 CPU 开销是线性的，堆操作为 $O(m\log100)$。可以在第一遍时先在内存中做局部预聚合（类似 Combiner），减少写盘量。
+
+      **3. 多台机器**：就是 MapReduce 版的 WordCount 加 Top-K：Map 输出（查询, 1），Combiner 局部求和，按查询分区到 Reducer 计数，每个 Reducer 输出局部 Top-100，最后汇总。
+
+      **4. 实时流：最近一小时、每分钟更新**
+      - **精确方案**：按查询哈希把流量分到多个计数节点；每个节点按分钟分桶计数，滑动窗口每前进一分钟，就加上新桶、减去最老的一个桶；每个节点维护局部 Top-K，汇总节点合并；
+      - **近似方案**（内存固定）：Count-Min Sketch 估计频次（只会高估），再配合小顶堆维护候选；或者用 Space-Saving 算法，用 k 个计数器保证出现次数超过 n/k 的查询一定被保留。适合监控、热搜这类允许少量误差的场景；
+      - 还要注意乱序到达、时间窗口边界、少数超热查询造成的分区倾斜。
+
+      **5. 数据清洗**：先对查询做规范化（大小写、首尾空白、全半角），并过滤爬虫和压测流量，否则统计结果没有意义。
+    rubric:
+      - '指出全量计数内存放不下，必须分治或近似（2 分）'
+      - '用哈希分片保证同一查询落在同一分片，再做局部计数和大小为 K 的堆（3 分）'
+      - '说明合并的正确性，并给出 IO 或时间估算（2 分）'
+      - '给出流式方案：滑动窗口分桶计数，或 Count-Min Sketch / Space-Saving 等近似算法（2 分）'
+      - '提到数据倾斜、规范化或过滤异常流量等工程细节（1 分）'
+    explanation: |
+      **常见失分点**：直接说「用哈希表计数再排序」，忽略内存约束；按行号或文件顺序随意切分，导致同一个查询分散在多个分片，局部 Top-K 合并后结果错误；只取每个分片的局部 Top-K 却没有保证同一查询只在一个分片里；流式场景只说「实时计数」，没有处理窗口过期，或说不出近似算法的误差性质。

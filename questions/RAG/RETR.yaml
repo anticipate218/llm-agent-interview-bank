@@ -1,0 +1,1032 @@
+domain: RAG
+subcategory: RETR
+questions:
+
+  - id: RAG-RETR-001
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [TF-IDF]
+    question: |
+      在 TF-IDF 中，IDF（逆文档频率）项的作用是：
+    options:
+      A: '压低在大量文档中都出现的常见词的权重，抬高只出现在少数文档中的稀有词'
+      B: '对长文档打折：按文档长度与平均长度之比缩放得分，避免长文档因为词多而占优'
+      C: '让词频的贡献随出现次数增加而逐渐饱和，避免某个词重复多次就主导得分'
+      D: '统计查询词在查询中出现的次数，作为查询侧的权重，与文档侧的词频相乘'
+    answer: A
+    explanation: |
+      **结论**：IDF 衡量一个词的「区分度」：$\mathrm{idf}(t)=\log\frac{N}{\mathrm{df}(t)}$，出现在越多文档里的词，越不能用来区分文档。「的」「请」几乎每篇都有，IDF 接近 0；错误码、型号、人名只出现在少数文档里，IDF 很高。
+
+      - B 错：长度归一不是 IDF 的作用。经典 TF-IDF 通常靠向量的 L2 归一化（余弦相似度）间接处理长度；BM25 则用参数 $b$ 显式控制。
+      - C 错：词频饱和来自 BM25 的 $k_1$；经典 TF-IDF 的词频是线性的（或取对数的次线性变体）。
+      - D 错：IDF 是语料级的统计量，与词在查询中出现几次无关。
+
+  - id: RAG-RETR-002
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [TF-IDF]
+    source: 'scikit-learn 文档：TfidfTransformer（smooth_idf=True 时 idf = ln[(1+n)/(1+df)] + 1）https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfTransformer.html；Lucene 文档：BM25Similarity'
+    question: |
+      语料共 1,000 篇文档，按 $\mathrm{idf}(t)=\ln\frac{N}{\mathrm{df}(t)}$ 计算：「的」出现在全部 1,000 篇文档中，$\mathrm{idf}(\text{的})=$ ____；错误码「E1024」只出现在 2 篇文档中，$\mathrm{idf}(\text{E1024})\approx$ ____（保留两位小数）。
+    answer: ['0', ['6.21', '6.215']]
+    explanation: |
+      - $\ln(1000/1000)=\ln1=0$：出现在所有文档中的词没有任何区分度，权重为 0，相当于停用词。
+      - $\ln(1000/2)=\ln500\approx6.21$。
+
+      这就是关键词检索擅长精确匹配的原因：查询中「E1024」的权重远高于其他常见词，包含它的文档会被排到前面。
+
+      不同实现的 IDF 公式略有差异，例如平滑写法 $\ln\frac{1+N}{1+\mathrm{df}}+1$（scikit-learn 的默认写法），BM25 常用 $\ln\left(1+\frac{N-\mathrm{df}+0.5}{\mathrm{df}+0.5}\right)$，但「越稀有越值钱」的思想是一致的。
+
+  - id: RAG-RETR-003
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [TF-IDF, BM25]
+    source: 'Robertson & Zaragoza, The Probabilistic Relevance Framework: BM25 and Beyond（2009）；Elasticsearch 文档：Similarity（默认 BM25，k1=1.2、b=0.75）https://www.elastic.co/docs/reference/elasticsearch/index-settings/similarity'
+    question: |
+      从 TF-IDF 到 BM25，主要改进了什么？请写出 BM25 的打分公式，并说明 $k_1$、$b$ 和 IDF 各自的作用。
+    answer: |
+      1. **TF-IDF 的问题**：
+         - 词频线性计入：出现 100 次的词比出现 4 次的得分高 25 倍，容易被关键词堆砌刷分；
+         - 长度处理粗糙：长文档词多、词频高，只能靠余弦归一化间接处理，没有可调的力度。
+      2. **BM25 公式**：
+         $$\mathrm{score}(q,d)=\sum_{t\in q}\mathrm{IDF}(t)\cdot\frac{f(t,d)\,(k_1+1)}{f(t,d)+k_1\left(1-b+b\,\frac{|d|}{\mathrm{avgdl}}\right)}$$
+         其中 $f(t,d)$ 是词频，$|d|$ 是文档长度，avgdl 是平均文档长度。
+      3. **$k_1$（词频饱和）**：词频增加时，单项得分趋于上限 $\mathrm{IDF}\cdot(k_1+1)$；$k_1$ 越大，饱和越慢；$k_1=0$ 时只看词是否出现。常取 1.2～2.0。
+      4. **$b$（长度归一）**：取值 0～1，$b=1$ 时完全按长度归一，$b=0$ 时不考虑长度；默认 0.75。
+      5. **IDF（稀有度）**：常用 $\ln\left(1+\frac{N-n+0.5}{n+0.5}\right)$，越稀有的词越值钱；在对数内加 1 保证非负。
+      6. **背景**：BM25 来自概率检索模型（Robertson 等），至今仍是 Lucene、Elasticsearch 的默认相似度，也是混合检索中稀疏一路的标准选择。
+    rubric:
+      - '指出 TF-IDF 词频线性增长、长度处理粗糙的问题（2 分）'
+      - '正确写出 BM25 公式（3 分）'
+      - '说清 k1 的饱和作用与常见取值（2 分）'
+      - '说清 b 的长度归一作用与取值范围（2 分）'
+      - '说清 IDF 的作用（1 分）'
+    explanation: |
+      **常见失分点**：把 IDF 写成不取对数的 $N/n$；说 BM25「能理解语义」；分不清 $k_1$ 与 $b$ 的作用；不知道 $b=0$、$k_1=0$ 这两种退化情形。
+
+  - id: RAG-RETR-004
+    type: calc
+    difficulty: 3
+    frequency: 3
+    points: [BM25]
+    question: |
+      语料共 $N=5$ 篇文档，平均长度 avgdl = 10 个词。查询为「VPN 证书」（两个词）。文档 D 长 15 个词，其中「VPN」出现 2 次、「证书」出现 1 次；语料中包含「VPN」的文档有 2 篇，包含「证书」的有 1 篇。取 $k_1=1.2$、$b=0.75$，IDF 用 $\ln\left(1+\frac{N-n+0.5}{n+0.5}\right)$。求文档 D 的 BM25 分数（保留两位小数）。
+    answer: '约 2.21'
+    explanation: |
+      1. **长度归一项**：$K=k_1\left(1-b+b\frac{|d|}{\mathrm{avgdl}}\right)=1.2\times(0.25+0.75\times1.5)=1.2\times1.375=1.65$。
+      2. **IDF**：
+         - VPN（$n=2$）：$\ln\left(1+\frac{5-2+0.5}{2+0.5}\right)=\ln2.4\approx0.8755$；
+         - 证书（$n=1$）：$\ln\left(1+\frac{5-1+0.5}{1+0.5}\right)=\ln4\approx1.3863$。
+      3. **词频项** $\frac{f(k_1+1)}{f+K}$：
+         - VPN（$f=2$）：$\frac{2\times2.2}{2+1.65}=\frac{4.4}{3.65}\approx1.2055$；
+         - 证书（$f=1$）：$\frac{2.2}{1+1.65}=\frac{2.2}{2.65}\approx0.8302$。
+      4. **合计**：$0.8755\times1.2055+1.3863\times0.8302\approx1.0554+1.1509\approx2.21$。
+
+      **观察**：「VPN」出现了 2 次，贡献（约 1.06）却小于只出现 1 次的「证书」（约 1.15）：一是「证书」更稀有、IDF 更高；二是词频有饱和，第 2 次出现只带来有限的增益。另外文档 D 比平均长度长 50%，$K$ 从 1.2 增大到 1.65，每一项都被打了折。
+
+  - id: RAG-RETR-005
+    type: code_output
+    difficulty: 2
+    frequency: 3
+    points: [BM25]
+    question: |
+      下面的代码计算 BM25 的词频项（IDF 记为 1）。输出是什么？
+    code: |
+      def tf_part(f, dl, avgdl, k1=1.2, b=0.75):
+          K = k1 * (1 - b + b * dl / avgdl)
+          return f * (k1 + 1) / (f + K)
+
+      print(round(tf_part(1, 100, 100), 3), round(tf_part(4, 100, 100), 3))
+      print(round(tf_part(1, 50, 100), 3), round(tf_part(1, 50, 100, b=0), 3))
+      print(round(tf_part(3, 100, 100, k1=0), 3))
+    answer: |
+      1.0 1.692
+      1.257 1.0
+      1.0
+    explanation: |
+      - **第 1 行**：文档长度等于平均长度时 $K=k_1=1.2$。$f=1$：$2.2/2.2=1.0$；$f=4$：$8.8/5.2\approx1.692$。词频变成 4 倍，得分只增加约 69%，这就是**词频饱和**，上限是 $k_1+1=2.2$。
+      - **第 2 行**：文档长度只有平均长度的一半，$K=1.2\times(0.25+0.375)=0.75$，$f=1$ 得 $2.2/1.75\approx1.257$：在短文档中出现一次更「说明问题」，得分更高。$b=0$ 时 $K=k_1=1.2$，与长度无关，又回到 1.0。
+      - **第 3 行**：$k_1=0$ 时 $K=0$，词频项变成 $f\cdot1/f=1$，只看词是否出现，不看出现几次。
+
+      记忆：$k_1$ 管饱和速度，$b$ 管长度归一的力度；两者分别取 0 时，得到「只看出现与否」和「不考虑长度」两种极端。
+
+  - id: RAG-RETR-006
+    type: coding
+    difficulty: 3
+    frequency: 3
+    points: [BM25, 倒排索引]
+    question: |
+      从零实现 BM25 检索（文档已经分好词）：
+
+      ```python
+      class BM25:
+          def __init__(self, docs: list[list[str]], k1: float = 1.2, b: float = 0.75): ...
+          def search(self, query: list[str], k: int) -> list[tuple[int, float]]: ...
+      ```
+
+      - IDF 使用 $\ln\left(1+\frac{N-n(t)+0.5}{n(t)+0.5}\right)$，文档长度按词数计；
+      - 建立倒排索引「词 → [(文档编号, 词频)]」，查询时只访问包含查询词的文档；
+      - 查询中重复出现的词只计一次；不包含任何查询词的文档不出现在结果中；
+      - 返回分数最高的 `k` 个 `(文档编号, 分数)`，按分数降序，分数相同时按文档编号升序；`docs` 为空时任何查询都返回空列表。
+    answer: |
+      import math
+      from collections import Counter, defaultdict
+
+
+      class BM25:
+          def __init__(self, docs, k1=1.2, b=0.75):
+              self.k1, self.b = k1, b
+              self.lens = [len(d) for d in docs]
+              self.avgdl = sum(self.lens) / len(docs) if docs else 0.0
+              self.index = defaultdict(list)                  # 词 -> [(文档编号, 词频)]
+              for i, doc in enumerate(docs):
+                  for t, f in Counter(doc).items():
+                      self.index[t].append((i, f))
+              n_docs = len(docs)
+              self.idf = {t: math.log(1 + (n_docs - len(p) + 0.5) / (len(p) + 0.5))
+                          for t, p in self.index.items()}
+
+          def search(self, query, k):
+              scores = defaultdict(float)
+              for t in set(query):
+                  for i, f in self.index.get(t, []):
+                      K = self.k1 * (1 - self.b + self.b * self.lens[i] / self.avgdl)
+                      scores[i] += self.idf[t] * f * (self.k1 + 1) / (f + K)
+              return sorted(scores.items(), key=lambda x: (-x[1], x[0]))[:k]
+    test: |
+      docs = [["vpn", "证书", "过期", "vpn"],
+              ["vpn", "客户端", "安装"],
+              ["年假", "天数"],
+              ["证书", "申请", "流程", "说明", "证书", "补办"]]
+      bm = BM25(docs)
+      q = ["vpn", "证书"]
+      res = bm.search(q, 10)
+      N, avgdl = 4, (4 + 3 + 2 + 6) / 4
+
+
+      def brute(i):                                       # 逐篇套公式对拍
+          s = 0.0
+          for t in set(q):
+              f = docs[i].count(t)
+              if f:
+                  n = sum(t in d for d in docs)
+                  idf = math.log(1 + (N - n + 0.5) / (n + 0.5))
+                  K = 1.2 * (0.25 + 0.75 * len(docs[i]) / avgdl)
+                  s += idf * f * 2.2 / (f + K)
+          return s
+
+
+      assert [i for i, _ in res] == [0, 3, 1]
+      assert all(abs(s - brute(i)) < 1e-9 for i, s in res)
+      assert bm.search(["vpn", "vpn", "证书"], 10) == res        # 查询中重复的词只算一次
+      assert bm.search(["不存在"], 5) == []
+      assert bm.search(q, 1) == res[:1]
+      tie = BM25([["a"], ["a"], ["b"]])                          # 同分按文档编号升序
+      assert [i for i, _ in tie.search(["a"], 3)] == [0, 1]
+      sat = dict(BM25([["x"] + ["y"] * 9, ["x"] * 9 + ["y"]]).search(["x"], 2))
+      assert sat[0] < sat[1] < 9 * sat[0]                        # 词频饱和：9 次远不到 9 倍
+      lng = dict(BM25([["x", "y"], ["x"] + ["z"] * 9]).search(["x"], 2))
+      assert lng[0] > lng[1]                                     # 长度归一：同样出现 1 次，短文档得分高
+      assert BM25([]).search(["a"], 3) == []
+    explanation: |
+      **思路**：
+      1. 建索引：统计每篇文档的长度与词频，构建倒排表「词 → [(文档编号, 词频)]」；每个词的文档频率就是它倒排表的长度，据此预先算好 IDF。
+      2. 查询：对去重后的每个查询词，遍历它的倒排表累加分数；不包含任何查询词的文档根本不会被访问，这就是倒排索引的效率来源。
+      3. 排序：按 `(-分数, 文档编号)` 排序，保证同分时结果确定。
+
+      **复杂度**：建索引 $O(\text{总词数})$；查询为各查询词倒排表长度之和。只要前 k 个时，可以用堆（`heapq.nsmallest`）代替全排序；Lucene 等引擎还会用 WAND / Block-Max WAND 跳过不可能进入 top-k 的文档。
+
+      **易错点**：IDF 写成经典的 $\ln\frac{N-n+0.5}{n+0.5}$ 后，常见词会得到负分；忘记对查询词去重；把 avgdl 算成字符数；同分时顺序不确定，导致线上结果抖动；空语料时除以 0。
+
+  - id: RAG-RETR-007
+    type: multiple
+    difficulty: 2
+    frequency: 3
+    points: [BM25]
+    source: 'Lucene 文档：BM25Similarity（idf = log(1 + (docCount - docFreq + 0.5)/(docFreq + 0.5))）https://lucene.apache.org/core/9_9_0/core/org/apache/lucene/search/similarities/BM25Similarity.html'
+    question: |
+      关于 BM25，下列说法**正确**的有：
+    options:
+      A: '$k_1=0$ 时，只看查询词是否出现，不看出现了几次'
+      B: '经典的 Robertson–Spärck Jones 形式 IDF 恒为正，Lucene 在对数内加 1 只是为了数值平滑'
+      C: 'BM25 分数有固定的上界，可以跨查询直接设置统一的相关性阈值'
+      D: 'BM25 能识别「报错」与「错误码」是同义表达，因此可以弥补词汇鸿沟'
+      E: '词频趋于无穷时，单个查询词的得分趋于上限 $\mathrm{IDF}\cdot(k_1+1)$'
+    answer: [A, E]
+    explanation: |
+      **结论**：A、E 正确。
+
+      - A 对：$k_1=0$ 时词频项为 $\frac{f\cdot1}{f+0}=1$，分数退化为「命中的查询词的 IDF 之和」。
+      - B 错：经典形式 $\ln\frac{N-n+0.5}{n+0.5}$ 在 $n>N/2$ 时为负，命中常见词反而扣分；Lucene 改写成 $\ln\left(1+\frac{N-n+0.5}{n+0.5}\right)$，正是为了让 IDF 恒为正，而不只是数值平滑。
+      - C 错：总分是各查询词得分之和，上界取决于查询词的个数与 IDF；IDF 和 avgdl 又随语料变化。所以 BM25 分数不能跨查询、跨索引当作绝对阈值，这也是融合时要先归一化或改用 RRF 的原因。
+      - D 错：BM25 只做字面匹配，「报错」和「错误码」是不同的词项，匹配不上；词汇鸿沟要靠稠密检索、学习型稀疏检索或查询扩展来弥补。
+      - E 对：$\lim_{f\to\infty}\frac{f(k_1+1)}{f+K}=k_1+1$。一个词出现 100 次不代表比出现 4 次相关 25 倍，这也能抑制关键词堆砌。
+  - id: RAG-RETR-008
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [BM25]
+    source: 'LUCENE-8563：Remove k1+1 from the numerator of BM25Similarity（Lucene 8.0）https://issues.apache.org/jira/browse/LUCENE-8563'
+    question: |
+      去掉 BM25 公式分子中的常数因子 $(k_1+1)$，对任何查询都不会改变文档的排序。
+    answer: true
+    explanation: |
+      **正确**。$(k_1+1)$ 对所有查询词、所有文档都是同一个常数，去掉它相当于把每篇文档的总分都除以同一个正数，排序不变。它的作用只是让「文档长度等于平均长度、词出现 1 次」时的词频项恰好等于 1，便于解释。部分实现（如 Lucene 8 及以后的 BM25Similarity）就去掉了这个因子。
+
+      延伸：BM25 分数的绝对数值依赖实现细节和语料统计量，比较或融合不同来源的结果时，排名往往比原始分数更可靠。
+
+  - id: RAG-RETR-009
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [BM25]
+    source: 'Elasticsearch 文档：Similarity（BM25 默认 k1=1.2、b=0.75）https://www.elastic.co/docs/reference/elasticsearch/index-settings/similarity；Lucene 文档：BM25Similarity（默认构造函数 k1=1.2、b=0.75）'
+    question: |
+      Lucene / Elasticsearch 中 BM25 的默认参数为 $k_1=$ ____，$b=$ ____。
+    answer: ['1.2', '0.75']
+    explanation: |
+      - $k_1=1.2$：词频饱和较快。文档长度等于平均长度时，出现 1 次的得分约为上限 2.2 的 45%，出现 4 次约为 77%。
+      - $b=0.75$：较强但不完全的长度归一。
+
+      这组默认值在多数通用语料上表现稳健，但未必最优：标题这类长度变化小的字段可以调低 $b$；长文档、术语反复出现的语料可以调高 $k_1$。调参应在自己的评测集上进行。
+
+  - id: RAG-RETR-010
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [BM25, 倒排索引]
+    source: 'Elasticsearch 文档：Getting consistent scoring（query_then_fetch 与 dfs_query_then_fetch）https://www.elastic.co/docs/solutions/search/full-text/search-relevance/consistent-scoring'
+    tags: [Elasticsearch]
+    question: |
+      在 Elasticsearch 中，同一个查询在不同分片（shard）上算出的 BM25 分数可能不可比，数据量较小时甚至会出现相关文档排序异常。主要原因是：
+    options:
+      A: '各分片按各自的数据量自动调整 BM25 的 $k_1$ 和 $b$ 参数，参数不一致导致分数不可比'
+      B: 'BM25 的打分中含有一个很小的随机项，用来打散同分文档，数据量小时影响明显'
+      C: '默认每个分片只用本分片的文档数、文档频率和平均长度来计算 IDF 与 avgdl'
+      D: '各分片在不同节点上加载的分词器版本可能不同，同一文本被切成不同的词项'
+    answer: C
+    explanation: |
+      **结论**：BM25 依赖语料级的统计量。默认的 `query_then_fetch` 模式下，每个分片只用自己的统计量打分，各分片的 IDF、avgdl 不同，同样的文档在不同分片上会得到不同的分数，合并后的排序可能失真。数据量小、文档在分片间分布不均时尤其明显。
+
+      解决办法：使用 `dfs_query_then_fetch` 先收集全局统计量再打分（多一次往返）；或者在数据量大、分布均匀时接受这种偏差（各分片的统计量会趋于一致）。
+
+      - A 错：同一个索引的相似度参数在所有分片上一致，不会按数据量自动调整。
+      - B 错：BM25 是确定性公式，没有随机项。
+      - D 错：同一字段的分词器由映射（mapping）决定，各分片一致。
+
+      延伸：这也说明 BM25 分数会随语料变化而漂移，不宜当作绝对阈值。
+
+  - id: RAG-RETR-011
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [倒排索引]
+    source: 'Elastic 博客：Lucene''s Handling of Deleted Documents https://www.elastic.co/blog/lucenes-handling-of-deleted-documents；Ding & Suel, Faster Top-k Document Retrieval Using Block-Max Indexes（SIGIR 2011）'
+    question: |
+      倒排索引的基本结构是什么？为什么它能让关键词检索在海量文档上依然很快？在文档不断新增、修改、删除的场景下，搜索引擎（如 Lucene）通常是怎么维护倒排索引的？
+    answer: |
+      1. **结构**：
+         - 词典（term dictionary）：所有词项，支持快速查找（Lucene 用 FST 等压缩结构）；
+         - 倒排表（postings list）：每个词对应「包含它的文档编号 + 词频（+ 位置）」的列表，按文档编号排序，用差值编码加变长编码压缩；
+         - 文档级统计：文档长度（用于长度归一）、总文档数等。
+      2. **为什么快**：
+         - 查询只访问查询词对应的几条倒排表，不含查询词的文档完全不会被触碰，代价与倒排表的长度成正比，而不是与文档总数成正比；
+         - 稀有词的倒排表很短；常见词的倒排表虽长，但可以用跳表、分块来跳过；
+         - 取 top-k 时，WAND、Block-Max WAND 等动态剪枝算法可以跳过不可能进入 top-k 的文档。
+      3. **增删改的维护（以 Lucene 为例）**：
+         - 段（segment）一旦写入就不再修改；新文档先在内存中缓冲，定期刷新成新的小段（「近实时」可见即来源于此）；
+         - 删除只在删除位图中打标记，查询时过滤；修改 = 删除旧文档 + 写入新文档；
+         - 后台按策略把小段合并成大段，合并时物理清除被删除的文档；
+         - 统计量（文档数、文档频率）随之变化，所以同一篇文档的 BM25 分数会漂移。
+    rubric:
+      - '说清词典与倒排表的结构及其存储内容（3 分）'
+      - '说明只访问查询词倒排表带来的效率，并提到压缩、跳表或动态剪枝等优化（3 分）'
+      - '说明不可变段、删除标记、段合并等增量维护机制（3 分）'
+      - '提到统计量变化导致分数漂移（1 分）'
+    explanation: |
+      **常见失分点**：把倒排索引说成「把文档按词排序」；不知道删除只是打标记；以为每次更新都要全量重建；忽略倒排表的压缩与跳过机制。
+
+  - id: RAG-RETR-012
+    type: multiple
+    difficulty: 3
+    frequency: 1
+    points: [倒排索引]
+    source: 'Broder 等, Efficient Query Evaluation using a Two-Level Retrieval Process（WAND, CIKM 2003）；Ding & Suel, Faster Top-k Document Retrieval Using Block-Max Indexes（SIGIR 2011）；Elastic 博客：Lucene''s Handling of Deleted Documents https://www.elastic.co/blog/lucenes-handling-of-deleted-documents'
+    question: |
+      关于倒排索引的工程实现，下列说法**正确**的有：
+    options:
+      A: '倒排表按文档编号有序压缩存储，新增文档会打乱编号顺序，因此每次都要全量重建索引'
+      B: 'Lucene 的段写入后不可修改，删除文档只是打删除标记，段合并时才物理清除'
+      C: '倒排表通常按文档编号排序，存储相邻编号的差值（delta 编码），再用变长编码压缩'
+      D: 'WAND、Block-Max WAND 等动态剪枝可跳过进不了 top-k 的文档，结果与完整打分一致'
+      E: '倒排表除文档编号外通常还存词频；再记录词的位置，就能支持短语查询与邻近查询'
+    answer: [B, C, D, E]
+    explanation: |
+      **结论**：B、C、D、E 正确，只有 A 错误。
+
+      - A 错：新文档写入新的段即可（每个段内部的编号各自有序），近实时可见，无需全量重建。
+      - B 对：不可变段简化了并发与缓存；代价是删除和修改要靠标记加后台合并。
+      - C 对：编号有序时相邻差值很小，用变长字节、PForDelta 等编码可以大幅压缩，读取也更快。
+      - D 对：WAND 类算法为每个词预先记录分数上界，当某文档所有可能的得分加起来都进不了当前的 top-k 时就跳过它。结果是精确的（rank-safe），只是少做了计算。
+      - E 对：BM25 打分需要词频，所以词频直接存在倒排表中，不必回原文统计；位置信息是可选的，记录后可以判断查询词是否相邻、顺序是否一致，代价是索引更大。
+  - id: RAG-RETR-013
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [倒排索引, 混合检索]
+    source: 'Formal 等, SPLADE, arXiv:2107.05720；Milvus 文档：Multi-Vector Hybrid Search（稀疏向量）https://milvus.io/docs/multi-vector-search.md'
+    question: |
+      倒排索引只能用于 BM25 这类传统稀疏检索；SPLADE 等学习型稀疏表示的词权重是模型预测出来的，因此无法使用倒排索引。
+    answer: false
+    explanation: |
+      **错误**。倒排索引只要求表示是「稀疏的、以词表为维度的」：每篇文档只在少数词项上有非零权重。SPLADE 的输出正是词表维度上的稀疏向量，只是权重由模型预测（并带有词扩展）；把「词频」换成「模型权重」照样能存进倒排表，查询时做稀疏点积即可。BGE-M3 输出的稀疏词权重也可以这样建索引，Elasticsearch、Milvus 等都支持这类稀疏向量检索。
+
+      代价：词扩展会让每篇文档的非零词项变多，倒排表更长、索引更大、查询更慢，所以 SPLADE 训练时会加入稀疏正则（如 FLOPS 正则）来控制非零项的数量。
+
+  - id: RAG-RETR-014
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [混合检索]
+    question: |
+      用户搜索错误码「E1024」，纯向量检索召回的前几名都是讲「E2048」「E1025」的文档。这个现象说明：
+    options:
+      A: '向量维度太低，装不下字符级细节；换成 4,096 维的模型就能区分这些错误码'
+      B: '稠密向量擅长语义匹配，对错误码这类需精确匹配的词项不敏感，应加入 BM25 做混合检索'
+      C: '应把相似度从余弦改成 L2 距离，让字符上的细微差异在距离中得到体现'
+      D: 'BM25 同样无法区分「E1024」与「E2048」：分词后都只剩字母 E 和数字，混合检索没有帮助'
+    answer: B
+    explanation: |
+      **结论**：向量模型把「E1024」「E2048」都理解成「某个错误码」，语义上非常接近；而 BM25 把「e1024」当作一个独立的稀有词项（IDF 很高），只有包含它的文档才会得分。两者的盲区互补，这正是生产系统几乎都做混合检索的原因。
+
+      - A 错：维度再高，模型也是按语义相似来编码，精确的字符差异依然难以体现。
+      - C 错：归一化后余弦与 L2 的排序完全相同，换度量解决不了问题。
+      - D 错：「e1024」与「e2048」是两个不同的词项，BM25 能精确区分。前提是分词器把错误码作为完整词项保留，不要切碎。
+
+  - id: RAG-RETR-015
+    type: multiple
+    difficulty: 2
+    frequency: 3
+    points: [混合检索]
+    source: 'Thakur 等, BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models, arXiv:2104.08663'
+    question: |
+      下列查询场景中，BM25 等稀疏检索相对稠密向量检索**更有优势**的有：
+    options:
+      A: '用户说「电脑连不上内网」，文档写的是「VPN 连接失败」'
+      B: '查询中含有 Embedding 模型训练时没见过的新术语、新缩写'
+      C: '用英文问题「annual leave」检索中文的年假制度文档'
+      D: '搜索产品型号「X200-Pro」的保修政策'
+      E: '在代码库中搜索函数名 `parse_invoice_v2`'
+    answer: [B, D, E]
+    explanation: |
+      **结论**：B、D、E 是稀疏检索的主场。
+
+      - A 错：两者没有共同的词，BM25 完全匹配不上（词汇鸿沟），这正是稠密检索的强项。
+      - B 对：模型没见过的新词，向量表示往往不可靠；BM25 不需要训练，只要字面出现就能匹配。在跨领域的零样本评测（如 BEIR）中，BM25 是很强的基线，不少稠密模型在领域外数据上不如它。
+      - C 错：跨语言检索要靠多语言向量模型把不同语言映射到同一空间，字面匹配做不到（除非先翻译查询）。
+      - D 对：型号是精确词项，向量模型容易把相近的型号混为一谈。
+      - E 对：函数名、变量名、报错信息需要逐字匹配，稀疏检索（或 grep）更可靠；注意分词器要能正确处理下划线、驼峰等标识符。
+  - id: RAG-RETR-016
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [混合检索]
+    source: 'Formal 等, SPLADE: Sparse Lexical and Expansion Model for First Stage Ranking, arXiv:2107.05720'
+    question: |
+      SPLADE 这类学习型稀疏检索会给文档中没有出现、但语义相关的词也预测出权重（词扩展），因此能在一定程度上缓解 BM25 的词汇鸿沟，同时仍然可以使用倒排索引。
+    answer: true
+    explanation: |
+      **正确**。SPLADE（Formal 等, 2021）用 BERT 的 MLM 头为词表中的每个词预测一个权重，经过 $\log(1+\mathrm{ReLU}(\cdot))$ 等处理并加上稀疏正则后，每篇文档只在少数词上有非零权重。由于 MLM 头会给「语义相关但没出现」的词分配权重，写着「VPN 连接失败」的文档也可能在「网络」「连接」等相关词上获得权重，从而缓解词汇鸿沟。
+
+      它是稀疏与稠密之间的折中：保留了倒排索引的高效与可解释性，又带来一定的语义能力；代价是需要训练模型、索引更大。BGE-M3 输出的稀疏表示也属于这一类。
+
+  - id: RAG-RETR-017
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [混合检索]
+    source: 'Elasticsearch 文档：Reciprocal rank fusion https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion；OpenSearch 文档：Reciprocal rank fusion（2.19 起）https://docs.opensearch.org/latest/vector-search/ai-search/hybrid-search/rrf/；Milvus 文档：Multi-Vector Hybrid Search https://milvus.io/docs/multi-vector-search.md'
+    question: |
+      已经有了向量检索，为什么还要做混合检索？请结合例子说明稠密检索与 BM25 各自的盲区，并说明混合检索的常见实现方式与代价。
+    answer: |
+      1. **稠密检索的盲区**：
+         - 精确匹配弱：错误码（E1024 与 E2048）、型号、版本号、人名、代码符号，向量会把相近的词项混为一谈；
+         - 领域外数据：模型没见过的术语、缩写，效果明显下降；
+         - 长文本的细节被压缩进一个向量后容易丢失。
+      2. **BM25 的盲区**：
+         - 词汇鸿沟：「电脑连不上内网」匹配不到「VPN 连接失败」；同义词、口语与书面语、跨语言都匹配不上；
+         - 依赖分词质量：中文分词切错、OCR 错字会直接导致匹配失败。
+      3. **实现方式**：
+         - 两路并行召回（各取 top-50～100）→ 融合（RRF，或归一化后加权）→ Cross-Encoder 重排；
+         - 用学习型稀疏表示（SPLADE、BGE-M3 的稀疏输出）替代或补充 BM25；
+         - Elasticsearch、OpenSearch、Milvus 等都内置了稀疏 + 稠密的混合检索与 RRF（Elasticsearch 的 RRF 需要付费订阅，不在免费的 Basic 许可内）。
+      4. **代价**：两套索引的存储与维护（增量更新要同步）；多一路召回的延迟（可以并行）；融合方式与权重需要调参；排查问题更复杂。
+      5. **结论**：在大多数业务数据上，混合检索比任何单路都稳健，是生产系统的默认选择；可以用评测集分别统计单路与混合的 Recall@k 来验证。
+    rubric:
+      - '说明稠密检索在精确匹配、领域外数据上的盲区并举例（3 分）'
+      - '说明 BM25 的词汇鸿沟等盲区并举例（2 分）'
+      - '说明两路召回 + 融合（RRF 或加权）+ 重排的实现方式（3 分）'
+      - '说明存储、延迟、调参等代价，并提到用评测集验证（2 分）'
+    explanation: |
+      **常见失分点**：说「向量检索已经包含了关键词匹配」；只说「互补」，举不出具体例子；不知道两路分数尺度不同、融合前要处理；忽略两套索引的同步更新成本。
+
+  - id: RAG-RETR-018
+    type: calc
+    difficulty: 2
+    frequency: 3
+    points: [RRF融合]
+    question: |
+      三路召回各返回 top-5（按名次从高到低）：
+
+      - 向量检索：A、B、C、D、E
+      - BM25：C、F、A、B、G
+      - 改写查询后的向量检索：B、C、D、A、H
+
+      用 RRF 融合：$\mathrm{RRF}(d)=\sum_r\frac{1}{k+\mathrm{rank}_r(d)}$，$k=60$，名次从 1 开始，某一路没出现的文档在该路不加分。求融合后的前三名及其分数（保留 5 位小数）。
+    answer: 'C ≈ 0.04840，B ≈ 0.04815，A ≈ 0.04789'
+    explanation: |
+      各文档的名次与得分：
+      - C：第 3、1、2 名，$\frac{1}{63}+\frac{1}{61}+\frac{1}{62}\approx0.015873+0.016393+0.016129=0.04840$；
+      - B：第 2、4、1 名，$\frac{1}{62}+\frac{1}{64}+\frac{1}{61}\approx0.016129+0.015625+0.016393=0.04815$；
+      - A：第 1、3、4 名，$\frac{1}{61}+\frac{1}{63}+\frac{1}{64}\approx0.016393+0.015873+0.015625=0.04789$；
+      - D：第 4、—、3 名，$\frac{1}{64}+\frac{1}{63}\approx0.03150$；
+      - F 约 0.01613；E、G、H 各约 0.01538。
+
+      **观察**：
+      1. A 在第一路排第 1，却输给了 C 和 B：三路名次之和 A 为 1 + 3 + 4 = 8，B 为 2 + 4 + 1 = 7，C 为 3 + 1 + 2 = 6。RRF 奖励「在多路中都靠前」的文档。
+      2. 只在一路中出现的文档（F、E、G、H），分数大约只有三路都出现的文档的三分之一，很难进入前列。
+      3. 前三名的分差只有约 1%，$k=60$ 把头部名次的差距压得很平。
+
+  - id: RAG-RETR-019
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [RRF融合]
+    source: 'Cormack 等, Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods（SIGIR 2009）；Elasticsearch 文档：Reciprocal rank fusion（rank_constant 默认 60）https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion'
+    question: |
+      RRF 公式 $\sum_r\frac{1}{k+\mathrm{rank}_r(d)}$ 中常取 $k=60$。关于常数 $k$，下列说法正确的是：
+    options:
+      A: '$k$ 表示每一路只取前 $k$ 个结果参与融合，名次在 $k$ 之后的文档一律记 0 分'
+      B: '$k$ 越大，头部名次的权重越高，结果越接近「谁在某一路排第一谁就赢」'
+      C: '$k$ 应等于参与融合的召回路数，路数越多 $k$ 越大，以保证分数可比'
+      D: '$k$ 是平滑常数：越大，头部名次的得分差距越小，越奖励在多路中都靠前的文档'
+    answer: D
+    explanation: |
+      **结论**：$k$ 控制名次差距被「压平」的程度。$k=60$ 时，第 1 名得 $1/61\approx0.0164$，第 10 名得 $1/70\approx0.0143$，只差约 13%，所以在多路中都靠前的文档能胜过只在某一路排第一的文档。
+
+      - A 错：这是最常见的误解。每路取多少候选（如 top-50～100）是另一个参数，与 $k$ 无关。
+      - B 错：恰好相反。$k$ 越**小**，头部差距越大：$k=1$ 时第 1 名得 1/2、第 2 名得 1/3，结果更接近「某一路的第一名直接胜出」。
+      - C 错：$k$ 与路数无关。$k=60$ 是 RRF 原论文（Cormack 等, 2009）的经验取值，Elasticsearch 等实现的默认值也是 60。
+
+  - id: RAG-RETR-020
+    type: code_fill
+    difficulty: 2
+    frequency: 3
+    points: [RRF融合]
+    source: 'Elasticsearch 文档：Reciprocal rank fusion（名次从 1 开始）https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion'
+    question: |
+      补全 RRF 融合函数：`rankings` 是多路召回的结果，每一路是按相关性降序排列的文档 id 列表；返回融合后的文档顺序（分数相同时按文档 id 升序）和每篇文档的分数。
+    code: |
+      def rrf(rankings, k=60):
+          scores = {}
+          for ranking in rankings:
+              for rank, doc in enumerate(ranking, start=____):
+                  scores[doc] = scores.get(doc, 0.0) + ____
+          order = sorted(scores, key=lambda d: (-scores[d], d))
+          return order, scores
+    answer: ['1', '1.0 / (k + rank)']
+    test: |
+      order, s = rrf([["A", "B", "C"], ["C", "A", "D"]])
+      assert abs(s["A"] - (1 / 61 + 1 / 62)) < 1e-12
+      assert abs(s["D"] - 1 / 63) < 1e-12
+      assert order == ["A", "C", "B", "D"]
+      order1, _ = rrf([["A", "B"], ["B", "A"]])          # 对称时同分，按 id 升序
+      assert order1 == ["A", "B"]
+      assert rrf([]) == ([], {})
+      _, s2 = rrf([["X", "Y"]], k=1)
+      assert abs(s2["X"] - 0.5) < 1e-12 and abs(s2["Y"] - 1 / 3) < 1e-12
+    explanation: |
+      - 第一空 `1`：名次从 1 开始。若从 0 开始，第 1 名得 $1/60$，与公式定义不符，分数也会和其他实现（如 Elasticsearch）对不上。
+      - 第二空 `1.0 / (k + rank)`：文档每在一路中出现一次，就累加该路的倒数名次分。
+
+      要点：
+      1. 只用名次、不用原始分数，各路分数尺度不同也不需要归一化；
+      2. 某一路没出现的文档，在该路不加分；
+      3. 排序要有确定的 tie-break（这里按 id），否则同分文档的顺序可能每次都不同；
+      4. 各路的文档 id 必须统一：同一个块在两路中的 id 不同，融合就失效了。
+
+  - id: RAG-RETR-021
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [RRF融合]
+    question: |
+      使用 RRF 融合时，各路召回只需取 top-5 即可；每路取更多候选（如 top-100）不会改变融合后的前 5 名。
+    answer: false
+    explanation: |
+      **错误**。RRF 的分数是多路累加的。设某篇文档在向量路排第 1、在 BM25 路排第 8：
+
+      - 每路只取 top-5 时，它只能得到 $1/61\approx0.0164$；
+      - 每路取 top-10 时，它得到 $1/61+1/68\approx0.0311$，足以超过所有只在一路中出现的文档（单路最高也只有 $1/61\approx0.0164$）。
+
+      候选取得太浅，单路的漏召回就没有机会被另一路「补救」，融合后的前几名也会随之改变。实践中每路常取 50～100 个候选再融合，然后交给重排模型。
+
+  - id: RAG-RETR-022
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [分数归一化融合]
+    question: |
+      混合检索采用「各路分别 min-max 归一化后加权求和」的融合方式。某次请求中，BM25 这一路只是少返回了排在末位的一个文档，融合后的第一名却换了人。最根本的原因是：
+    options:
+      A: 'min-max 的最小值取决于本次返回了哪些文档，末位一变，这一路的归一化分数随之改变'
+      B: '少返回一个文档后，BM25 的 IDF 按本次结果集重新计算，各文档的原始分数都变了'
+      C: '加权求和对文档的处理顺序敏感，浮点累加不满足交换律，名次接近时就会翻转'
+      D: '少返回一个文档后，向量路的余弦分数范围也随之改变，两路的相对权重被打乱'
+    answer: A
+    explanation: |
+      **结论**：min-max 把分数映射为 $\tilde s=\frac{s-\min}{\max-\min}$，最小值、最大值都来自这一次返回的候选集合。末位文档被截掉后，min 变大，其余文档的归一化分数都被重新拉伸，与另一路相加后的相对大小就可能翻转。也就是说，min-max 对 top-N 截断和离群值都很敏感。
+
+      - B 错：IDF 是语料级的统计量，不随这次返回多少个结果而改变。
+      - C 错：两路分数相加，浮点加法同样满足交换律，问题不在求和本身。
+      - D 错：向量路的结果没有变化，它的归一化分数也不变。
+
+      对策：改用 RRF（只看名次，截掉末位不影响其他文档的相对顺序）；或者使用更稳健的归一化（如基于历史分数分布确定的固定范围、z-score），并统一约定「某一路未召回的文档记 0 分还是记该路最低分」。
+
+  - id: RAG-RETR-023
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [分数归一化融合]
+    question: |
+      向量路返回：A 0.82、B 0.80、C 0.78（余弦）；BM25 路返回：C 15.0、A 9.0、D 3.0。两路权重均为 0.5，某一路未召回的文档在该路记 0 分。求：(1) 不做归一化、直接加权求和时的排序；(2) 两路分别做 min-max 归一化后再加权求和时，各文档的得分与排序。
+    answer: '(1) C(7.89) > A(4.91) > D(1.50) > B(0.40)；(2) A 0.75 > C 0.50 > B 0.25 > D 0'
+    explanation: |
+      **(1) 原始分直接加权**：
+      - A：$0.5\times0.82+0.5\times9.0=4.91$；B：$0.40$；C：$0.39+7.5=7.89$；D：$1.5$；
+      - 排序 C > A > D > B，基本就是 BM25 的排序，向量分数被淹没（它只在 0.78～0.82 之间变化）。
+
+      **(2) min-max 后加权**：
+      - 向量路：A $=1$，B $=0.5$，C $=0$；BM25 路：C $=1$，A $=(9-3)/(15-3)=0.5$，D $=0$；
+      - A：$0.5\times1+0.5\times0.5=0.75$；B：$0.25$；C：$0+0.5=0.5$；D：$0$；
+      - 排序 A > C > B > D。
+
+      **观察**：
+      1. 不归一化时 BM25 一家独大；
+      2. min-max 也有副作用：C 的余弦 0.78 只比 A 低 0.04，却被映射成 0；D 被 BM25 召回了，归一化后却和「没被召回」一样是 0 分。分差被放大还是被抹平，全看这次返回了哪些文档；
+      3. RRF 只看名次（本例结果同样是 A > C > B > D），不受这些尺度问题影响；有标注数据时，也可以调权重或采用更稳健的归一化。
+
+  - id: RAG-RETR-024
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [分数归一化融合, RRF融合]
+    source: 'Bruch 等, An Analysis of Fusion Functions for Hybrid Retrieval, arXiv:2210.11934；Cormack 等, Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods（SIGIR 2009）'
+    question: |
+      关于「分数加权融合」与「RRF」，下列说法**正确**的有：
+    options:
+      A: 'RRF 只按名次计分：某一路少返回一个排在末位的文档，这一路其余文档的得分不变'
+      B: 'min-max 归一化时，若某一路只返回了 1 个结果（最大值等于最小值），需要特判以免除以 0'
+      C: '分数加权保留了分数的强弱信息；有标注数据可以调好权重时，效果可能优于 RRF'
+      D: 'z-score 归一化按均值和标准差缩放，完全不受离群值影响，因此总是优于 min-max'
+      E: 'BM25 分数没有固定上界且随查询变化，余弦分数常挤在一个窄区间，直接相加时 BM25 往往一家独大'
+    answer: [A, B, C, E]
+    explanation: |
+      **结论**：A、B、C、E 正确。
+
+      - A 对：文档在某一路的得分只取决于它在这一路的名次，即 $\frac{1}{k+\mathrm{rank}}$，末位文档的有无不影响排在它前面的文档；min-max 归一化则不同，最小值一变，整路的归一化分数都会变。RRF 完全不使用分数，也就不需要归一化，这是它简单、稳健的主要原因。
+      - B 对：分母 $\max-\min=0$ 时要特判，例如把唯一的结果记为 1。
+      - C 对：RRF 只看名次，丢掉了「第一名遥遥领先」这类置信度信息。有研究（如 Bruch 等, 2023）指出，在有少量标注数据可以调参时，归一化后的凸组合（加权求和）往往能优于 RRF。
+      - D 错：z-score 用到均值和标准差，二者都会被离群值拉动；它同样依赖这次返回的候选集合，并不总是更好。
+      - E 对：这是加权融合必须先归一化的原因。
+  - id: RAG-RETR-025
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [Cross-Encoder重排]
+    source: 'bge-reranker 模型卡（中英文 Cross-Encoder）https://huggingface.co/BAAI/bge-reranker-large'
+    question: |
+      Cross-Encoder 的排序效果通常比双塔好，却不能直接用于第一阶段的全库召回。原因是：
+    options:
+      A: '它输出的是问题与文档拼接后的联合向量，而不是相关性分数，无法直接建索引排序'
+      B: '它的词表和预训练语料以英文为主，不支持中文文档，多语言知识库要改用双塔'
+      C: '问题和文档要拼接后一起前向，文档表示无法预计算，全库每篇文档都得跑一次前向'
+      D: '它的参数量通常是双塔模型的 100 倍以上，单次前向就比整个双塔检索还慢'
+    answer: C
+    explanation: |
+      **结论**：Cross-Encoder 把「[CLS] 问题 [SEP] 文档 [SEP]」作为一个序列送进 Transformer，问题与文档的 token 在每一层都能互相注意，所以能看清否定、数字、实体是否对得上；但也正因为如此，文档的表示依赖于问题，无法离线预计算。对 1,000 万篇文档逐一打分就是 1,000 万次前向，在线根本不可行；只对召回的 top-50～100 打分就可以。
+
+      - A 错：它直接输出一个相关性分数（通常由 [CLS] 位置接一个线性层得到）。
+      - B 错：语言能力取决于底座模型，中文和多语言的 Cross-Encoder 很常见（如 bge-reranker 系列）。
+      - D 错：Cross-Encoder 常用与双塔同量级的骨干（如 BERT-base），慢的根源是计算方式，而不是参数量。
+
+  - id: RAG-RETR-026
+    type: multiple
+    difficulty: 2
+    frequency: 3
+    points: [Cross-Encoder重排]
+    question: |
+      关于 Cross-Encoder 重排，下列说法**正确**的有：
+    options:
+      A: '重排模型也有最大输入长度（常见 512 token），过长的块会被截断，块大小应与之匹配'
+      B: '重排的耗时与候选数量无关，因此候选越多越好'
+      C: '重排只能调整召回结果的顺序，无法找回召回阶段漏掉的文档'
+      D: '问题与文档的 token 在每一层都能相互注意，因此能识别否定、数字是否对得上等细节'
+      E: '它输出的分数是校准过的概率，0.5 可以作为所有重排模型通用的相关性阈值'
+    answer: [A, C, D]
+    explanation: |
+      **结论**：A、C、D 正确。
+
+      - A 对：超出部分被截断，关键信息恰好在后半段时就会被错排。
+      - B 错：每个候选都要一次前向，耗时大致与候选数成正比；候选数是延迟与效果之间最重要的旋钮。
+      - C 对：召回决定上限，重排决定顺序。
+      - D 对：这是 Cross-Encoder 比双塔准的根本原因：交互发生在每一层、每个 token 之间，而不是最后两个向量的一次点积。
+      - E 错：Cross-Encoder 的输出（logit 或经过 sigmoid 的分数）一般没有经过校准，不同模型、不同领域的分布差别很大；阈值必须在评测集上标定，换模型要重新标定。
+  - id: RAG-RETR-027
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [Cross-Encoder重排, 两阶段检索漏斗]
+    question: |
+      某 Cross-Encoder 在 GPU 上每次前向处理一批 32 个（问题，文档）对，每批耗时 30 ms，各批串行执行。求：(1) 重排 100 个候选需要多少时间？(2) 如果对全库 100 万篇文档逐一打分，需要多少时间？(3) 若重排的延迟预算为 80 ms，最多能重排多少个候选？
+    answer: '(1) 120 ms；(2) 约 937.5 s（约 15.6 分钟）；(3) 64 个'
+    explanation: |
+      1. $\lceil100/32\rceil=4$ 批，$4\times30=120$ ms。最后一批只有 4 个，但仍要占用一次前向。
+      2. $10^6/32=31250$ 批，$31250\times30$ ms $=937.5$ s，约 15.6 分钟。对每个在线请求都这样做显然不可行，这就是 Cross-Encoder 只能放在第二阶段的原因。
+      3. $\lfloor80/30\rfloor=2$ 批，$2\times32=64$ 个候选。
+
+      **延伸**：实际工程中可以多卡并行、用蒸馏的小模型、量化、截短输入来提高吞吐；候选数最好与批大小对齐（如 64、96），避免最后一批「不满」造成浪费。召回阶段则靠双塔 + ANN（毫秒级）把候选从百万级降到百级。
+
+  - id: RAG-RETR-028
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [ColBERT晚交互]
+    source: 'Khattab & Zaharia, ColBERT, arXiv:2004.12832'
+    question: |
+      ColBERT（延迟交互，late interaction）的相关性打分方式是：
+    options:
+      A: '问题和文档各自编码成单个向量后做点积，与双塔相同，只是向量维度更高'
+      B: '问题与文档拼接后送入 Transformer，在最后一层取 [CLS] 位置的输出接线性层打分'
+      C: '保留每个 token 的向量，问题的每个 token 取与文档各 token 的最大相似度，再求和'
+      D: '对问题与文档共同出现的词项，用 BERT 预测的词权重代替 IDF 加权求和'
+    answer: C
+    explanation: |
+      **结论**：ColBERT（Khattab & Zaharia, 2020）的打分为
+
+      $$s(q,d)=\sum_{i=1}^{|q|}\max_j\ \mathbf{q}_i\cdot\mathbf{d}_j$$
+
+      它介于双塔与 Cross-Encoder 之间：问题与文档仍然**分开编码**（文档的 token 向量可以离线预计算），但交互推迟到打分时、在 token 级进行，比单向量点积保留了更多细节。
+
+      - A 错：这是双塔（Bi-encoder）。
+      - B 错：这是 Cross-Encoder，文档表示无法预计算。
+      - D 错：这是稀疏检索（BM25 或学习型稀疏检索）的做法，只看共同出现的词项。
+
+      代价：每个 token 都要存一个向量，存储远大于单向量；ColBERTv2 用残差压缩等方法显著降低了存储开销。
+
+  - id: RAG-RETR-029
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [ColBERT晚交互]
+    question: |
+      下面的代码分别用 ColBERT 的 MaxSim，以及「mean pooling 成单个向量后做点积」两种方式给两篇文档打分。输出是什么？
+    code: |
+      import numpy as np
+
+      Q = np.array([[1.0, 0.0], [0.0, 1.0]])               # 问题的 2 个 token 向量
+      D1 = np.array([[1.0, 0.0], [1.0, 0.0], [0.6, 0.8]])  # 文档 1 的 3 个 token 向量
+      D2 = np.array([[0.8, 0.6], [0.8, 0.6]])              # 文档 2 的 2 个 token 向量
+
+      def maxsim(Q, D):
+          return float((Q @ D.T).max(axis=1).sum())
+
+      def pooled(Q, D):
+          return float(Q.mean(axis=0) @ D.mean(axis=0))
+
+      print(round(maxsim(Q, D1), 2), round(maxsim(Q, D2), 2))
+      print(round(pooled(Q, D1), 2), round(pooled(Q, D2), 2))
+    answer: |
+      1.8 1.4
+      0.57 0.7
+    explanation: |
+      **MaxSim**：
+      - D1：问题 token 1 $[1,0]$ 与 D1 各 token 的相似度为 $[1,1,0.6]$，取最大值 1；问题 token 2 $[0,1]$ 的相似度为 $[0,0,0.8]$，取 0.8。合计 1.8。
+      - D2：两个问题 token 的最大相似度分别是 0.8 和 0.6，合计 1.4。
+
+      **mean pooling 后点积**：问题的均值向量为 $[0.5,0.5]$；D1 的均值为 $[0.867,0.267]$，点积约 0.57；D2 的均值为 $[0.8,0.6]$，点积为 0.7。
+
+      **结论**：两种方式给出了相反的排序。D1 中有 token 与问题的第一个词完全匹配、另一个 token 与第二个词高度匹配，MaxSim 能逐词找到最佳对应；单向量把所有 token 平均之后，这种「逐词对得上」的信息被抹平，反而偏向整体方向更居中的 D2。这就是多向量（晚交互）比单向量保留更多细粒度信息的直观体现。
+
+  - id: RAG-RETR-030
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [ColBERT晚交互]
+    source: 'Khattab & Zaharia, ColBERT（向量维度 128）, arXiv:2004.12832；Santhanam 等, ColBERTv2, arXiv:2112.01488；Santhanam 等, PLAID, arXiv:2205.09707'
+    question: |
+      ColBERT 的打分只依赖问题与文档各自独立编码出的 token 向量，因此文档侧的向量可以离线预计算；代价是每个 token 都要存一个向量，存储远大于单向量的双塔。
+    answer: true
+    explanation: |
+      **正确**。ColBERT 的问题和文档分开编码，交互只发生在打分时的 MaxSim 一步，所以文档的 token 向量可以像双塔一样离线算好。
+
+      代价在存储：例如一个 200 token 的块，ColBERT 要存 200 个 128 维向量（float16 下约 51 KB），而单向量双塔只存 1 个 768 维 float32 向量（约 3 KB），相差十几倍；与 128 维的单向量相比，则相差两个数量级。ColBERTv2 用「簇中心 + 量化残差」的方式大幅压缩了存储，PLAID 等检索引擎又进一步优化了检索速度。
+
+  - id: RAG-RETR-031
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [LLM重排]
+    source: 'Sun 等, Is ChatGPT Good at Search?（RankGPT，窗口 20、步长 10）, arXiv:2304.09542'
+    tags: [RankGPT]
+    question: |
+      用 LLM 做 listwise 重排（如 RankGPT）时，候选数超过模型一次能处理的数量，常用的做法是：
+    options:
+      A: '只取前 20 个候选交给模型排序，其余候选直接丢弃，以控制调用次数和整体成本'
+      B: '滑动窗口：从末尾开始逐窗（如 20 个）排序并向前滑动，让靠后的相关文档逐步前移'
+      C: '让模型逐篇输出 1～10 的相关性分数，再按分数排序，每篇只需一次很短的调用'
+      D: '把候选随机分成若干组分别排序，每组只把模型选出的第一名放进最终结果，其余候选不再参与'
+    answer: B
+    explanation: |
+      **结论**：RankGPT（Sun 等, 2023）用滑动窗口处理长列表：窗口大小 20、步长 10，从后往前滑动。每个窗口排序后，相关的文档被移到窗口前部，进入下一个窗口继续比较；最相关的文档就能从列表后部一路移到前面。
+
+      - A 错：直接截断会丢掉排在后面的相关文档，重排失去意义。
+      - C 错：这是 pointwise 打分，属于另一类 LLM 重排方法，不是 listwise 处理长列表的做法。
+      - D 错：随机分组且每组只留第一名，会丢掉大量相关文档，也得不到完整的排序。
+
+      代价：滑动窗口要多次调用 LLM，延迟和成本都高，适合低并发、高价值的场景，或用来离线标注数据、再蒸馏出小的重排模型。
+
+  - id: RAG-RETR-032
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [LLM重排]
+    question: |
+      关于用 LLM 做重排，下列说法**正确**的有：
+    options:
+      A: 'LLM 输出的相关性分数天然经过校准，不同查询之间可以直接比较并共用同一个阈值'
+      B: '常用 LLM 离线标注相关性数据，再蒸馏出小型 Cross-Encoder 用于线上'
+      C: 'LLM 重排成本低、延迟小，适合对每个请求的上千个候选都做重排'
+      D: '可以逐篇判断相关性（pointwise），也可以把一组候选交给模型直接输出排序（listwise）'
+      E: 'listwise 排序的结果可能受候选在输入中的初始顺序影响（位置偏差）'
+    answer: [B, D, E]
+    explanation: |
+      **结论**：B、D、E 正确。
+
+      - A 错：LLM 输出的分数或「是 / 否」概率并没有校准，不同查询、不同提示词下的分布差别很大，阈值需要标定。
+      - B 对：这是兼顾效果与成本的常见做法：LLM 当「老师」，小模型当「学生」上线。
+      - C 错：LLM 重排是最贵、最慢的一种重排方式，通常只用于少量候选（如 top-20）的高价值场景。
+      - D 对：pointwise 简单、可以并行；listwise 能直接比较候选之间的相对好坏；还有两两比较的 pairwise 方式。
+      - E 对：模型可能偏爱排在前面（或最后）的候选。常见的缓解办法是打乱顺序多排几次再综合，或使用滑动窗口。
+
+      另外，LLM 重排的独特优势是可以在提示词中写入业务规则，例如「优先最新版本」「官方文档优先于论坛帖子」。
+  - id: RAG-RETR-033
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [MMR去冗余]
+    question: |
+      MMR（最大边际相关）每一步从候选中选出使 $\lambda\cdot\mathrm{sim}(d,q)-(1-\lambda)\cdot\max_{s\in S}\mathrm{sim}(d,s)$ 最大的文档（$S$ 为已选集合）。下列说法正确的是：
+    options:
+      A: '$\lambda=0$ 时冗余项消失，MMR 退化为纯按相关性排序'
+      B: '第一步已选集合为空，因此第一个入选的是与其他候选最不相似的文档'
+      C: 'MMR 要用到候选文档的向量，所以只适用于向量检索的结果，放在重排之后就无法计算'
+      D: '$\lambda=1$ 时就是按相关性排序，$\lambda$ 越小越重视多样性'
+    answer: D
+    explanation: |
+      **结论**：MMR 在「与问题相关」和「与已选结果不重复」之间折中。
+      - $\lambda=1$：冗余项消失，就是按相关性排序；
+      - $\lambda$ 越小，冗余惩罚越重，越重视与已选结果的差异（多样性），倾向于选择新角度的内容；常在 0.5～0.7 之间，用评测集来调。
+
+      逐项点评：
+      - A 错：$\lambda=0$ 时只剩冗余惩罚，完全不看相关性，可能选出与问题无关但「与众不同」的文档。
+      - B 错：第一步冗余项为 0，选出的是**最相关**的文档。
+      - C 错：只要能算出候选之间的相似度（重排后的候选同样可以取向量计算），MMR 可以放在任何一步之后，常见做法是放在重排之后、送入生成之前。
+
+  - id: RAG-RETR-034
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [MMR去冗余]
+    question: |
+      下面的代码用 MMR 从 4 个候选中选出 3 个，其中候选 0 与候选 1 内容几乎相同（相似度 0.95）。输出是什么？
+    code: |
+      import numpy as np
+
+      rel = np.array([0.90, 0.88, 0.70, 0.58])          # 与问题的相关性
+      sim = np.array([[1.00, 0.95, 0.20, 0.10],
+                      [0.95, 1.00, 0.25, 0.15],
+                      [0.20, 0.25, 1.00, 0.30],
+                      [0.10, 0.15, 0.30, 1.00]])        # 候选两两相似度
+
+      def mmr(k, lam):
+          sel, rest = [], list(range(len(rel)))
+          while rest and len(sel) < k:
+              red = [max((sim[i][j] for j in sel), default=0.0) for i in rest]
+              score = [lam * rel[i] - (1 - lam) * r for i, r in zip(rest, red)]
+              best = rest[int(np.argmax(score))]
+              sel.append(best)
+              rest.remove(best)
+          return sel
+
+      print(mmr(3, 1.0))
+      print(mmr(3, 0.5))
+    answer: |
+      [0, 1, 2]
+      [0, 2, 3]
+    explanation: |
+      **λ = 1**：冗余项不起作用，按相关性取前三：0（0.90）、1（0.88）、2（0.70）。候选 0 和 1 几乎是同一段内容，白白占了一个名额。
+
+      **λ = 0.5**：
+      1. 第一步已选集合为空，冗余为 0，选相关性最高的 0（得分 0.45）。
+      2. 第二步：候选 1 的得分为 $0.5\times0.88-0.5\times0.95=-0.035$；候选 2 为 $0.35-0.10=0.25$；候选 3 为 $0.29-0.05=0.24$。选 2。
+      3. 第三步：候选 1 与已选集合的最大相似度仍是 0.95，得分 $-0.035$；候选 3 与已选集合的最大相似度为 $\max(0.10,0.30)=0.30$，得分 $0.29-0.15=0.14$。选 3。
+
+      结果为 `[0, 2, 3]`：重复的候选 1 被挤掉，换进了一个新的角度。选择过程的计算量为 $O(k\cdot n)$（两两相似度可以预先算好），开销很小。
+
+  - id: RAG-RETR-035
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [MMR去冗余]
+    question: |
+      入库时已经用内容哈希做了精确去重，所以检索之后不需要再用 MMR 之类的方法去冗余。
+    answer: false
+    explanation: |
+      **错误**。精确去重只能去掉一字不差的副本，检索结果中的冗余还有很多来源：
+
+      1. **近重复**：转载、改了几个字的版本、FAQ 与制度原文里的同一段内容，哈希值都不同；
+      2. **重叠切块**：相邻块之间有重叠，内容相近，常常一起排在前面；
+      3. **语义重复**：不同文档用不同措辞讲同一件事。
+
+      常见做法是两层叠加：入库时用 MinHash 等方法做近重复去重，检索后再用 MMR（或按来源、按父块合并）去冗余，把有限的上下文名额留给不同角度的信息。
+
+  - id: RAG-RETR-036
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [两阶段检索漏斗]
+    question: |
+      两阶段检索中，第一阶段召回的 Recall@100 只有 70%（只有 70% 的相关文档出现在召回的前 100 名中），第二阶段只对这 100 个候选重排。下列说法正确的是：
+    options:
+      A: '换一个更强的重排模型，把漏掉的相关文档排进前列，就能把最终召回率提升到 90% 以上'
+      B: '重排再强，最终 top-k（k ≤ 100）的召回率也不会超过 70%，应优先改进召回'
+      C: '把重排后送入生成的块数从 5 增加到 10，让生成模型看到更多候选，就能弥补召回的不足'
+      D: '召回率主要影响检索延迟，最终答案的质量由重排和生成模型决定'
+    answer: B
+    explanation: |
+      **结论**：重排只能在召回给出的候选内部调整顺序。召回决定上限，重排决定顺序；没进入前 100 名的那 30% 相关文档，重排根本看不到。
+
+      - A 错：重排模型再强，也无法凭空找回没被召回的文档。
+      - C 错：增加送入生成的块数，只是在同一批候选里多取几个，上限仍是 70%。
+      - D 错：漏召回的文档永远到不了生成模型，会直接导致答错或拒答。
+
+      改进召回的方向：混合检索、查询改写、调整切块、领域微调 Embedding、增大每一路的召回数等；同时用评测集分别监控各阶段的召回率，例如召回阶段看 Recall@100、重排之后看 Recall@5。
+
+  - id: RAG-RETR-037
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [Cross-Encoder重排, ColBERT晚交互, LLM重排]
+    question: |
+      请比较 Bi-Encoder（双塔）、Cross-Encoder、ColBERT、LLM 重排四种方式：交互方式、文档表示能否预计算、精度、成本，以及它们在检索链路中的典型位置。
+    answer: |
+      1. **Bi-Encoder**：问题与文档各自编码成单个向量，点积打分。文档可以预计算，配合 ANN 在千万级文档上毫秒级检索；精度中等，细节被压缩丢失。典型位置：第一阶段召回。
+      2. **Cross-Encoder**：问题与文档拼接后过 Transformer，每层都有 token 级的全交互。不能预计算，每个（问题，文档）对一次前向；精度高。典型位置：对召回的 top-50～100 重排。
+      3. **ColBERT**：分开编码，保留每个 token 的向量，打分时做 MaxSim 晚交互。文档的 token 向量可以预计算，精度接近 Cross-Encoder、速度接近双塔；代价是存储大（每个 token 一个向量），需要压缩（如 ColBERTv2）。典型位置：召回或重排均可。
+      4. **LLM 重排**：pointwise 逐篇打分，或 listwise 整组排序（如 RankGPT 的滑动窗口）。不能预计算，成本和延迟最高，但效果好，还能在提示词中加入业务规则。典型位置：少量候选（如 top-20）的最终精排，或离线标注数据、蒸馏小模型。
+      5. **组合成漏斗**：双塔 + BM25 召回（千万 → 百）→ Cross-Encoder 精排（百 → 十）→（可选）LLM 精排或业务规则 → 送入生成 3～8 块。每一级用更贵、更准的模型处理更少的候选。
+    rubric:
+      - '正确说明四种方式的交互方式（3 分）'
+      - '说明能否预计算及其对效率的影响（2 分）'
+      - '比较精度与成本，并提到 ColBERT 的存储代价或 LLM 的高成本（2 分）'
+      - '说明各自在链路中的典型位置，并能组织成漏斗（3 分）'
+    explanation: |
+      **常见失分点**：说「Cross-Encoder 更准，召回也用它」；不知道 ColBERT 的文档向量可以预计算；把 ColBERT 和 Cross-Encoder 混为一谈；只罗列名词，组织不出「召回 → 精排」的漏斗。
+
+  - id: RAG-RETR-038
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [两阶段检索漏斗]
+    question: |
+      两阶段检索中，第一阶段召回决定了结果的____：没被召回的相关文档，后续的重排无法找回；第二阶段重排决定了结果的____。
+    answer: [['上限', '召回上限', '召回率上限', '天花板'], ['顺序', '排序', '排名', '名次', '先后顺序', '排序质量', '排序精度', '精度']]
+    explanation: |
+      - 召回用便宜、快速的方法（双塔 + ANN、BM25）从全库中捞出几十到几百个候选，宁可多捞，追求高召回；
+      - 重排用更贵、更准的模型（Cross-Encoder、LLM）在这些候选内部精细排序，追求头部准确。
+
+      所以评测时要分段看：召回阶段看 Recall@100，重排之后看 Recall@5、nDCG@10 等；最终效果不好时，先确认问题出在哪一段。
+
+  - id: RAG-RETR-039
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [两阶段检索漏斗, Cross-Encoder重排]
+    question: |
+      某 RAG 系统上线重排模型后，检索效果明显提升，但延迟超标：每个请求召回 300 个候选，用一个 large 规模的 Cross-Encoder 重排，块长约 1,000 token，重排阶段 P95 耗时 900 ms；生成阶段的首字时间约 800 ms；产品要求首字延迟 P95 < 1.5 s。请给出优化方案，并说明如何保证效果不明显下降。
+    answer: |
+      **1. 分析**：重排耗时 ≈ 候选数 × 单对耗时，单对耗时又随输入长度增长（自注意力部分随长度平方增长）。300 个候选、每个约 1,000 token 的输入，正是两个最大的旋钮。另外，1,000 token 的块很可能超过重排模型的最大长度（常见 512），后半部分被截断，算了也白算。
+
+      **2. 方案（按改动成本从低到高）**：
+      - **减少候选数**：在评测集上画出「融合后 top-N 的召回率」随 N 变化的曲线，找到召回率接近饱和的 N（例如 100），把 300 降到 100，重排耗时约降为 1/3；
+      - **缩短输入**：用子块（如 256 token）或「块标题 + 与问题最相关的几句」作为重排输入，顺便解决截断问题；
+      - **换小模型、蒸馏、量化**：用 base 规模的模型，或从 large 蒸馏出的小模型，配合 FP16 / INT8 与推理加速（如 ONNX Runtime、TensorRT），常能获得数倍的提速；
+      - **工程优化**：动态批处理、多卡并行；对热门查询缓存重排结果；
+      - **按需重排**：融合后头部分数差距很大（第一名明显领先）时跳过重排，或让简单查询走轻量通道；
+      - **级联重排**：先用小模型从 100 个候选中选出 30 个，再用大模型精排。
+
+      **3. 效果保障**：
+      - 固定评测集，比较优化前后的 nDCG@10、Recall@5 与端到端答案正确率，事先约定可接受的下降幅度（如不超过 1 个百分点）；
+      - 小流量 A/B 实验，观察点击、点赞、转人工等线上指标；
+      - 监控重排阶段的 P95 / P99 延迟与超时降级的比例。
+    rubric:
+      - '指出候选数与输入长度是延迟的主要来源，并注意到截断问题（2 分）'
+      - '给出减少候选数、并用召回曲线确定 N 的方案（2 分）'
+      - '给出缩短输入、换小模型、蒸馏或量化等至少两种模型侧方案（2 分）'
+      - '给出批处理、缓存、按需重排或级联重排等工程方案（2 分）'
+      - '给出评测集对比与 A/B 实验等效果保障方法（2 分）'
+    explanation: |
+      **常见失分点**：只说「换更快的 GPU」；直接砍候选数却不看召回曲线；不知道块长超过重排模型的最大长度会被截断；没有效果回归的验证方案。
+
+  - id: RAG-RETR-040
+    type: design
+    difficulty: 3
+    frequency: 2
+    points: [混合检索, RRF融合, Cross-Encoder重排, 两阶段检索漏斗, MMR去冗余]
+    question: |
+      请为一个开发者问答平台设计检索与重排子系统。已知：知识库约 2,000 万个块，来自 API 文档、技术博客和历史工单，内容中混有大量错误码、API 名称、代码片段和自然语言描述；峰值 200 QPS；要求「检索 + 重排」阶段 P95 < 300 ms；最终送入生成模型 5 块。请给出召回、融合、重排、去冗余各环节的设计、关键参数、资源估算与评测方案。
+    answer: |
+      **1. 召回（两路并行）**
+      - **稀疏路**：BM25（可再加学习型稀疏）。分词要把错误码、API 名称（如 `getUserInfo`、`E1024`）保留为完整词项，同时把驼峰、下划线拆出的子词也建进索引；代码与正文分字段，给标题、API 名称等字段加权。取 top-100。
+      - **稠密路**：选择对代码与技术文本友好的 Embedding 模型，块带上文档标题与 API 路径；2,000 万 × 768 维、float16 约 31 GB，加上 HNSW 邻接表，单机或少量分片即可承载；efSearch 按召回目标调整。取 top-100。
+
+      **2. 融合**：先用 RRF（$k=60$），免调参、对分数尺度不敏感；积累标注数据后，再对比归一化加权融合（可按查询类型调权重，例如含错误码的查询提高稀疏路的权重）。去重后约 150 个候选。
+
+      **3. 重排**：Cross-Encoder 对融合后的前 50 个候选精排，输入为「块标题 + 截断到 512 token 的正文」；分数低于阈值的块丢弃（阈值在评测集上标定），全部低于阈值时触发拒答或兜底。
+
+      **4. 去冗余**：对重排后的前 10～20 个候选做 MMR（$\lambda\approx0.7$），并按来源文档、父块合并相邻块，最终选出 5 块。
+
+      **5. 资源与延迟估算**
+      - 重排吞吐：200 QPS × 50 对 = 1 万对/秒。若单卡每批 32 对耗时 30 ms（约 1,070 对/秒），需要约 10 张卡，留余量 12～14 张；换成蒸馏后的小模型（假设快 3 倍）可降到 4～5 张。
+      - 延迟预算：查询编码约 10 ms；稠密与稀疏召回并行约 30～50 ms；RRF 约 1 ms；重排 50 对分两批约 60 ms（多卡并行可更低）；MMR 约 1 ms；合计约 100～150 ms，满足 P95 < 300 ms 并留有余量。
+
+      **6. 评测**
+      - 构建分类型评测集：错误码 / API 名称的精确查询、自然语言描述、代码片段查询、无答案查询；
+      - 分段指标：各路召回与融合后的 Recall@100，重排后的 nDCG@10 与 Recall@5，最终 5 块的答案覆盖率；
+      - 消融：单路 vs 混合、RRF vs 加权融合、有无 MMR；上线后做 A/B 实验，并监控延迟与超时降级率。
+    rubric:
+      - '召回设计：两路并行，并考虑错误码、API 名称、代码标识符的分词与字段处理（2 分）'
+      - '融合与重排：RRF 或加权融合、Cross-Encoder 精排、阈值与截断（2 分）'
+      - '去冗余：MMR 或按来源、父块合并（1 分）'
+      - '给出重排 GPU 数量、向量存储等资源估算（2 分）'
+      - '给出满足 P95 < 300 ms 的分环节延迟预算（2 分）'
+      - '给出分段指标、分类型评测集与消融或 A/B 方案（1 分）'
+    explanation: |
+      **常见失分点**：只用向量检索，忽略错误码和 API 名称的精确匹配；不估算重排的 GPU 开销；延迟预算漏掉重排，或把两路召回写成串行；没有分类型、分阶段的评测。
+
+  - id: RAG-RETR-041
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [Cross-Encoder重排, 两阶段检索漏斗]
+    tags: [重排, 效果诊断]
+    question: |
+      某公司的内部技术问答 RAG 原来采用「向量 + BM25 混合召回，RRF 融合后取 top-5 送入生成」。为了提升效果，团队在 RRF 之后接入了一个开源的 Cross-Encoder 重排模型：对 top-50 候选重排后取 top-5。上线前在评测集上一测，Recall@5 反而从 0.78 降到 0.71，用户反馈某些问题「以前能答对，现在答错了」。已知：
+      1. 知识库以中文为主，混有大量错误码、配置项和代码片段；
+      2. 文档块平均约 900 token，重排模型的最大输入长度为 512 token；
+      3. 评测集的相关性标注是半年前根据旧系统召回的结果做的。
+
+      请分析效果变差的可能原因，给出排查步骤和改进方案。
+    answer: |
+      **可能的原因**
+      1. **输入被截断**：问题加文档块超过 512 token 的部分被截掉。答案若在块的后半段，重排模型根本看不到，相关块被排到后面。
+      2. **领域与语言不匹配**：开源重排模型多在通用网页问答数据上训练，对中文技术文档、错误码、配置项、代码的相关性判断不可靠，可能把「讲同一类话题」的块排在「包含精确错误码」的块前面。
+      3. **完全丢弃了召回信号**：重排后只看重排分数，原来 BM25 对精确匹配的强信号被丢掉。
+      4. **评测集有偏**：标注只覆盖旧系统召回过的文档，重排后被推上来的相关文档没有标注，被当成「不相关」，Recall@5 被低估（标注池偏差）。
+      5. **使用方式错误**：输入模板（问题与文档的顺序、指令前缀）、分词器或最大长度设置与模型要求不一致；把一个双塔模型误当作 Cross-Encoder 使用。
+
+      **排查步骤**
+      1. 统计「问题 + 块」的 token 长度分布，看超过 512 的比例，并按「答案位置在块的前段或后段」切片对比重排前后的效果。
+      2. 按问题类型（错误码 / 配置项、概念、代码）切片，看下降集中在哪一类。
+      3. 抽查重排后相关块排名下降的样本，看排上来的是什么内容。
+      4. 对重排前后 top-5 的并集重新做人工标注，修正标注池偏差后再算一次指标。
+      5. 对照模型说明检查输入格式，用几条明显相关和明显不相关的样例做单元测试。
+
+      **改进方案**
+      - 截断：让块长度适配重排模型（重排时用更短的子块或滑动窗口取最高分），或换用支持更长输入的重排模型。
+      - 融合：不用重排分数完全替代原来的排序，与召回排名做加权或 RRF 融合；对错误码、配置项等精确匹配命中加权或做规则兜底。
+      - 领域适配：用线上日志和人工标注构造难负例，微调重排模型；或改用中文、多语言或代码能力更强的重排模型。
+      - 评测：重建评测集（重排前后结果的并集都要标注），按问题类型分层报告，上线前做 A/B。
+      - 先看漏斗：确认 top-50 的召回率足够高，否则重排做得再好也没用。
+    rubric:
+      - '指出输入截断导致重排模型看不到答案（2 分）'
+      - '指出领域、语言与精确匹配能力不匹配，以及完全丢弃召回信号的问题（2 分）'
+      - '指出评测标注池偏差可能低估新系统（2 分）'
+      - '给出按长度、问题类型切片和重新标注的排查步骤（2 分）'
+      - '给出截断处理、分数融合、领域微调、重建评测集等改进方案（2 分）'
+    explanation: |
+      **常见失分点**：一句「重排模型不好，换一个」就结束；没注意到 512 token 的截断；不知道评测标注只覆盖旧系统召回结果时，会系统性地低估新系统；把重排分数和召回分数直接相加，没有考虑量纲。

@@ -1,0 +1,2919 @@
+# AGT-PROTO · 智能体协议
+
+> 所属大类：智能体 Agent　｜　题量：72
+
+MCP、A2A、Agent Skills 与 Code Mode。
+
+**考点覆盖**：MCP动机（5） · MCP架构（6） · MCP服务端原语（10） · MCP客户端原语（7） · JSON-RPC生命周期（12） · MCP传输方式（11） · MCP鉴权（9） · MCP与Function Calling（7） · A2A Agent Card（4） · A2A任务生命周期（6） · A2A与MCP分工（6） · Agent Skills（10） · Code Mode（5） · 技能与工具治理（5） · 生成式UI协议（3）
+
+**题型**：[单选题（17）](#单选题) · [多选题（12）](#多选题) · [判断题（11）](#判断题) · [填空题（4）](#填空题) · [计算题（3）](#计算题) · [代码输出题（1）](#代码输出题) · [代码填空题（1）](#代码填空题) · [代码改错题（2）](#代码改错题) · [编程题（2）](#编程题) · [简答题（11）](#简答题) · [场景分析题（6）](#场景分析题) · [系统设计题（2）](#系统设计题)
+
+---
+
+## 单选题
+
+<a name="AGT-PROTO-001"></a>
+
+### AGT-PROTO-001　基础 · 考频 ★★★
+
+在 MCP（Model Context Protocol）出现之前，AI 应用接入外部工具时普遍面临、也是 MCP 最主要想解决的问题是：
+
+- **A.** 模型无法输出结构化的调用意图，应用只能用正则从自由文本中解析调用
+- **B.** 不同团队开发的 Agent 之间无法互相委托长时间运行的任务
+- **C.** M 个应用接入 N 个工具需要 M×N 份定制集成，难以复用
+- **D.** 接入的工具定义和中间结果太多，挤占了模型有限的上下文窗口
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：MCP 解决的是「应用 ↔ 工具」之间的 N×M 集成问题。
+
+没有统一标准时，每个应用都要为每个工具写一份集成代码，还要适配各家不同的工具格式；MCP 规定一套统一接口，工具方实现一次 Server、应用方实现一次 Client，集成量降为 M+N。这个思路借鉴了语言服务器协议（LSP）：LSP 让任意编辑器支持任意编程语言，MCP 让任意 AI 应用接入任意工具。
+
+- A 错：这是 Function Calling 解决的问题，属于模型 API 层。
+- B 错：这是 A2A（Agent2Agent）协议的目标。
+- D 错：这是 Agent Skills、工具检索、Code Mode 等「省上下文」手段针对的问题；MCP 接入的工具越多，工具定义反而越占上下文。
+
+<sub>考点：MCP动机　｜　出处：Anthropic《Introducing the Model Context Protocol》（2024-11-25）：https://www.anthropic.com/news/model-context-protocol ；MCP 规范 2026-07-28 Overview（借鉴 LSP）：https://modelcontextprotocol.io/specification/2026-07-28</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-004"></a>
+
+### AGT-PROTO-004　基础 · 考频 ★★★
+
+关于 MCP 中 Host、Client、Server 三个角色，下列说法**正确**的是：
+
+- **A.** Client 是用户直接使用的 AI 应用，例如桌面助手、IDE 或自研 Agent
+- **B.** 一个 Client 可以同时连接多个 Server，并在它们之间路由请求
+- **C.** Server 负责调用大模型，并由它决定何时调用自己提供的哪些工具
+- **D.** Host 为每个 Server 单独创建一个 Client，两者一对一通信
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**结论**：Host 管理多个 Client，每个 Client 只与一个 Server 通信（一对一）。
+
+- Host 是用户直接使用的 AI 应用（桌面助手、IDE、自研 Agent），负责调用模型、汇总上下文、执行权限策略与用户授权；
+- Client 是 Host 内部的连接器，只与一个 Server 通信：在每个请求中附带协议版本与客户端能力，收发消息、管理订阅，并守住不同 Server 之间的安全边界；
+- Server 对外提供 Tools、Resources、Prompts，可以是本地子进程，也可以是远程服务。
+
+逐项点评：
+- A 错：把 Host 和 Client 混为一谈，这是面试中最常见的口误。
+- B 错：Client 与 Server 是一对一的；要连多个 Server，Host 就创建多个 Client。
+- C 错：驱动对话、调用模型的是 Host。Server 只对外提供能力，工具要不要用、怎么用，由 Host 交给模型决定。旧版规范中，Server 需要模型能力时可以通过 Sampling 请 Host 代为调用；2026-07-28 版已将 Sampling 标为弃用，建议这类 Server 直接对接模型提供商的 API，但那只是 Server 内部的实现细节，不改变「由 Host 侧的模型决定调用哪些工具」这一分工。
+
+注意：2025-11-25 及更早的规范把 Client 与 Server 之间描述为一对一的「有状态会话」；2026-07-28 版改为无状态协议，移除了 initialize 握手和协议级会话，但 Host、Client、Server 的角色划分和一对一关系不变。
+
+<sub>考点：MCP架构　｜　出处：MCP 规范 2026-07-28（Architecture）：https://modelcontextprotocol.io/specification/2026-07-28/architecture ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-006"></a>
+
+### AGT-PROTO-006　基础 · 考频 ★★★
+
+一个工单系统的 MCP Server 打算对外提供三种能力：
+
+1. 让模型按关键词、状态等条件搜索工单；
+2. 把某个工单队列的字段定义作为上下文，在用户于界面上选中该队列时由应用附加进对话；
+3. 一个由用户在输入框里通过斜杠命令触发的「生成本周工单周报」模板。
+
+按 MCP 服务端原语的划分，最合适的组合是：
+
+- **A.** ① Tool　② Resource　③ Prompt
+- **B.** ① Resource　② Resource　③ Prompt
+- **C.** ① Tool　② Tool　③ Prompt
+- **D.** ① Tool　② Resource　③ Tool
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：划分 Tools、Resources、Prompts 的关键是「由谁决定使用」。
+
+- ① 需要模型根据用户问题动态填参数执行，由**模型决定** → Tool（即使它是只读的）。
+- ② 相对静态、可以列举和订阅、由应用（或用户在界面上选择）决定何时放进上下文 → Resource，用 URI 标识。
+- ③ 预置的提示模板或工作流，由**用户主动选择**（典型是斜杠命令）→ Prompt。
+
+逐项点评：
+- B 错：典型误解「只读的就做成 Resource」。按参数动态查询的只读操作仍应做成 Tool，否则模型无法主动调用。
+- C 错：② 做成 Tool 也能跑，但它本质是由应用挑选的静态上下文，做成 Resource 才能被列举、订阅变更，也不必占用模型的工具定义预算。
+- D 错：③ 是用户触发的模板，不应交给模型自行决定是否调用。
+
+<sub>考点：MCP服务端原语　｜　出处：MCP 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-008"></a>
+
+### AGT-PROTO-008　进阶 · 考频 ★★
+
+一个「代码评审」MCP Server 需要先让大模型对一段 diff 生成摘要，再据此给出评审意见。运营方不希望在 Server 中配置任何模型 API 密钥，也希望用户能看到并控制这次模型调用。按 MCP 2025-11-25 版规范，最合适的做法是：
+
+- **A.** 发起 elicitation/create 请求，让用户在客户端界面上自己写一段摘要
+- **B.** 把摘要逻辑注册为一个 Prompt 原语，由模型在需要时自动调用它生成摘要
+- **C.** 发起 sampling/createMessage 请求，由 Host 用自己的模型代为生成
+- **D.** 调用 roots/list 获取 Host 的模型配置，再由 Server 直接调用模型
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：这正是客户端原语 Sampling 的用途：Server 借用 Host 的模型能力。
+
+Server 发送 `sampling/createMessage`（携带消息、可选的模型偏好、最大 token 数等），由 Host 选择模型并调用，再把结果返回给 Server。Server 不需要自带模型和密钥，Host 统一控制用哪个模型、花多少钱；规范建议 Host 让用户能审阅、修改或拒绝采样请求，防止 Server 滥用模型。
+
+- A 错：Elicitation 用于向用户追问缺失的信息（如确认某个参数），不是让用户代替模型干活。
+- B 错：Prompts 是由用户主动选择的模板，不是 Server 调用模型的通道。
+- D 错：Roots 告诉 Server 可以操作哪些目录或 URI，与模型配置无关，Server 也不应拿到 Host 的模型密钥。
+
+**新版变化（2026-07-28）**：Sampling 被标为弃用（SEP-2577），理由是实现复杂（人在回路审批、模型选择、安全控制）、客户端支持一直很少，而且它是同批弃用的三项特性中安全风险最高的一项，给提示注入和数据外泄留下了攻击面。弃用期内（至少 12 个月）它仍然可用，但不再是 Server 主动发出的请求，而是改由多轮往返请求（MRTR）承载：Server 对 `tools/call` 返回 `resultType: "input_required"` 的中间结果，在 `inputRequests` 中放入 `sampling/createMessage`，客户端调用模型后带着 `inputResponses` 重试原请求。新实现应让需要模型能力的 Server 直接对接模型提供商的 API，这也意味着模型密钥与成本要由 Server 自己管理。
+
+<sub>考点：MCP客户端原语　｜　出处：MCP 规范 2025-11-25（Sampling）：https://modelcontextprotocol.io/specification/2025-11-25/client/sampling ；2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-012"></a>
+
+### AGT-PROTO-012　进阶 · 考频 ★★
+
+下面是 MCP 客户端与服务端之间传递的四条 JSON-RPC 消息（为简洁起见，请求中省略了每个请求都必须携带的 `_meta` 字段）。哪一条**不符合** MCP 对 JSON-RPC 2.0 的使用约定？
+
+- **A.** {"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": "t1", "progress": 30}}
+- **B.** {"jsonrpc": "2.0", "id": null, "method": "tools/list"}
+- **C.** {"jsonrpc": "2.0", "id": "req-8", "result": {"resultType": "complete", "content": []}}
+- **D.** {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "search", "arguments": {"q": "MCP"}}}
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：MCP 要求请求的 id 必须是字符串或整数，**不能为 null**；并且发送方不能让新请求的 id 与自己已发出、尚未收到响应的其他请求重复。
+
+基础的 JSON-RPC 2.0 允许请求 id 为 null（但不推荐），MCP 在此基础上收紧了约束：响应要靠 id 与请求一一对应，null 无法区分不同的请求。
+
+- A 对：没有 id 的是通知，接收方不回复。进度通知通过 progressToken 关联到发起它的请求。
+- C 对：响应带与请求相同的 id，以及 result 或 error（二者只能有其一）；id 用字符串完全合法。2026-07-28 版要求每个 result 都带 `resultType`（普通结果为 `"complete"`）；旧版 Server 的结果没有这个字段时，客户端按 `"complete"` 处理。
+- D 对：标准的工具调用请求，工具名和参数放在 params 的 name 与 arguments 中。
+
+**版本差异**：2025-11-25 及更早的规范要求「同一会话内不得重复使用 id」；2026-07-28 版取消了协议级会话，改为上面的「与在途请求不得重复」。在多轮往返请求（MRTR）中，重试原请求也必须换用新的 id。
+
+<sub>考点：JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（Base Protocol）：https://modelcontextprotocol.io/specification/2026-07-28/basic ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog ；JSON-RPC 2.0 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-015"></a>
+
+### AGT-PROTO-015　挑战 · 考频 ★★
+
+按 MCP 2025-11-25 版规范，某 MCP Server 在 initialize 响应中声明的能力为：
+
+```json
+{"tools": {"listChanged": true}, "resources": {}}
+```
+
+下列客户端行为中，哪一项**违反**了能力协商的约定？
+
+- **A.** 调用 tools/list 获取工具列表
+- **B.** 收到 notifications/tools/list_changed 后重新调用 tools/list
+- **C.** 调用 resources/read 读取 resources/list 返回的某个资源
+- **D.** 调用 resources/subscribe 订阅某个资源的变更通知
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**结论**：双方只能使用对方在握手时声明过的能力。Server 声明了 `resources`，但没有声明 `"subscribe": true`，说明它不支持订阅单个资源的变更，客户端就不应调用 `resources/subscribe`。
+
+- A 合规：声明了 tools 能力，可以列工具。
+- B 合规：声明了 `listChanged: true`，Server 会在工具增减时发通知，客户端收到后重新拉取列表是标准做法。
+- C 合规：声明了 resources 能力，`resources/list` 与 `resources/read` 都可以用。
+
+能力是逐项细分的：resources 下还有 `subscribe`（是否支持订阅）与 `listChanged`（是否发送列表变更通知）两个子能力。同理，Server 没声明 prompts 就不要调 `prompts/list`，否则通常会得到 -32601（方法不存在）。
+
+**新版变化（2026-07-28）**：能力协商不再依赖 initialize 握手。Server 的能力通过 `server/discover` 的结果公布（客户端也可以不调用它，直接发请求）；客户端的能力随每个请求放在 `_meta` 的 `io.modelcontextprotocol/clientCapabilities` 中，处理某个请求需要客户端未声明的能力时，Server 返回 `MissingRequiredClientCapabilityError`。`resources/subscribe` 被 `subscriptions/listen` 取代：客户端在 `resourceSubscriptions` 中列出要关注的资源 URI，Server 在确认消息里只回显它同意支持的订阅类型，客户端应核对并妥善处理未被支持的部分。`resources` 下的 `subscribe` 与 `listChanged` 子能力仍然保留。
+
+<sub>考点：JSON-RPC生命周期、MCP服务端原语　｜　出处：MCP 规范 2025-11-25（Lifecycle、Resources）：https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle ；2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-016"></a>
+
+### AGT-PROTO-016　进阶 · 考频 ★
+
+Host 通过 stdio 接入了一个 MCP Server。客户端发出的一个 `tools/call` 已经等待了 60 秒仍无响应，Host 决定放弃这次调用，并让服务端停止处理。按 MCP 规范，正确的做法是：
+
+- **A.** 发送引用该请求 id 的 notifications/cancelled 通知，并忽略之后可能到达的响应
+- **B.** 用同一个 id 再发一次 tools/call，并把 arguments 置空，服务端会把它当作取消指令
+- **C.** 关闭这次请求对应的 SSE 响应流，服务端会把连接断开视为对该请求的取消
+- **D.** 规范没有针对单个请求的取消机制，只能结束 Server 进程后再重新启动它
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：在 stdio 传输上，用 `notifications/cancelled` 通知取消单个进行中的请求，参数中带被取消请求的 id（`requestId`）和可选的原因。
+
+取消与响应可能「擦肩而过」：通知发出时，服务端也许已经发出了结果，所以发送方要忽略之后到达的响应；接收方如果已经处理完，或者不认识这个 id，可以直接忽略取消通知。工程上还要给模型回填一条可行动的结果，例如「查询超时，可缩小时间范围后重试」，而不是让对话悬空。
+
+- B 错：发送方不能让新请求的 id 与在途请求重复，这也不是取消的语义。
+- C 错：这是 Streamable HTTP 上的取消方式。2026-07-28 版规定，在 HTTP 上关闭某个请求的 SSE 响应流就是取消信号，不需要再发 `notifications/cancelled`；stdio 上所有消息共用一条通道，没有「每个请求一条流」可关。
+- D 错：规范有专门的取消机制，不必为了一个慢请求重启整个 Server 进程。
+
+补充：所有请求都应设超时，超时后按上述方式取消；长任务可以用进度通知报告进展，客户端据此适当延长等待，但要设总上限。旧版（2025-11-25 及更早）在两种传输上都用 `notifications/cancelled` 取消，并明确 HTTP 连接断开**不**应被视为取消；2026-07-28 版在 HTTP 上改成了「断开即取消」。
+
+<sub>考点：JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（Cancellation）：https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/cancellation ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-019"></a>
+
+### AGT-PROTO-019　进阶 · 考频 ★★★
+
+MCP 在 2025-03-26 版规范中，用 Streamable HTTP 取代了最初（2024-11-05 版）的 HTTP+SSE 远程传输方案。下列哪一项**最准确**地说明了当时替换的原因？
+
+- **A.** SSE 只能传输纯文本事件，无法承载结构化的 JSON-RPC 消息，必须换成 HTTP 响应体
+- **B.** 旧方案需要两个端点并常驻 SSE 长连接，不利于无状态部署与断线恢复；新方案单端点、按需流式
+- **C.** 旧方案无法让服务端主动推送消息，新方案改用 WebSocket 实现了真正的全双工通信
+- **D.** 旧方案的会话管理过于复杂，新方案取消了会话概念，要求所有请求都完全无状态
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：核心是「单端点 + 按需流式」，让远程 Server 更容易部署和扩展。
+
+旧的 HTTP+SSE 方案：客户端先用 GET 建立一条 SSE 长连接接收消息，再向另一个端点 POST 发送消息；服务端必须一直维持长连接，连接一断消息就可能丢失，也很难放在无状态的负载均衡或 Serverless 平台后面。
+
+Streamable HTTP（2025-03-26 至 2025-11-25 版）：只有一个端点。客户端的每条消息都是一次 POST；服务端可以直接回 JSON，也可以把这次响应升级为 SSE 流，先推送进度和通知、最后给出结果；客户端还可以用 GET 打开一条 SSE 流，接收服务端主动发来的消息；断线后可以凭 SSE 事件 id 续传。
+
+- A 错：SSE 传输文本事件，承载 JSON 没有任何问题，旧方案本来就用它传 JSON-RPC。
+- C 错：旧方案本来就靠 SSE 让服务端推送消息；Streamable HTTP 也没有使用 WebSocket。
+- D 错：当时会话仍然存在，由 `Mcp-Session-Id` 头标识；只是服务端**可以**选择无状态实现。协议级会话直到 2026-07-28 版才被移除。
+
+**新版变化（2026-07-28）**：Streamable HTTP 保留了「单端点、每条消息一次 POST、按需流式」的核心设计，并进一步简化：移除协议级会话与 `Mcp-Session-Id`；移除 GET 端点（服务端对 GET 返回 405），列表变更、资源更新等通知改由 `subscriptions/listen` 请求的长期响应流推送；服务端不再在流上发送请求，向客户端要信息改用多轮往返请求（MRTR）；取消 SSE 断线续传（`Last-Event-ID`），流断开即丢失在途请求，客户端须用新的请求 id 重发；POST 请求还必须带 `Mcp-Method`（以及工具调用等请求的 `Mcp-Name`）请求头。2024-11-05 的 HTTP+SSE 传输被正式列入弃用特性登记表。
+
+<sub>考点：MCP传输方式　｜　出处：MCP 规范 2025-03-26（Transports）：https://modelcontextprotocol.io/specification/2025-03-26/basic/transports ；2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-024"></a>
+
+### AGT-PROTO-024　挑战 · 考频 ★★
+
+某团队把内部 GitHub 能力封装成远程 MCP Server（Streamable HTTP + OAuth 2.1）。为了省事，Server 收到请求后直接把请求里携带的 Bearer 令牌原样转发给 GitHub API。按 MCP 的授权规范，这种做法的主要问题是：
+
+- **A.** 令牌放在请求头中转发容易被中间节点截获，应改为放在 URL 查询参数里传给上游
+- **B.** OAuth 2.1 只允许机器之间的客户端凭证模式，MCP Server 不能使用代表用户的令牌
+- **C.** 规范要求远程 MCP Server 只能访问自身托管的资源，不能再调用任何第三方 API
+- **D.** 这是规范禁止的「令牌透传」：Server 只应接受颁发给自己的令牌，访问上游要用单独获取的凭证
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**结论**：MCP 授权规范禁止令牌透传（token passthrough）。
+
+1. **受众绑定**：客户端申请令牌时通过资源指示参数指明目标 Server，令牌只对该 Server 有效；Server 必须校验令牌确实是颁发给自己的。所谓透传，就是 Server 不做这项校验，收到什么令牌就拿去调用上游。
+2. **上游凭证分离**：Server 访问 GitHub 等上游时，应以自己的身份（或通过受控的令牌交换）获取上游令牌，并按用户、按租户分别保存。
+3. **为什么危险**：Server 这一层的参数校验、权限控制和限流都被绕过；审计链断裂，Server 分不清调用方是谁，上游日志里看到的来源也对不上；为一个服务签发的令牌被拿到另一个服务使用，打破了信任边界，令牌一旦泄露，影响面也随之扩大。
+
+- A 错：令牌必须放在 Authorization 头里，放进查询串反而更容易出现在日志中泄露。
+- B 错：MCP 授权的主流程正是代表用户的授权码流程（配合 PKCE）。
+- C 错：远程 MCP Server 调用第三方 API 是常见用法，问题在于用什么凭证去调。
+
+<sub>考点：MCP鉴权　｜　出处：MCP 规范（Authorization、Security Best Practices）</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-031"></a>
+
+### AGT-PROTO-031　基础 · 考频 ★★★
+
+在 A2A（Agent2Agent）协议中，调用方在发起任务**之前**，主要通过什么了解远端 Agent 能做什么、服务地址在哪里、需要怎样鉴权？
+
+- **A.** 读取远端发布在约定 well-known 路径下的 Agent Card
+- **B.** 先调用远端的 server/discover 和 tools/list，获取它的能力清单
+- **C.** 请远端返回它的系统提示词和工具列表，据此判断它会做什么
+- **D.** 先随便提交一个任务，再从返回的 Artifact 中读出能力说明
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：A2A 用 Agent Card 做能力发现。
+
+Agent Card 相当于 Agent 的「名片」：名称、描述、服务地址、版本、能力（是否支持流式、推送通知）、默认输入输出模态、技能列表和鉴权方案。调用方在连接**之前**读取它，据此判断该不该找这个 Agent、怎么连、怎么鉴权。
+
+- B 错：这是 MCP 的做法（2026-07-28 版中，客户端可以先调用 `server/discover` 了解协议版本与能力，再用 `tools/list` 列出工具）。它发现的是工具而不是 Agent 的技能，而且必须先知道服务地址、能连上对端才能调用，回答不了「服务地址在哪里」。
+- C 错：A2A 的设计原则是 Agent 不透明，远端不会暴露内部的提示词、工具和记忆。
+- D 错：Artifact 是任务的产出物，不是能力发现机制；盲目提交任务既浪费资源，也可能直接被拒绝。
+
+<sub>考点：A2A Agent Card　｜　出处：A2A 规范；MCP 规范 2026-07-28（Discovery）：https://modelcontextprotocol.io/specification/2026-07-28/server/discover</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-034"></a>
+
+### AGT-PROTO-034　进阶 · 考频 ★★
+
+调用方通过 A2A 委托差旅 Agent 预订酒店，Task 已经进入 completed，并返回了预订确认（Artifact）。随后用户说：「改成住两晚。」按 A2A 的任务语义，调用方最合适的做法是：
+
+- **A.** 向同一个 taskId 再发一条消息，让任务从 completed 回到 working
+- **B.** 直接修改上次返回的 Artifact，远端 Agent 会自动同步预订
+- **C.** 新建一个任务，沿用原来的 contextId，并在消息中说明这是对上一单的修改
+- **D.** 先调用取消接口把已完成的任务改为 canceled，再原样重新提交原任务
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：终态任务不可变，后续的修改或追加要作为同一上下文中的新任务。
+
+A2A 中 completed、failed、canceled、rejected 都是终态，任务一旦到达终态就不能再迁移；相关的多个任务通过同一个 contextId 关联起来，远端据此知道「这是对上一单的修改」，可以利用之前的对话和结果。这样每个任务都有清晰的边界和产出，便于追踪与审计。
+
+- A 错：向终态任务追加消息会被拒绝；只有 input-required、auth-required 这类中断态，才能在同一个 taskId 下继续。
+- B 错：Artifact 是远端交付的产出物，调用方在本地修改它不会影响远端的任何状态。
+- D 错：已完成的任务不能再取消；而且原样重新提交的是旧需求，不是修改后的需求。
+
+<sub>考点：A2A任务生命周期　｜　出处：A2A 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-037"></a>
+
+### AGT-PROTO-037　进阶 · 考频 ★★★
+
+下列场景中，**最适合**使用 A2A 而不是 MCP 的是：
+
+- **A.** 编码 Agent 需要读取本地仓库中的文件，运行 git diff 并分析改动范围
+- **B.** 把合同审查整件事交给法务团队维护的审查 Agent，它可能中途要补充材料，耗时数小时
+- **C.** 客服 Agent 需要按订单号查询订单状态和物流进度，再回复给用户
+- **D.** 同一个进程内，规划节点把拆好的子任务交给执行节点，并等待结果
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：A2A 用来把「一整件事」委托给另一个**不透明、自主**的 Agent，尤其是跨团队、跨厂商、长时间运行、会中途交互的任务。
+
+B 同时具备这些特征：远端由另一个团队维护，内部实现不可见；任务持续数小时；可能进入 input-required 等调用方补充材料；最终交付 Artifact（审查报告）。
+
+- A 错：读文件、跑 git 是确定的工具调用，用 MCP（本地 stdio Server）即可。
+- C 错：一次调用得到一个结果的查询，是典型的 MCP 工具。
+- D 错：同一进程内的组件协作，用框架内的函数调用或消息传递即可，没必要引入网络协议。
+
+<sub>考点：A2A与MCP分工</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-043"></a>
+
+### AGT-PROTO-043　基础 · 考频 ★★
+
+任务「统计客户 C42 处于退款中的订单数和退款总额」需要先列出订单，再逐个查询订单详情。与逐次工具调用相比，Code Mode 能大幅减少输入 token，**最主要**的原因是：
+
+- **A.** 代码比 JSON 格式的调用请求更短，每次调用本身占的 token 更少
+- **B.** Code Mode 不需要任何工具定义，模型凭经验就能猜出 API
+- **C.** 代码在沙箱中执行时，模型输出 token 按更低的单价计费
+- **D.** 订单详情留在执行环境里由代码过滤聚合，只有最终结果回到上下文
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**结论**：省下的主要是「中间结果进入上下文，并在后续每一轮被重复输入」的开销。
+
+逐次调用时，每份订单详情都作为工具结果进入上下文，之后每次调用模型都要把它们重新读一遍；Code Mode 让模型写一段代码，在沙箱里循环调用工具、过滤和聚合，只把一行汇总结果交回模型，模型往返次数也随之减少。
+
+- A 错：调用请求本身很短，不是开销的主体；即使逐次调用已经并行化，差距依然存在。
+- B 错：模型仍需知道 API 的签名，只是可以按需读取，而不必一开始就加载全部工具定义。
+- C 错：计费单价与代码是否在沙箱中执行无关。
+
+<sub>考点：Code Mode</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-049"></a>
+
+### AGT-PROTO-049　进阶 · 考频 ★★
+
+Host 把模型发起的一次工具调用转发给 MCP Server，收到的结果为 `isError: true`，内容是「出发日期必须晚于今天，今天是 2026-11-21」。Host 最合适的处理是：
+
+- **A.** 把它当作 JSON-RPC 协议错误，立即终止本轮对话，并向用户展示一条通用的报错信息
+- **B.** 把错误内容作为这次工具调用的结果回填给模型（标明是错误），让模型据此修正参数或改用其他方式
+- **C.** 用完全相同的参数自动重试 3 次，直到 Server 返回成功后，再把结果交给模型继续推理
+- **D.** 丢弃这次结果，从对话历史中删掉这次调用，当作没有发生过，让模型重新生成一次回复
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：MCP 区分两类错误，`isError: true` 属于「工具执行错误」，规范建议把它交给模型，让模型自我纠正。
+
+- **协议错误**：未知工具、请求格式不合法、服务端内部错误等，以 JSON-RPC 的 `error` 返回，模型通常无法修复；
+- **工具执行错误**：后端 API 失败、输入校验不通过、业务规则不满足等，以 `isError: true` 的工具结果返回，内容应当可操作。例如本题中的错误信息，模型看到后就能把日期改对。
+
+映射到模型接口：OpenAI 把错误文本作为 `tool` 消息的内容回填；Anthropic 在 `tool_result` 中设置 `is_error: true`。
+
+- A 错：这不是协议错误；把可修复的错误直接终止，体验很差。
+- C 错：这是确定性错误，用相同参数重试多少次结果都一样。
+- D 错：每个工具调用都必须有对应的结果；删除调用会破坏消息顺序，也会让模型丢失「这个日期不行」的信息，下一次很可能犯同样的错误。
+
+<sub>考点：MCP与Function Calling、MCP服务端原语　｜　出处：MCP 规范 2026-07-28（Tools，Error Handling）：https://modelcontextprotocol.io/specification/2026-07-28/server/tools</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-060"></a>
+
+### AGT-PROTO-060　基础 · 考频 ★
+
+Google 于 2025 年 12 月发布的开放项目 A2UI（Agent-to-User Interface），让 Agent 可以向客户端返回可交互的界面。它在安全上的核心设计是：
+
+- **A.** Agent 只发送声明式 JSON，且只能引用客户端预先登记的可信组件目录；客户端用原生组件渲染，不执行 Agent 发来的代码
+- **B.** Agent 直接生成 HTML 与 JavaScript，由客户端放进沙箱 iframe 中执行，依靠 iframe 的隔离来保证宿主页面的安全
+- **C.** Agent 生成界面的截图发给客户端，由客户端用视觉模型识别出其中的控件之后，再重新渲染成可交互的界面
+- **D.** 界面全部在服务端渲染好，客户端只接收像素流，因此这种方案完全不存在 UI 注入之类的安全风险
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：A2UI 是「数据而不是代码」的设计。Google 的介绍文章强调，它是声明式的数据格式而不是可执行代码；客户端维护一份可信的、预先批准的组件目录，Agent 只能请求目录中的组件，从而降低 UI 注入等风险。
+
+配套设计还有：组件以带 id 的扁平列表表示、彼此用 id 引用，便于模型逐步生成和增量更新；界面结构与数据模型分离，通过路径绑定数据；同一份描述可以由 Web、移动端等不同框架用各自的原生组件渲染。
+
+- B 错：这描述的是 MCP Apps 的思路（把 HTML 作为资源，在沙箱 iframe 中渲染）。Google 的文章也把两者作了对比：MCP Apps 把界面当作资源，A2UI 走「原生优先」路线。
+- C 错：A2UI 传输的是结构化描述，不是截图。
+- D 错：A2UI 由客户端渲染；而且服务端渲染也不能消除所有风险，例如诱导用户的欺骗性内容。
+
+<sub>考点：生成式UI协议　｜　出处：Google Developers Blog《Introducing A2UI》（2025-12-15）：https://developers.googleblog.com/introducing-a2ui-an-open-project-for-agent-driven-interfaces/</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-063"></a>
+
+### AGT-PROTO-063　进阶 · 考频 ★★★
+
+MCP 2026-07-28 版移除了 `initialize` 握手和 `Mcp-Session-Id`，把协议改为无状态。某团队的远程 MCP Server 部署在负载均衡后面，共 8 个实例。对这个团队来说，这一变化最直接的好处是：
+
+- **A.** Server 不再需要保存任何业务状态，购物车、浏览器上下文这类跨调用数据由协议自动在请求之间传递
+- **B.** 取消握手后不再需要版本协商，Server 只需支持最新版本，连上来的旧版客户端会自动升级到新协议
+- **C.** 每个请求自带版本与能力，任意实例都能处理任意请求，普通轮询负载均衡即可，无需粘性路由和共享会话存储
+- **D.** 客户端与 Server 之间改为复用一条长连接，省去每次请求都重新做 TLS 握手和访问令牌校验的开销
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：无状态的核心收益是水平扩展。处理一个请求所需的协议上下文（版本、客户端能力、客户端标识）都在请求自身的 `_meta` 里，Server 不必依赖同一连接上之前的请求。
+
+旧版中，`initialize` 协商的结果和 `Mcp-Session-Id` 通常保存在处理握手的那个实例的内存里：要么用粘性路由把同一会话的请求都送到这个实例，要么把会话状态放进共享存储，实例重启或扩缩容时会话还可能失效。新版中任何请求都可以落到任何实例上，普通的轮询负载均衡即可。连带的好处是：`tools/list` 等列表不再随会话变化，可以按 `ttlMs` 跨会话缓存。
+
+- A 错：协议无状态不等于应用无状态。跨调用的业务状态仍由 Server 保存（放在各实例都能访问的存储里），只是改用 Server 签发的显式句柄（如 `basket_id`）作为普通工具参数在调用之间传递，而不是隐式挂在会话上。
+- B 错：版本仍要协商，只是改为逐请求进行：请求在 `_meta` 中声明版本，Server 不支持时返回 `UnsupportedProtocolVersionError` 并列出支持的版本。只认新版的 Server 无法服务只会 `initialize` 的旧客户端，旧客户端也没有自动升级的机制。
+- D 错：无状态说的是协议层不保留上下文，与 TCP/TLS 连接是否复用无关；每个 HTTP 请求仍要携带并校验访问令牌。
+
+<sub>考点：MCP架构、MCP传输方式　｜　出处：MCP 规范 2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog ；发布博客：https://blog.modelcontextprotocol.io/posts/2026-07-28/ ；SEP-2567：https://modelcontextprotocol.io/seps/2567-sessionless-mcp</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-069"></a>
+
+### AGT-PROTO-069　进阶 · 考频 ★★
+
+某公司在远程 MCP Server 前部署了 API 网关与 WAF，希望按「工具」做路由、限流与审计。MCP 2026-07-28 版要求 Streamable HTTP 的 POST 请求携带 `Mcp-Method` 请求头，`tools/call`、`resources/read`、`prompts/get` 请求还要携带 `Mcp-Name`（取自请求体中的工具名、提示名或资源 URI）。下列说法正确的是：
+
+- **A.** 有了这两个请求头，请求体中的 method 和 params.name 就可以省略，以减少传输和解析的开销
+- **B.** 网关只看请求头就能按方法和工具名路由、限流与审计；Server 必须校验头与请求体一致，不一致时返回 400
+- **C.** 工具的敏感参数（如访问令牌、身份证号）适合用 x-mcp-header 映射到请求头，便于网关统一审计
+- **D.** 网关可以直接信任这两个请求头做策略决策，即使请求声明的协议版本较旧、并不要求校验头与体一致
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：这两个请求头把 JSON-RPC 请求体里的关键字段「镜像」到 HTTP 层，让负载均衡、网关、WAF、限流器不解析请求体就能知道「调用的是哪个方法、哪个工具」；为防止「网关按头放行、Server 按体执行」，处理请求体的一方必须校验二者一致。
+
+- A 错：请求头只是镜像，请求体仍是协议的权威内容，字段一个都不能少。
+- B 对：头与体不一致、缺少必需的请求头或含非法字符时，Server 返回 HTTP 400 和 `HeaderMismatch` 错误（-32020）。工具名含非 ASCII 字符时，客户端按规范用 Base64 哨兵格式（`=?base64?…?=`）编码，Server 先解码再比较。
+- C 错：规范建议不要把密码、密钥、令牌、个人身份信息等敏感参数标为 `x-mcp-header`，因为请求头对沿途的中间节点可见，还容易被写进访问日志。
+- D 错：规范要求依据这些请求头执行策略的中间节点先检查 `MCP-Protocol-Version`：版本较旧（不要求头体一致校验）或缺失时，应拒绝请求，而不是信任未经校验的头。
+
+延伸：Server 还可以用 `x-mcp-header` 把非敏感的工具参数（如区域）映射成 `Mcp-Param-{名称}` 请求头，供网关按区域路由。
+
+<sub>考点：MCP传输方式、MCP鉴权　｜　出处：MCP 规范 2026-07-28（Streamable HTTP：Request Metadata）：https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 多选题
+
+<a name="AGT-PROTO-007"></a>
+
+### AGT-PROTO-007　进阶 · 考频 ★★
+
+关于 MCP 服务端的 Tools、Resources、Prompts 三种原语，下列说法**正确**的有：
+
+- **A.** 凡是只读的查询都应做成 Resource，有副作用的操作才做成 Tool
+- **B.** 工具、资源或提示模板发生增减时，Server 可以发送对应的 list_changed 通知，客户端据此重新拉取列表
+- **C.** 工具注解中的 readOnlyHint、destructiveHint 由 Server 自己声明，Host 可以据此直接跳过权限检查
+- **D.** Resources 用 URI 标识；Server 声明了相应能力时，客户端可以订阅某个资源的变更通知
+- **E.** Tools 由模型决定是否调用、怎么填参数，可以带有副作用
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：BDE**
+
+**解析：**
+
+- A 错：划分标准是「谁决定使用」，不是读写。按参数动态执行的只读查询（如关键词搜索）也应做成 Tool。
+- B 对：Server 声明 `listChanged` 能力后，可以发送 `notifications/tools/list_changed` 等通知，客户端重新调用对应的 list 方法。2026-07-28 版中，客户端要先通过 `subscriptions/listen` 订阅相应类型（如 `toolsListChanged`）才会收到这些通知；列表结果还带 `ttlMs` 缓存提示，通知到达即作废缓存。
+- C 错：注解只是 Server 的自我声明，规范明确它们只是提示，不可信的 Server 完全可以谎称「只读」。权限策略应由 Host 按「用户 × Server × 工具」配置，注解只作参考。
+- D 对：Resource 以 URI 标识，通过 `resources/list`、`resources/read` 列举和读取。Server 在 resources 能力中声明 `subscribe` 时，客户端可以发起 `subscriptions/listen`，在 `resourceSubscriptions` 中列出要关注的 URI，之后在这条流上收到 `notifications/resources/updated`（2025-11-25 及更早用的是 `resources/subscribe`）。
+- E 对：Tools 是「模型决定」的原语，可能修改外部状态（发消息、建工单），所以 Host 要做权限控制和人工确认。
+
+<sub>考点：MCP服务端原语　｜　出处：MCP 规范 2026-07-28（Resources、Subscriptions）：https://modelcontextprotocol.io/specification/2026-07-28/server/resources ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-010"></a>
+
+### AGT-PROTO-010　进阶 · 考频 ★
+
+关于 MCP 的客户端原语 Elicitation（经由客户端向用户追问信息），下列说法**正确**的有：
+
+- **A.** Server 在执行中途缺少必要信息时，可以经由客户端向用户追问，而不是自己猜测
+- **B.** 请求中可以附带描述期望字段的 JSON Schema，客户端据此渲染表单并校验输入
+- **C.** 用户可以接受（并提交数据）、明确拒绝或直接取消，Server 需要分别处理这几种结果
+- **D.** 它是 Server 发出的一条通知，客户端收到后只需展示给用户、无需回复
+- **E.** 适合在表单中直接向用户索要密码、API 密钥等敏感凭证，省去单独的 OAuth 授权流程
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ABC**
+
+**解析：**
+
+- A 对：这是它的设计目的。例如订会议室时发现缺少参会人数，就向用户追问，而不是擅自填一个默认值。
+- B 对：表单模式（form）的 schema 被刻意限制为扁平对象和基本类型（字符串、数字、布尔、枚举），便于客户端生成表单。
+- C 对：响应中的 action 区分接受（accept，附带用户提交的数据）、拒绝（decline）和取消（cancel），Server 据此决定继续、换方案或终止。
+- D 错：Elicitation 不是通知，用户的回答必须送回 Server。2026-07-28 版中它以多轮往返请求（MRTR）实现：Server 对 `tools/call` 等请求返回 `resultType: "input_required"` 的中间结果，在 `inputRequests` 中放入 `elicitation/create`；客户端向用户收集答案后，用新的请求 id 重发原请求，并在 `inputResponses` 中附上答案。2025-11-25 及更早的版本中，它是 Server 主动发给客户端的请求（带 id），客户端必须回复。
+- E 错：规范规定 Server 不得通过表单模式索要密码、API 密钥、访问令牌、支付凭证等敏感信息；这类交互要用 URL 模式，让用户在浏览器中直接与目标站点交互，数据不经过 MCP 客户端。
+
+Elicitation 由 2025 年的规范修订引入，2026-07-28 版没有弃用它（同属客户端能力的 Sampling、Roots 已弃用）。客户端应清楚展示是哪个 Server 在提问，让用户自行判断是否回答。
+
+<sub>考点：MCP客户端原语　｜　出处：MCP 规范 2026-07-28（Elicitation）：https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-020"></a>
+
+### AGT-PROTO-020　进阶 · 考频 ★★
+
+关于 MCP 2026-07-28 版规范中的 Streamable HTTP 传输，下列说法**正确**的有：
+
+- **A.** 对一个 POST 请求，服务端可直接返回 JSON，也可返回 SSE 流：先推送与该请求相关的通知，最后给出响应
+- **B.** 响应流意外断开后，客户端可以带上 Last-Event-ID 重新连接，从断点继续接收这次请求的结果
+- **C.** Server 只暴露一个 MCP 端点，客户端发送的每条 JSON-RPC 消息都是对它的一次 HTTP POST
+- **D.** 客户端不再用 GET 打开独立的 SSE 流；要接收工具列表变更等通知，就发起 subscriptions/listen 请求，在它的响应流上接收
+- **E.** 在本机运行 HTTP 形式的 Server 时，应只绑定 127.0.0.1 并校验 Origin 头，以防 DNS 重绑定攻击
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ACDE**
+
+**解析：**
+
+**结论**：A、C、D、E 正确。
+
+- A 对：服务端按需选择响应形式，需要推送进度等与该请求相关的通知时才使用 SSE，这正是「Streamable」的含义。
+- B 错：2026-07-28 版取消了 SSE 断线续传与消息重投（`Last-Event-ID` 和 SSE 事件 id）。响应流一断，在途请求就丢失了（服务端把断开视为取消），客户端必须用新的请求 id 重新发起；有副作用的工具因此要靠幂等键防止重复执行。
+- C 对：单端点、每条消息一次 POST，这是 Streamable HTTP 一贯的设计，也是它与 2024-11-05 版 HTTP+SSE（两个端点）最直观的区别。
+- D 对：新版移除了 GET 端点（服务端对 GET 返回 405）。需要长期接收的变更通知（列表变更、资源更新）由 `subscriptions/listen` 的响应流推送，客户端按类型订阅；进度、日志这类与某个请求相关的通知，仍在该请求自己的响应流上发送。
+- E 对：规范要求服务端校验 Origin 头（不合法时返回 403），并建议本地运行时只绑定 localhost，否则恶意网页可能借 DNS 重绑定访问本机 Server。
+
+**与旧版的区别**：2025-11-25 及更早的 Streamable HTTP 允许客户端用 GET 打开独立的 SSE 流，接收服务端主动发来的通知和请求（服务端不支持时返回 405），支持凭 `Last-Event-ID` 续传，并用 `Mcp-Session-Id` 头维持会话。这三项在 2026-07-28 版中都已移除，所以按旧版规范，关于 `subscriptions/listen` 的那一项是错误的，关于 `Last-Event-ID` 续传的那一项在服务端支持续传时成立。新版还要求 POST 请求带 `Mcp-Method`（以及工具调用等请求的 `Mcp-Name`）请求头，便于网关不解析请求体就能路由。
+
+<sub>考点：MCP传输方式　｜　出处：MCP 规范 2026-07-28（Streamable HTTP）：https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-025"></a>
+
+### AGT-PROTO-025　进阶 · 考频 ★★
+
+关于 MCP（HTTP 传输）基于 OAuth 2.1 的授权，下列说法**正确**的有：
+
+- **A.** 为了统一体验，stdio 传输的本地 Server 也应走同样的浏览器授权流程，从授权服务器获取访问令牌
+- **B.** 客户端未带令牌访问时，服务端返回 401，并在 WWW-Authenticate 头中指向受保护资源元数据，客户端据此找到授权服务器
+- **C.** 事先从未登记过的客户端只能靠动态客户端注册（DCR）接入；新版推荐的客户端 ID 元数据文档（CIMD）要求先在授权服务器上人工登记 client_id
+- **D.** MCP Server 是 OAuth 资源服务器，MCP Client 是 OAuth 客户端，授权服务器可以独立部署
+- **E.** 首次请求完成授权后，Server 会记住这条连接对应的用户，之后的请求就不必再在 HTTP 请求中携带访问令牌
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：BD**
+
+**解析：**
+
+**结论**：B、D 正确。
+
+- A 错：授权规范只针对 HTTP 传输。stdio Server 是本机子进程，应从环境变量等本地配置读取凭证，权限边界主要靠操作系统和沙箱。
+- B 对：这是授权发现流程的起点（Server 也可以改在 well-known 路径上提供元数据）：受保护资源元数据 → 授权服务器元数据 →（必要时）客户端注册 → 用户在浏览器登录授权（授权码 + PKCE）→ 获得令牌。
+- C 错：CIMD 正是为「客户端与授权服务器事先互不认识」设计的：客户端把一个 HTTPS URL 用作 client_id，该 URL 指向它自己托管的元数据文档（含 client_name、redirect_uris 等），授权服务器在授权时按 URL 拉取并校验，无需事先登记。2026-07-28 版把动态客户端注册（DCR，RFC 7591）标为弃用，只为兼容不支持 CIMD 的授权服务器而保留；客户端的优先顺序是：已有的预注册信息 → CIMD → DCR → 请用户手动填写。
+- D 对：这是规范对角色的定位。Server 负责校验令牌，不一定自己颁发令牌；授权服务器可以与 Server 部署在一起，也可以是企业现有的身份系统。
+- E 错：每个 HTTP 请求都要在 Authorization 头里带 Bearer 令牌。2026-07-28 版的 MCP 是无状态协议，Server 不得依赖同一连接上之前的请求来确定上下文；旧版的会话 ID（`Mcp-Session-Id`）也只用于关联会话，从来不能充当身份凭证。
+
+<sub>考点：MCP鉴权　｜　出处：MCP 规范 2026-07-28（Authorization、Client Registration）：https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-032"></a>
+
+### AGT-PROTO-032　基础 · 考频 ★★
+
+下列哪些信息通常会出现在 A2A 的 Agent Card 中？
+
+- **A.** 远端 Agent 内部使用的系统提示词、工具清单和记忆内容
+- **B.** 技能列表，每个技能有 id、名称、描述、标签和示例
+- **C.** 支持的鉴权方案，例如 API Key、HTTP Bearer、OAuth 2.0 或 OpenID Connect
+- **D.** 能力声明，例如是否支持流式输出、推送通知
+- **E.** 服务地址与版本号
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：BCDE**
+
+**解析：**
+
+- A 错：A2A 承认 Agent 的自主性与不透明性，协作双方不共享内部的提示词、工具和记忆，只通过任务、消息和产出物交互，这也保护了各团队的实现细节和数据。
+- B、C、D、E 对：Agent Card 描述「我是谁、会什么、怎么连、怎么鉴权」，此外还有默认的输入输出模态（如 text/plain、application/json）。鉴权方案的写法与 OpenAPI 的安全方案一致；实际凭证放在 HTTP 头里传递，不写进 A2A 消息本身。
+
+调用方拿到 Agent Card 后，应先校验必填字段，再按技能的描述和标签选择合适的技能；Agent Card 本身也是外部输入，不能盲信其中的描述。
+
+<sub>考点：A2A Agent Card　｜　出处：A2A 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-041"></a>
+
+### AGT-PROTO-041　进阶 · 考频 ★★
+
+关于 Agent Skills，下列说法**正确**的有：
+
+- **A.** 技能附带的脚本被执行时，脚本源码通常不进入上下文，只有运行输出进入
+- **B.** Skills 是取代 MCP 的新网络协议，Agent 通过它连接外部系统、远程调用各个技能的接口
+- **C.** Harness 没提供读文件工具时，也可用专门的激活工具把 SKILL.md 正文交给模型
+- **D.** 第三方技能主要是 Markdown 文档，只作为参考资料加载，安装前按普通文档审阅即可
+- **E.** 技能的 description 要写清「做什么」和「什么时候用」，模型主要凭它决定是否打开技能
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ACE**
+
+**解析：**
+
+- A 对：这是渐进式披露的第三层：脚本直接执行，代码不占上下文，只有输出进入。所以把确定性的计算和校验写成脚本，比让模型「读懂规则再自己算」更省也更可靠。
+- B 错：Skills 本身是「文件夹约定 + 按需加载」的上下文工程手法，不是网络协议，技能本身也没有可供远程调用的接口；需要从远端分发技能时，反而可以借助 MCP 的 Skills 扩展来传输。MCP 管「能连上什么」，Skills 管「该怎么做」，两者常常配合：Skill 的正文可以写「用某个 MCP Server 的 create_issue 提交」。
+- C 对：Agent Skills 官方的接入指南给出两种激活方式：模型有读文件的工具时，直接读取 SKILL.md；没有时，由 Harness 提供专门的激活工具（如 `activate_skill`）按技能名返回正文，或由程序直接把正文注入提示词。附带的脚本仍然需要代码执行环境才能运行。Claude 的实现属于前一种：技能放在带文件系统的代码执行环境里，模型用 bash 读文件、跑脚本；「没有文件系统就用不了 Skills」只是特定实现的情况，不是标准的要求。
+- D 错：技能里的脚本会在你的环境中执行，正文也会作为提示词影响模型行为，并不只是参考资料；第三方技能等同于第三方代码加提示词，必须审核来源，并在沙箱中运行。
+- E 对：启动时只有 name 和 description 进入上下文，模型据此判断任务是否需要这个技能，道理与工具描述相同。描述含糊，技能要么不被触发，要么被误触发。
+
+<sub>考点：Agent Skills　｜　出处：Anthropic Agent Skills 文档；Agent Skills 接入指南：https://agentskills.io/integrate-skills</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-045"></a>
+
+### AGT-PROTO-045　进阶 · 考频 ★★
+
+关于 Code Mode 的适用条件与代价，下列说法**正确**的有：
+
+- **A.** 模型写的代码是不可信代码，需要进程、容器、microVM 或 V8 isolate 级别的隔离，并限制 CPU、内存、时长、网络和文件系统
+- **B.** 适合工具调用次数多、中间数据大、需要循环过滤或聚合的任务
+- **C.** 代码已在隔离沙箱中运行，它经由工具代理发出的调用也就不必再做权限检查、限额和审计
+- **D.** 用 Python 的 exec 执行模型代码，并把 __builtins__ 限制为白名单函数，就构成了可靠的沙箱
+- **E.** 只调用一两次工具的简单任务改用 Code Mode，同样能明显节省 token 和时延
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：AB**
+
+**解析：**
+
+**结论**：A、B 正确。
+
+- A 对：生产中的 Code Mode 跑在真正的隔离环境里。例如 Cloudflare 的方案在 V8 isolate 中执行代码，沙箱不能直接联网，只能通过预先绑定的接口访问指定的 MCP Server，密钥也不暴露给代码。
+- B 对：这类任务的中间结果最大，Code Mode 的收益最明显。
+- C 错：沙箱只隔离代码本身（不能直接联网、读写宿主文件），代码经由工具代理发出的调用却会真实作用于外部系统，一个循环就可能发出成百次删除或转账。工具代理是代码访问外部世界的唯一出口，权限检查、限额、调用计数和审计都应放在这里；一段代码包含很多次操作，逐个人工确认不现实，需要确认的高风险操作也由代理层拦截后单独确认。
+- D 错：受限命名空间不是沙箱。Python 中可以沿对象图（如 `().__class__.__base__.__subclasses__()`）拿到被屏蔽的模块和函数；AST 黑名单也永远补不完。
+- E 错：简单任务写代码反而多一轮模型往返，还要承担沙箱的启动开销，不划算。
+
+此外，调试会变难：错误发生在代码里，要把异常信息回传给模型修正。
+
+<sub>考点：Code Mode　｜　出处：Cloudflare「Code Mode」博客（2025 年 9 月）</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-050"></a>
+
+### AGT-PROTO-050　进阶 · 考频 ★★★
+
+关于 A2A 与 MCP 的对比，下列说法**正确**的有：
+
+- **A.** A2A 要求远端 Agent 公开自己内部使用的工具清单、记忆和提示词，以便调用方替它规划好每一步的执行
+- **B.** 有了 A2A 之后，一个通过 A2A 与其他 Agent 协作的 Agent，访问自己的数据库和内部 API 时也不再需要 MCP 或 Function Calling
+- **C.** A2A 的任务可以进入 input-required、auth-required 等中断状态，等待调用方在同一个任务中补充信息后继续执行
+- **D.** A2A 通过 /.well-known/agent-card.json 上的 Agent Card 公布技能、地址与鉴权方式；MCP 由客户端向 Server 查询工具等能力
+- **E.** 两者都提供基于 JSON-RPC 2.0 的通信方式；A2A 1.0 规范另外定义了 gRPC 与 HTTP+JSON（REST）两种协议绑定
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：CDE**
+
+**解析：**
+
+**结论**：C、D、E 正确。A2A 解决 Agent 之间的协作，MCP 解决 Agent 与工具、数据的连接，二者的技术底座相近，语义完全不同。
+
+- A 错：A2A 的设计原则之一就是 Agent 不透明：协作双方只通过任务、消息和产出物（Artifact）交互，不需要共享内部的思考、计划和工具实现。
+- B 错：A2A 不负责工具接入。A2A 官方文档中的汽修店例子：顾客与店长、店长与零件供应商之间用 A2A，修理工使用诊断仪、维修手册数据库等工具时用 MCP。
+- C 对：input-required 与 auth-required 属于「中断」状态；调用方带上原任务的 id 发送后续消息，任务即可继续，这是一次性的工具调用所没有的多轮语义。
+- D 对：Agent Card 是远端 Agent 的「名片」，用于协作之前的发现与协商。
+- E 对：MCP 的消息是 JSON-RPC 2.0（经 stdio 或 Streamable HTTP 传输）；A2A 1.0 规范定义了 JSON-RPC、gRPC、HTTP+JSON/REST 三种标准绑定。
+
+<sub>考点：A2A与MCP分工、A2A Agent Card、A2A任务生命周期　｜　出处：A2A 规范 1.0：https://a2a-protocol.org/latest/specification/ ；A2A 文档 A2A and MCP：https://a2a-protocol.org/latest/topics/a2a-and-mcp/</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-058"></a>
+
+### AGT-PROTO-058　进阶 · 考频 ★★
+
+一个企业 Host 按照 MCP 官方的 Skills 扩展（截至 2026 年 11 月为 Beta 阶段），从多个 MCP Server 发现并加载技能。关于技能的身份、完整性与授权，下列做法**正确**的有：
+
+- **A.** 摘要校验只能证明内容与 Server 公布的清单一致，并不能证明这些内容本身安全可信
+- **B.** 用户批准某个技能后，批准应绑定到它完整的文件清单及各文件的 SHA-256 摘要；之后任何文件发生变化都要重新批准
+- **C.** 技能内容来自公司内部的 Server，可以视为可信指令，其 allowed-tools 中列出的工具应当自动放行
+- **D.** 技能以「来源 Server + 技能 URI」作为身份；两个 Server 提供同名技能时，不能让后加载的悄悄覆盖先加载的
+- **E.** 为了加快响应，Host 应在连接 Server 时就预先下载所有技能的全部文件，免得用到时再等待
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ABD**
+
+**解析：**
+
+**结论**：A、B、D 正确。这些要求同样适用于任何「从远端加载技能」的平台。
+
+- A 对：摘要只保证「拿到的就是对方公布的那份」，内容本身是否安全，仍需要审核与权限控制。
+- B 对：批准要绑定到完整的文件 URI 与摘要集合；任何文件增加、删除或修改都会使批准失效，必须重新批准，防止「先过审、后换内容」。
+- C 错：扩展明确要求 Host 把技能内容当作不可信输入；在宿主机上执行代码、授予 `allowed-tools` 这类权限，都需要用户针对每个技能明确批准。来自内部 Server 也不例外，内部 Server 同样可能被篡改，或者转发了第三方内容。
+- D 对：技能名只是标签，不保证唯一；Host 在注册、审批和缓存中都要同时保留 Server 身份和 URI，并防止同名技能静默替换，否则就留下了「换包」攻击的入口。
+- E 错：扩展规定 Host 不得提前获取文件（包括连接时、列出技能时、审批时），用到时才读取，这也是渐进式披露的要求。审批只需要清单，不需要先下载文件。
+
+<sub>考点：技能与工具治理、Agent Skills　｜　出处：MCP Skills 扩展：https://modelcontextprotocol.io/extensions/skills/overview</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-061"></a>
+
+### AGT-PROTO-061　进阶 · 考频 ★
+
+关于生成式 UI 的几种方案，下列说法**正确**的有：
+
+- **A.** 在 MCP Apps 中，界面里的按钮可以绕过 Host 的转发与限制，直接以用户的身份调用任意外部 API
+- **B.** A2UI 把组件组织成带 id 的扁平列表、彼此用 id 引用，便于模型逐步生成和增量更新界面
+- **C.** MCP Apps 的工具通过 `_meta.ui.resourceUri` 引用 `ui://` 资源（HTML），由 Host 在沙箱 iframe 中渲染，双方经 postMessage 通信
+- **D.** 为兼容不支持界面扩展的客户端，提供界面的工具仍应同时返回有意义的文本内容
+- **E.** AG-UI 是一种组件目录格式，用 JSON Schema 规定了按钮、表单、表格等 UI 组件各自可以有哪些属性和取值
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：BCD**
+
+**解析：**
+
+**结论**：B、C、D 正确。三个名字容易混淆：A2UI 是界面描述格式，MCP Apps 是 MCP 的界面扩展，AG-UI 是 Agent 与前端之间的交互协议。
+
+- A 错：MCP Apps 运行在 Host 控制的沙箱中，不能访问父页面、读取 Cookie；界面发起的工具调用经由 Host 转发，Host 可以限制它能调用哪些工具、能否打开链接。
+- B 对：扁平列表加 id 引用，比深度嵌套的树更适合模型边生成边发送，也便于对局部做增量更新。
+- C 对：MCP Apps（官方扩展，标识为 `io.modelcontextprotocol/ui`）的核心就是「工具 + `ui://` 资源」：Host 预取资源、在沙箱 iframe 中渲染，双方通过 postMessage 上的 JSON-RPC 方言通信。
+- D 对：MCP 扩展文档要求优雅降级：提供界面的工具对不支持该扩展的客户端，仍应返回有意义的文本内容。
+- E 错：AG-UI 的官方定义是「一个开放、轻量、基于事件的协议，规范 AI Agent 如何连接面向用户的应用」，负责流式消息、共享状态、工具调用、人在回路等事件的传输。它与 A2UI 互补，可以作为 A2UI 的传输通道。
+
+<sub>考点：生成式UI协议、MCP服务端原语　｜　出处：MCP Apps：https://modelcontextprotocol.io/extensions/apps/overview ；A2UI：https://a2ui.org/concepts/overview/ ；AG-UI：https://docs.ag-ui.com/introduction</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-064"></a>
+
+### AGT-PROTO-064　挑战 · 考频 ★★
+
+某浏览器自动化 MCP Server 原来把浏览器实例挂在会话上。迁移到 MCP 2026-07-28 版后，改为由 `create_browser` 工具返回 `browser_id`，之后的 `open_page`、`click` 等工具都把它作为参数。关于这种「显式句柄」的设计，下列说法**正确**的有：
+
+- **A.** 编排器可以让多个子 Agent 共用同一个 browser_id 协作，也可以让每个子 Agent 各自创建浏览器，共享还是隔离按需决定
+- **B.** 句柄应当是不透明的标识，不要在里面编码用户名、日期等内部结构，以免被解析或猜测
+- **C.** Host 压缩上下文（把早期对话做成摘要）时，要确保仍在使用的句柄没有被丢掉，否则 Server 端的状态就成了孤儿
+- **D.** 对需要鉴权的 Server，持有句柄就等于获得授权：只要句柄正确，任何调用者都可以操作对应的浏览器
+- **E.** 句柄的保留时长应写进 create_browser 的工具描述；过期句柄再被使用时，应返回说明「已过期」的工具执行错误
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ABCE**
+
+**解析：**
+
+**结论**：A、B、C、E 正确。2026-07-28 版取消了协议级会话，需要跨调用保存的状态改由 Server 签发显式句柄，作为普通工具参数传回。这只是工具设计模式，协议本身并没有「句柄」这一概念。
+
+- A 对：会话模型下一个会话只有一份状态，子 Agent 只能整体共享或整体隔离；显式句柄可以按需创建多个，由编排器决定哪些共享、哪些隔离。
+- B 对：不透明的标识（如 `brw_7f3k9q`）既不暴露内部结构，也不会诱导模型去「猜」一个句柄。
+- C 对：句柄由模型在对话中携带，客户端要保证它挺过上下文压缩。
+- D 错：句柄会出现在对话记录、子 Agent 的提示词和复制粘贴中，迟早会泄露。对需要鉴权的 Server，句柄只是名字而不是凭证，每次调用都要按请求携带的令牌校验「这个调用者能否使用这个句柄」。只有没有鉴权的 Server 才不得不让句柄充当「持有即可用」的令牌，此时要用密码学安全的随机源生成足够长的标识（如 UUIDv4），并限制有效期。
+- E 对：句柄的生命周期不再跟随连接，模型只有在工具描述里看到保留策略（如「闲置 24 小时后失效」）才能合理决策；明确的过期错误让模型知道该重新调用 `create_browser`，而不是盲目重试。
+
+另一个变化：列表结果不能再随其他请求而变。旧版中「调用 `connect_database` 之后 `tools/list` 才多出 `query`」的做法不再允许，应一开始就列出 `query`，并让它接收 `connect_database` 返回的 `connection_id`。
+
+<sub>考点：MCP服务端原语、MCP鉴权　｜　出处：MCP 规范 2026-07-28（Tools：Stateful Tools）：https://modelcontextprotocol.io/specification/2026-07-28/server/tools ；SEP-2567：https://modelcontextprotocol.io/seps/2567-sessionless-mcp ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-070"></a>
+
+### AGT-PROTO-070　进阶 · 考频 ★★
+
+某 Host 接入了多个远程 MCP Server，希望减少 `tools/list` 调用，并提高大模型提示词缓存（Prompt Caching）的命中率。按 MCP 2026-07-28 版规范，下列做法或理解**正确**的有：
+
+- **A.** Server 按确定的顺序返回工具，Host 也按固定顺序把工具定义放在提示词前部，工具集不变时前缀不变，提示词缓存更易命中
+- **B.** cacheScope 为 private 的结果不允许被任何一方缓存，客户端每次需要时都必须重新请求
+- **C.** 规范要求客户端把 ttlMs 当作轮询周期，每到期就在后台自动重新拉取一次工具列表，保证列表始终最新
+- **D.** 在 ttlMs 有效期内直接复用缓存的工具列表；有效期内收到 notifications/tools/list_changed 时，立即作废缓存并重新拉取
+- **E.** 工具列表的 cacheScope 为 public 时，说明人人都能用这些工具，Server 可以省去对 tools/call 的权限检查
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：AD**
+
+**解析：**
+
+**结论**：A、D 正确。2026-07-28 版要求 `server/discover`、`tools/list`、`prompts/list`、`resources/list`、`resources/templates/list`、`resources/read` 的结果携带 `ttlMs` 与 `cacheScope` 两个缓存提示，并建议 Server 按确定顺序返回工具。
+
+- A 对：工具定义通常位于提示词前部，顺序一变，其后的内容都无法命中提示词缓存；确定的顺序让 Host 能稳定地缓存工具目录，跨重连也能保持前缀不变。
+- B 错：`private` 表示结果含有调用者私有的数据，可以在同一授权上下文（如同一个访问令牌）内复用，只是不得跨授权上下文共享，例如网关不能把它返回给另一个用户。
+- C 错：规范明确说客户端**不应**把 TTL 当作后台自动刷新的轮询周期，而是在需要数据时检查是否过期、过期才重新拉取；确实要轮询的实现必须加抖动和退避。
+- D 对：`ttlMs` 是新鲜度提示，语义类似 HTTP 的 `Cache-Control: max-age`；变更通知（经 `subscriptions/listen` 订阅）是即时作废信号，二者互补。
+- E 错：`public` 只说明这份结果不含用户特定数据、可以被共享缓存；规范要求 Server 仍按原语逐一做访问控制，不能只靠 `cacheScope` 防止越权。
+
+另外，取消协议级会话之后，列表结果不再随会话变化，Host 派生多个子 Agent 时可以共用同一份缓存，`tools/list` 的调用量从「子 Agent 数 × Server 数」降到「Server 数」。
+
+<sub>考点：MCP服务端原语、MCP与Function Calling　｜　出处：MCP 规范 2026-07-28（Caching）：https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching ；SEP-2567：https://modelcontextprotocol.io/seps/2567-sessionless-mcp ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 判断题
+
+<a name="AGT-PROTO-005"></a>
+
+### AGT-PROTO-005　基础 · 考频 ★★
+
+按 MCP 的设计原则，Server 只能看到 Host 通过请求发给它的内容，既看不到完整的对话历史，也看不到同一个 Host 连接的其他 Server；需要跨 Server 组合能力时，由 Host（及其调用的模型）来编排。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。这是 MCP 架构中的隔离原则：每个 Client 只与一个 Server 通信，Server 之间相互隔离，完整的对话历史留在 Host，安全边界由 Host 把控。好处是：
+
+- 一个 Server 被攻破或行为异常，不能直接读到其他 Server 的数据和完整对话；
+- Host 可以在每次转发前做参数校验、权限检查和用户确认。
+
+需要「先查 CRM 再建工单」这类跨 Server 的组合时，由模型发出多次工具调用、Host 逐一转发完成。旧版规范允许 Server 通过 Sampling 请 Host 代为调用模型，但给模型带什么上下文由 Host 决定，用户也可以审核或拒绝；2026-07-28 版已将 Sampling 标为弃用，而这条隔离原则在新版中保持不变。
+
+<sub>考点：MCP架构　｜　出处：MCP 规范 2026-07-28（Architecture，Design Principles）：https://modelcontextprotocol.io/specification/2026-07-28/architecture ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-009"></a>
+
+### AGT-PROTO-009　进阶 · 考频 ★★
+
+只要客户端通过 Roots 告诉 MCP Server 可以操作的目录，Server 在技术上就无法访问这些目录之外的文件，因此对本地 Server 来说，Roots 可以替代沙箱。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。Roots 是一种「告知边界」的协调机制：客户端告诉 Server 应当在哪些目录或 URI 范围内工作（旧版由 Server 发出 `roots/list` 请求获取，2026-07-28 版改由多轮往返请求 MRTR 承载）。规范只建议（SHOULD）Server 遵守这些边界，它不是操作系统级的强制隔离。一个以用户身份运行的 stdio Server 若有漏洞或本身是恶意的，仍能读写用户有权限访问的任何文件。
+
+正确做法是两者结合：用 Roots 表达意图，让守规矩的 Server 自觉收敛范围；用容器、沙箱、只读挂载、受限账号和网络出口限制做真正的强制隔离。
+
+**新版变化（2026-07-28）**：Roots 已被标为弃用（SEP-2577），理由之一正是语义含糊：它只是参考信息，Server 不一定遵守。建议改为通过工具参数、资源 URI 或 Server 配置传递目录。换成这些方式，结论依然成立：告诉 Server 去哪里工作，不等于限制它能去哪里，强制隔离仍要靠沙箱。
+
+<sub>考点：MCP客户端原语　｜　出处：MCP 规范 2025-11-25（Roots）：https://modelcontextprotocol.io/specification/2025-11-25/client/roots ；2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-021"></a>
+
+### AGT-PROTO-021　基础 · 考频 ★★
+
+「Streamable HTTP 就是 SSE」：在这种传输下，服务端对每个 POST 请求都必须以 SSE 流的形式返回响应。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。SSE 只是 Streamable HTTP 中**可选**的流式响应方式。服务端处理一个 POST 请求时，可以直接返回一个 `application/json` 响应体；只有需要在给出结果之前推送与该请求相关的进度、日志等通知时，才把响应升级为 `text/event-stream`。如果客户端 POST 的是通知，服务端接受后直接返回 202 Accepted，没有响应体。
+
+这一设计让简单的远程 Server 可以完全无状态地实现，只有长任务才需要流式能力。2026-07-28 版中，唯一长期保持的 SSE 流来自 `subscriptions/listen` 请求的响应，用来推送客户端订阅的变更通知；旧版用于接收服务端消息的 GET 流，以及客户端 POST 回服务端的「响应」（答复服务端发来的请求），在新版中都已不存在。面试中把 MCP 的远程传输简单说成「SSE」，是常见的扣分点。
+
+<sub>考点：MCP传输方式　｜　出处：MCP 规范 2026-07-28（Streamable HTTP）：https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-026"></a>
+
+### AGT-PROTO-026　进阶 · 考频 ★★
+
+MCP Server 校验 Bearer 令牌时，确认签名有效、未过期就可以接受请求；令牌是颁发给哪个服务的（受众），由授权服务器在签发时把关，MCP Server 这一侧不必再校验。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。签名有效、未过期只能说明令牌确实由授权服务器签发、仍在有效期内，不能说明它是发给自己的。MCP 授权规范要求令牌**绑定受众**：客户端申请令牌时用资源指示参数（RFC 8707 的 resource 参数）指明目标 Server，授权服务器据此签发受众为该 Server 的令牌。但令牌签发之后被拿到哪里使用，授权服务器管不了（规范也提到，并非每个授权服务器都支持资源指示参数），所以规范要求 Server 自己校验：令牌的受众必须确实是自己，颁发给其他服务的令牌一律拒绝。
+
+否则，一个为「日历 Server」申请的令牌可能被拿来访问「邮件 Server」；恶意或被攻破的 Server 也可以把收到的令牌转用到别处。受众校验与「禁止令牌透传」是同一条原则的两面：令牌只在它被签发的那个边界内有效。
+
+<sub>考点：MCP鉴权　｜　出处：MCP 规范（Authorization）</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-028"></a>
+
+### AGT-PROTO-028　基础 · 考频 ★★
+
+不支持原生 Function Calling 的模型，同样可以使用 MCP Server 提供的工具：由 Host 把工具定义写进提示词、自己解析模型输出中的调用意图，再转成 MCP 的 `tools/call`。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。MCP 规范的是 Host 与工具服务之间如何发现和调用工具，模型本身并不感知 MCP。Host 拿到 `tools/list` 的结果后，可以转成原生 Function Calling 的工具定义，也可以用提示词约定输出格式（如 ReAct 或 JSON），自己解析出工具名和参数，再发 `tools/call`。后一种方式的可靠性通常不如原生 Function Calling，可以配合约束解码或输出校验来改善。
+
+这也说明「MCP 替代了 Function Calling」的说法不对：两者在不同的层，一个管模型怎么表达调用，一个管工具从哪来、怎么接。
+
+<sub>考点：MCP与Function Calling</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-038"></a>
+
+### AGT-PROTO-038　基础 · 考频 ★★
+
+A2A 的设计原则之一是「Agent 不透明」：协作双方不需要共享内部的记忆、工具和提示词，只通过任务、消息和产出物（Artifact）交互。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。A2A 承认 Agent 的自主性：远端 Agent 用什么模型、调什么工具、内部有几个子 Agent，调用方不知道也不需要知道，只能提需求、等结果、做验收。这与 MCP 中「工具是透明、可控的函数」形成对比，也是两者分工的根源。
+
+不透明带来的工程要求是：调用方要像对待外部服务一样对待远端 Agent，做好鉴权、超时与预算控制、产出校验和审计，把它交付的 Artifact 当作不可信输入。
+
+<sub>考点：A2A与MCP分工　｜　出处：A2A 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-048"></a>
+
+### AGT-PROTO-048　基础 · 考频 ★★★
+
+MCP 规范定义了大模型输出工具调用时使用的 JSON 格式，因此只要各家模型都接入 MCP，它们的 Function Calling 输出格式也就统一了。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。MCP 规定的是 Host（客户端）与 Server 之间的 JSON-RPC 消息，例如用 `tools/list` 获取工具定义、用 `tools/call` 发起调用；它不涉及模型如何输出工具调用。
+
+各家模型的 FC 格式至今各不相同：OpenAI Chat Completions 在 `tool_calls[i].function.arguments` 中返回 JSON **字符串**；Anthropic Messages 返回 `tool_use` 内容块，参数是 JSON **对象**；其他厂商也有各自的格式。Host 的职责是在两者之间翻译：把 MCP 工具的 `inputSchema` 转换成目标模型的工具定义，再把模型给出的调用转换成 `tools/call`。
+
+一句话：MCP 统一的是「工具怎么接入」，不是「模型怎么说话」。正因为与模型解耦，不支持原生 FC 的模型，也可以由 Host 通过提示词与解析来使用 MCP 工具。
+
+<sub>考点：MCP与Function Calling　｜　出处：MCP 规范（Tools）</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-052"></a>
+
+### AGT-PROTO-052　进阶 · 考频 ★★
+
+A2A 官方文档把两者的分工概括为：MCP 让单个 Agent 更「深」（接入工具与数据），A2A 让系统更「广」（跨团队、跨组织的 Agent 协作）；同时也指出，远端 Agent 的某些技能如果是无状态、输入输出明确的一问一答，也可以额外以 MCP 兼容的形式暴露，供其他 Agent 像使用工具一样调用。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。A2A 官方文档用「纵向」与「横向」来描述两者：MCP 定义 Agent 如何使用单个工具和资源（数据库、API），为单个 Agent 增加深度；A2A 让不同的 Agent 为共同目标协作，包括发现、协商、共享任务与交换上下文，为系统增加广度。
+
+文档同时说明，远端 A2A Agent 可以把一部分技能以 MCP 兼容的形式暴露，这最适合定义清楚、无状态、像工具一样的技能。A2A 真正的价值在于工具调用之外的东西：有状态、多轮、可能耗时很长的协作。
+
+判断标准可以记成：能写成「函数签名 + 立即返回」的，当工具用；需要追问、协商、长时间运行、分批交付产出的，走 A2A。
+
+<sub>考点：A2A与MCP分工　｜　出处：A2A 文档 A2A and MCP：https://a2a-protocol.org/latest/topics/a2a-and-mcp/</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-053"></a>
+
+### AGT-PROTO-053　进阶 · 考频 ★★★
+
+把几个少样本示例写进某个 Agent Skill 的 SKILL.md，与把它们直接写进系统提示词相比，每次请求的 token 开销相同：按 Agent Skills 规范，SKILL.md 的正文会在会话开始时随系统提示词一起加载进上下文。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。按规范，技能采用**渐进式披露**：启动时只加载各个技能的 name 和 description（约 100 token）；模型判断任务相关时，才加载 SKILL.md 正文（规范建议控制在 5000 token 以内）；正文引用的文件用到才读。所以与任务无关时，技能正文几乎不花 token；系统提示词中的示例则每次请求都在上下文里。
+
+两者的区别也不止于 token 成本：
+
+1. **内容形态**：少样本只是示例；技能可以包含步骤说明、模板、参考文档和可执行脚本，脚本运行时通常只有输出进入上下文。
+2. **触发机制**：技能要靠模型根据 description 判断是否启用，描述写得不好就可能不触发；系统提示词中的示例则无条件影响每一次回答，甚至会把无关任务也带偏。
+3. **运行环境**：技能要由 Harness 负责发现和加载（让模型读文件，或提供专门的激活工具），附带的脚本还需要代码执行环境，这是 Harness 提供的能力，而不是单纯的提示技巧。
+
+所以，适用于所有请求的少量规则和示例留在系统提示词里；只在某类任务中才需要的流程与示例，做成技能更合适。
+
+<sub>考点：Agent Skills　｜　出处：Agent Skills 规范：https://agentskills.io/specification ；Agent Skills 接入指南：https://agentskills.io/integrate-skills ；Claude Code 文档 Skills：https://code.claude.com/docs/en/skills</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-065"></a>
+
+### AGT-PROTO-065　进阶 · 考频 ★★
+
+按 MCP 2026-07-28 版规范，Server 处理 `tools/call` 时如需用户通过表单补充信息，会返回 `resultType` 为 `input_required` 的中间结果，原请求随之结束；客户端收集答案后，用新的请求 id 重发原请求并附上 `inputResponses`。这次重试可以由负载均衡后的任意一个 Server 实例处理，因为继续执行所需的信息都在重试请求里：原始参数、`inputResponses`，以及原样回传的 `requestState`。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。这正是多轮往返请求（MRTR，SEP-2322）的设计目的：Server 需要更多输入时也不必保存挂起状态。
+
+1. 客户端发出 `tools/call`（id: 1）；
+2. Server 发现缺少信息，返回 `resultType: "input_required"`，在 `inputRequests` 中列出需要的 `elicitation/create` 等请求，并可把已有的处理上下文编码进不透明的 `requestState`；原请求到此结束；
+3. 客户端向用户收集答案，用新的 id（id: 2）重发原请求，带上 `inputResponses` 和原样回传的 `requestState`；
+4. 任意实例都能据此恢复上下文、完成执行，必要时还可以再次返回 `input_required`。
+
+**与旧版的区别**：2025-11-25 及更早，Server 在处理中途主动向客户端发出 `elicitation/create`、`sampling/createMessage` 等请求，必须保持 SSE 流，并在本实例中挂起原调用等待回复，多实例部署离不开粘性路由或共享存储。
+
+**安全要点**：`requestState` 经过客户端之手，规范要求 Server 把它当作攻击者可控的输入：影响授权或业务逻辑时必须做完整性保护（如 HMAC、AEAD），并建议在其中绑定调用者身份、较短的有效期和原请求摘要，防止跨用户、跨请求重放。客户端则不得解析或修改它。
+
+<sub>考点：MCP客户端原语、JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（Multi Round-Trip Requests）：https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-072"></a>
+
+### AGT-PROTO-072　基础 · 考频 ★★
+
+按 MCP 2026-07-28 版规范，客户端一旦用 `subscriptions/listen` 打开了通知流，Server 就会把所有请求的进度通知和日志通知统一推送到这条流上，客户端无需再从各个请求自己的响应流上接收。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。2026-07-28 版把通知分成两类，走不同的通道：
+
+- **与某个请求相关的通知**：如 `notifications/progress`（进度）、`notifications/message`（日志），只在该请求自己的响应流上发送（HTTP 下就是这次 POST 的 SSE 响应流），且只能出现在最终响应之前；Server 不得把它们发到 `subscriptions/listen` 流上。
+- **长期的变更通知**：如 `notifications/tools/list_changed`、`notifications/resources/updated`，由 `subscriptions/listen` 的响应流推送。客户端在请求中按类型订阅（`toolsListChanged`、`resourceSubscriptions` 等），Server 先回一条确认消息，列出它同意支持的类型；之后的每条通知都在 `_meta` 中带 `io.modelcontextprotocol/subscriptionId`（取值为该 `subscriptions/listen` 请求的 id），客户端可以同时开多个订阅并据此区分。
+
+`subscriptions/listen` 取代了旧版的 HTTP GET 端点和 `resources/subscribe` / `resources/unsubscribe`。另外，只有请求的 `_meta` 中带了 `io.modelcontextprotocol/logLevel`，Server 才会为它发送日志通知，旧版的 `logging/setLevel` 已被移除。
+
+<sub>考点：MCP传输方式、JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（Subscriptions、Streamable HTTP）：https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 填空题
+
+<a name="AGT-PROTO-013"></a>
+
+### AGT-PROTO-013　基础 · 考频 ★★
+
+JSON-RPC 2.0 中，一条带有 `method` 但没有 `id` 的消息是一条 ____，接收方 ____（填「需要」或「不需要」）回复。客户端调用了服务端没有实现的方法，服务端应返回错误码 ____；收到的内容根本不是合法的 JSON 时，错误码为 ____。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) 通知 / notification；(2) 不需要；(3) -32601；(4) -32700
+
+**解析：**
+
+JSON-RPC 2.0 只有三种消息：
+
+- **请求**：有 id 和 method，必须回复；
+- **响应**：与请求同 id，带 result 或 error（二者只能有其一）；
+- **通知**：有 method、没有 id，接收方不回复。MCP 中的 `notifications/progress`、`notifications/tools/list_changed`、`notifications/cancelled` 都是通知。
+
+常见标准错误码：-32700 解析错误（Parse error）、-32600 无效请求、-32601 方法不存在（Method not found）、-32602 参数无效（Invalid params）、-32603 内部错误。例如 Server 没有实现 prompts，客户端却调用 `prompts/list`，通常会得到 -32601（2026-07-28 版的 Streamable HTTP 下还要同时返回 HTTP 404）。另外，2026-07-28 版把「资源不存在」的错误码从 -32002 改成了 -32602，与 JSON-RPC 的「参数无效」对齐。
+
+<sub>考点：JSON-RPC生命周期　｜　出处：JSON-RPC 2.0 规范；MCP 规范 2026-07-28（Base Protocol）：https://modelcontextprotocol.io/specification/2026-07-28/basic ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-022"></a>
+
+### AGT-PROTO-022　进阶 · 考频 ★★
+
+按 MCP 2025-11-25 版规范，Streamable HTTP 传输中，服务端在初始化响应里通过 HTTP 头 ____ 返回会话 ID，客户端之后的请求都要带上它；基于 OAuth 2.1 的授权码流程必须配合 ____ 使用，以防授权码被截获后被冒用；访问令牌放在 ____ 请求头中以 Bearer 方式携带，不能放进 URL 查询串。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) Mcp-Session-Id / mcp-session-id / MCP-Session-Id；(2) PKCE；(3) Authorization
+
+**解析：**
+
+1. **Mcp-Session-Id**：会话标识。服务端可以让会话过期，客户端收到 404 后应重新发起 initialize。会话 ID 应当全局唯一、用密码学安全的方式生成（不可猜），并且**不能当作身份凭证**。
+2. **PKCE**（Proof Key for Code Exchange）：客户端生成随机的 code_verifier，把它的哈希 code_challenge 随授权请求发出，用授权码换令牌时再出示原值。即使授权码在重定向过程中被截获，攻击者没有 code_verifier 也换不到令牌。OAuth 2.1 要求授权码流程一律使用 PKCE。
+3. **Authorization**：每个 HTTP 请求都在 `Authorization: Bearer <token>` 中携带令牌；放在查询串里会出现在服务器日志、浏览器历史和代理记录中，容易泄露。
+
+**新版变化（2026-07-28）**：协议级会话与 `Mcp-Session-Id` 被移除（SEP-2567），只支持新版的 Server 收到这个头时应直接忽略，也不再签发会话 ID。需要跨调用保存的状态，改由 Server 签发显式句柄（如 `basket_id`），作为普通工具参数在后续调用中传回，并且每次调用都要校验调用者有权使用该句柄。新版的 POST 请求改为必须携带 `MCP-Protocol-Version`、`Mcp-Method` 以及（工具调用等请求的）`Mcp-Name` 请求头。后两空（PKCE、Authorization）在新版中不变。
+
+<sub>考点：MCP传输方式、MCP鉴权　｜　出处：MCP 规范 2025-11-25（Transports、Authorization）：https://modelcontextprotocol.io/specification/2025-11-25/basic/transports ；2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-033"></a>
+
+### AGT-PROTO-033　基础 · 考频 ★★
+
+A2A 中，调用方主动取消任务后，Task 进入 ____ 状态；远端 Agent 决定不接这件事时，Task 进入 ____ 状态；远端缺少必要信息、等待调用方补充时，Task 处于 ____ 状态。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) canceled / cancelled / TASK_STATE_CANCELED；(2) rejected / TASK_STATE_REJECTED；(3) input-required / TASK_STATE_INPUT_REQUIRED
+
+**解析：**
+
+A2A 的 Task 状态可以分三类：
+
+- **进行中**：submitted（已提交）、working（处理中）；
+- **中断态**：input-required（等调用方补充信息）、auth-required（等调用方完成授权），补充或授权后回到 working；
+- **终态**：completed、failed、canceled、rejected，到达后不能再改变；要继续就新建任务，可以沿用同一个 contextId。
+
+rejected 与 failed 的区别：rejected 表示远端决定不做这件事（可能在接单时，也可能在评估之后）；failed 表示执行过程中出了错。
+
+写法随版本不同：A2A 1.0 以 Protocol Buffers 定义为准，JSON 中的枚举按 ProtoJSON 写成 `TASK_STATE_CANCELED`、`TASK_STATE_REJECTED`、`TASK_STATE_INPUT_REQUIRED`；0.x 版本写作 `canceled`、`rejected`、`input-required`。两种写法都算对。
+
+<sub>考点：A2A任务生命周期　｜　出处：A2A 规范 1.0（TaskState 与 JSON 枚举序列化）：https://a2a-protocol.org/latest/specification/</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-066"></a>
+
+### AGT-PROTO-066　进阶 · 考频 ★★
+
+MCP 2026-07-28 版取消了初始化握手，每个请求都在 `_meta` 中声明自己使用的协议版本。Server 不支持该版本时，返回 ____ 错误，并在错误数据中列出自己支持的版本，客户端据此换一个双方都支持的版本重试。同时支持新旧两代协议的客户端，在 stdio 上应先发送 ____ 请求探测对端：收到正常结果或上述错误，说明对端是新版 Server；收到其他错误或等待超时，则回退到旧版的 ____ 握手。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) UnsupportedProtocolVersionError / UnsupportedProtocolVersion / -32022；(2) server/discover；(3) initialize
+
+**解析：**
+
+1. **UnsupportedProtocolVersionError**（错误码 -32022）：`data.supported` 列出 Server 支持的版本，`data.requested` 回显客户端请求的版本；HTTP 下同时返回 400。版本协商因此变成逐请求进行，不再是旧版「Server 回一个版本、客户端不支持就断开」。
+2. **server/discover**：Server 必须实现它，用来一次性公布支持的协议版本、能力和身份，结果可以缓存。客户端不一定要先调用它，也可以直接发请求、遇到版本错误再重试；但 stdio 上没有 HTTP 状态码可依据，兼容两代的客户端应先用它探测。
+3. **initialize**：旧版（2025-11-25 及更早）Server 不认识 `server/discover`，会返回各自实现的错误（常见 -32601 或 -32602）或干脆不回应，所以回退条件不能绑定某个特定错误码。探测结果是 Server 的属性，客户端应在该进程（stdio）或该源站（HTTP）的生命周期内缓存。
+
+反过来，只会 `initialize` 的旧客户端连到只支持新版的 Server 会直接失败，它没有「向前升级」的机制，所以这类 Server 应在拒绝 `initialize` 的错误信息里写明自己支持的版本。在 HTTP 上，兼容两代的客户端先发新版请求，收到 400 后检查响应体：是新版定义的错误就按提示重试，否则回退到 `initialize`。
+
+<sub>考点：JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（Versioning、Discovery、stdio）：https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 计算题
+
+<a name="AGT-PROTO-002"></a>
+
+### AGT-PROTO-002　基础 · 考频 ★★
+
+某公司有 6 个 AI 应用（IDE 插件、客服助手、数据分析 Agent 等），需要接入 15 个内部系统（工单、CRM、数据仓库等）。
+
+1. 没有统一协议时，每个应用都要为每个系统单独写一份集成，共需多少份？
+2. 全部改用 MCP 后，需要实现多少个组件（应用侧 Client 与系统侧 Server 合计）？
+3. 之后再新增 1 个内部系统，两种方式各需新增多少份集成？
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：(1) 90 份；(2) 21 个（6 个 Client + 15 个 Server）；(3) 无统一协议时新增 6 份，用 MCP 只需新增 1 个 Server**
+
+**解析：**
+
+1. 无统一协议：每一对「应用 × 系统」都要写集成，$6\times15=90$ 份。
+2. 有 MCP：每个应用实现一次 MCP Client，每个系统实现一次 MCP Server，$6+15=21$ 个。
+3. 新增一个系统：无协议时 6 个应用各写一份，共 6 份；有 MCP 时只写 1 个 Server，所有支持 MCP 的应用立刻可用。同理，新增一个应用只需实现一次 Client，就能用上全部 15 个系统。
+
+这就是 MCP 的核心价值：把 $O(M\times N)$ 的集成量降到 $O(M+N)$，并让工具由维护它的团队独立升级。注意这里的「实现一次 Client」指应用侧具备 MCP 客户端能力；运行时 Host 会为每个连接的 Server 各创建一个 Client 实例，两者并不矛盾。
+
+<sub>考点：MCP动机</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-040"></a>
+
+### AGT-PROTO-040　进阶 · 考频 ★★
+
+某 Agent 安装了 40 个技能。每个技能的元数据（name + description）平均 80 token，SKILL.md 正文平均 2,000 token，附带的参考文档与脚本源码合计平均 6,000 token。一次报销任务中：
+
+- 模型判断有 2 个技能相关，读取了它们的 SKILL.md 正文；
+- 其中一个技能的正文要求再读 1 份 1,500 token 的参考文档，并运行一个脚本（源码 900 token，输出 120 token）。
+
+分别计算「渐进式披露」与「把所有技能文件全部预加载进上下文」两种方式下，本次任务中与技能相关的上下文 token 数（两种方式下脚本输出都要进入上下文），并说明结论。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：渐进式披露 8,820 token；全部预加载 323,320 token，约为前者的 37 倍，已超过常见的 200K 窗口**
+
+**解析：**
+
+**渐进式披露**（三层按需加载）：
+1. 元数据常驻：$40\times80=3{,}200$；
+2. 读取 2 个技能的正文：$2\times2{,}000=4{,}000$；
+3. 按需读参考文档 1,500；运行脚本时源码不进上下文，只有输出 120 进入。
+
+合计 $3{,}200+4{,}000+1{,}500+120=8{,}820$ token。
+
+**全部预加载**：每个技能 $80+2{,}000+6{,}000=8{,}080$ token，40 个共 $323{,}200$，再加脚本输出 120，合计 $323{,}320$ token。
+
+**结论**：$323{,}320/8{,}820\approx36.7$，渐进式只占全部预加载的约 2.7%；而全部预加载已经超过常见的 200K 窗口，根本放不下。渐进式披露让「装很多技能」与「上下文开销」基本解耦，开销主要随**实际用到的**技能增长。
+
+但元数据层仍随技能总数线性增长：装到几百个技能时，光描述就可能上万 token，这时需要对技能本身做检索或分组。
+
+<sub>考点：Agent Skills</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-044"></a>
+
+### AGT-PROTO-044　挑战 · 考频 ★★
+
+任务「客户 C42 有几笔退款中的订单，共多少钱」：
+
+- 两种方式的固定前缀（系统提示词 + API 说明 + 用户问题）都是 2,000 token；
+- **逐次调用**：第 1 轮模型发出 list_orders 调用（30 token），返回订单号列表 100 token；第 2 轮模型并行发出 $n$ 个 get_order 调用（每个 30 token），每份订单详情返回 800 token；第 3 轮模型给出答案；
+- **Code Mode**：第 1 轮模型写出一段代码（150 token），代码在沙箱中调用全部工具并聚合，打印结果 20 token；第 2 轮模型给出答案。
+
+「累计输入」定义为每次调用模型时输入上下文 token 数之和。分别计算 $n=10$ 和 $n=100$ 时两种方式的累计输入，并说明节省比例如何随 $n$ 变化。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：n = 10：逐次调用 14,560 token，Code Mode 4,170 token，省约 71%；n = 100：逐次调用 89,260 token，Code Mode 仍为 4,170 token，省约 95%**
+
+**解析：**
+
+**逐次调用**（3 次模型调用）：
+- 第 1 次输入：2,000；
+- 第 2 次输入：$2{,}000+30+100=2{,}130$；
+- 第 3 次输入：$2{,}130+n\times(30+800)=2{,}130+830n$。
+
+累计 $=2{,}000+2{,}130+2{,}130+830n=6{,}260+830n$。$n=10$ 时为 $14{,}560$；$n=100$ 时为 $89{,}260$。
+
+**Code Mode**（2 次模型调用）：
+- 第 1 次输入：2,000；
+- 第 2 次输入：$2{,}000+150+20=2{,}170$。
+
+累计 $4{,}170$，与 $n$ 无关。
+
+**节省比例**：$n=10$ 时 $1-4{,}170/14{,}560\approx71\%$；$n=100$ 时 $1-4{,}170/89{,}260\approx95\%$。
+
+逐次调用的累计输入随 $n$ 线性增长；如果任务还有更多轮，中间结果会在每一轮被重复计入，增长更快。Code Mode 只回传汇总结果，开销基本不随数据量增长。所以它适合「调用多、中间数据大、需要循环聚合」的任务；只调一两次工具时，写代码反而多一轮，不一定划算。
+
+<sub>考点：Code Mode</sub>
+
+</details>
+
+---
+
+## 代码输出题
+
+<a name="AGT-PROTO-014"></a>
+
+### AGT-PROTO-014　进阶 · 考频 ★★
+
+下面的代码模拟 MCP 客户端（2026-07-28 版）的读循环：客户端此前发出了三个 `tools/call` 请求（id 为 1、2、3），随后从服务端依次读到 4 条消息。程序的输出是什么？
+
+```python
+import json
+
+sent = {1: "search", 2: "export", 3: "refund"}    # 已发出、尚未收到响应的请求：id -> 工具名
+inbox = [
+    '{"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":"p2","progress":50}}',
+    '{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","content":[],"isError":true}}',
+    '{"jsonrpc":"2.0","id":3,"result":{"resultType":"input_required","inputRequests":{"confirm":{"method":"elicitation/create","params":{"message":"Refund?"}}}}}',
+    '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Unknown tool"}}',
+]
+for raw in inbox:
+    m = json.loads(raw)
+    if "method" in m:
+        print("notification:", m["method"])
+    elif "error" in m:
+        print(sent.pop(m["id"]), "protocol error", m["error"]["code"])
+    elif m["result"].get("resultType", "complete") == "input_required":
+        print(sent.pop(m["id"]), "needs input:", list(m["result"]["inputRequests"]))
+    else:
+        kind = "tool error" if m["result"].get("isError") else "ok"
+        print(sent.pop(m["id"]), kind)
+print(sent)
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+notification: notifications/progress
+export tool error
+refund needs input: ['confirm']
+search protocol error -32602
+{}
+```
+
+**解析：**
+
+逐条分析：
+
+1. 有 method、无 id → **通知**（进度通知），不需要回复；
+2. 无 method、有 result → **响应**，按 id=2 匹配到 export。响应可以乱序到达，必须靠 id 而不是到达顺序来匹配。`isError: true` 表示**工具执行失败**（如下游 API 出错），这仍是一个正常的响应，内容应回填给模型，让它决定重试或换方案；
+3. `resultType` 为 `input_required` → **多轮往返请求（MRTR）的中间结果**：Server 需要用户确认（`inputRequests` 中的 `elicitation/create`）。原请求 id=3 到此已经结束，所以同样从 `sent` 中删除；客户端向用户收集答案后，要用**新的** id 重发原请求，并附上 `inputResponses`（以及 Server 给出的 `requestState`）；
+4. 带 error 的响应 → **协议错误**，-32602 表示参数无效，这里是工具名不存在。
+
+三个请求都已收到响应，最后 `sent` 为空字典 `{}`。
+
+要点：协议错误走 JSON-RPC 的 error，通常由 Host 处理；执行错误放在 result 里用 isError 标记，模型能看到并据此修正；`resultType` 决定如何解析 result，缺失时按 `"complete"` 处理，以兼容旧版 Server。2026-07-28 版中 Server 不再向客户端发送请求（旧版可能夹带 `sampling/createMessage` 这类「既有 method 又有 id」的反向请求），需要客户端补充信息时一律通过 `input_required` 结果表达；但客户端的读循环仍要能处理等待响应期间插进来的通知。
+
+<sub>考点：JSON-RPC生命周期、MCP服务端原语　｜　出处：MCP 规范 2026-07-28（Multi Round-Trip Requests）：https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 代码填空题
+
+<a name="AGT-PROTO-029"></a>
+
+### AGT-PROTO-029　进阶 · 考频 ★★
+
+Host 通过 MCP 从多个 Server 拿到工具列表后，要转换成 OpenAI 风格的工具定义交给模型，并在工具名前加上 Server 名作为命名空间，防止不同 Server 的工具重名；模型返回调用后，再从函数名还原出 Server 名和工具名。Server 名由 Host 分配，保证不含双下划线；工具名来自第三方，可能包含双下划线。补全两处空白。
+
+```python
+def to_openai_tools(server, mcp_tools):
+    return [{"type": "function",
+             "function": {"name": f"{server}__{t['name']}",
+                          "description": t.get("description", ""),
+                          "parameters": t[____]}}
+            for t in mcp_tools]
+
+def route(func_name):
+    server, tool = func_name.____("__", 1)
+    return server, tool
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) `"inputSchema"`；(2) `split`
+
+**解析：**
+
+1. MCP 工具定义中描述参数的字段叫 `inputSchema`（一个 JSON Schema），OpenAI 函数定义中对应的字段是 `parameters`，内容基本可以直接搬过去（开启严格模式时还要按要求改写，如字段全部列入 required、禁止多余字段）。
+2. 还原时用 `split("__", 1)`：只在**第一个**分隔符处切开。Server 名不含 `__`，而工具名可能含 `__`（如 `read__file`）。如果用 `rsplit`，会把 `fs__read__file` 切成 `("fs__read", "file")`。
+
+这一步也是 Host 做权限检查的位置：先根据 Server 名和工具名查授权策略、校验参数，再向对应的 Server 发送 `tools/call`。加前缀时还要注意各家对函数名的字符和长度限制（如 OpenAI 只允许字母、数字、下划线和连字符，最长 64 个字符）。
+
+<sub>考点：MCP与Function Calling</sub>
+
+</details>
+
+---
+
+## 代码改错题
+
+<a name="AGT-PROTO-018"></a>
+
+### AGT-PROTO-018　挑战 · 考频 ★★
+
+下面是一个最小 MCP stdio 服务端的消息循环（参数 `stdout` 就是连接 Host 的标准输出管道；为简洁起见，没有校验请求中的 `_meta`）。接入 Host 后，客户端频繁报 JSON 解析错误，连最简单的 `server/discover` 都失败。请找出代码中违反 stdio 传输约定的地方（共两处），说明原因并修正。
+
+```python
+import json
+import sys
+
+DISCOVER = {"resultType": "complete", "supportedVersions": ["2026-07-28"],
+            "capabilities": {}, "ttlMs": 3600000, "cacheScope": "public"}
+
+def serve(stdin, stdout):
+    for line in stdin:
+        msg = json.loads(line)
+        print(f"[debug] got {msg.get('method')}")
+        if "id" not in msg:                     # 通知：不回复
+            continue
+        if msg["method"] == "server/discover":
+            reply = {"jsonrpc": "2.0", "id": msg["id"], "result": DISCOVER}
+        else:
+            reply = {"jsonrpc": "2.0", "id": msg["id"],
+                     "error": {"code": -32601, "message": "Method not found"}}
+        stdout.write(json.dumps(reply, indent=2) + "\n")
+        stdout.flush()
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题 1（第 10 行）**：`print` 默认写到标准输出。stdio 传输中，标准输出就是协议通道，只能出现合法的 MCP 消息；调试日志混进去，客户端按行解析 JSON 就会失败。日志一律写到 stderr：
+
+```python
+print(f"[debug] got {msg.get('method')}", file=sys.stderr)
+```
+
+**问题 2（第 18 行）**：`json.dumps(reply, indent=2)` 会生成多行文本。stdio 传输以换行分隔消息，每条消息必须占一行、内部不能有换行。去掉 `indent`：
+
+```python
+stdout.write(json.dumps(reply) + "\n")
+```
+
+**修正后的代码：**
+
+```python
+import json
+import sys
+
+DISCOVER = {"resultType": "complete", "supportedVersions": ["2026-07-28"],
+            "capabilities": {}, "ttlMs": 3600000, "cacheScope": "public"}
+
+def serve(stdin, stdout):
+    for line in stdin:
+        msg = json.loads(line)
+        print(f"[debug] got {msg.get('method')}", file=sys.stderr)
+        if "id" not in msg:                     # 通知：不回复
+            continue
+        if msg["method"] == "server/discover":
+            reply = {"jsonrpc": "2.0", "id": msg["id"], "result": DISCOVER}
+        else:
+            reply = {"jsonrpc": "2.0", "id": msg["id"],
+                     "error": {"code": -32601, "message": "Method not found"}}
+        stdout.write(json.dumps(reply) + "\n")
+        stdout.flush()
+```
+
+**解析：**
+
+stdio 传输的约定：Client 以子进程方式启动 Server，双方通过 stdin、stdout 交换**按行分隔**的 JSON-RPC 消息；stdout 上不能出现任何非协议内容，日志写 stderr（客户端可以收集或忽略）。这两条约定在 2025-11-25 与 2026-07-28 版中完全一致。
+
+这两类错误都很隐蔽：单独运行 Server 时看起来一切正常，一接进 Host 就报解析错误。工程上还要注意：
+
+- 客户端要持续读走 stderr，否则日志写满管道缓冲区后，Server 会阻塞在写日志上，表现为「莫名卡死」；
+- Windows 下管道最好用二进制模式读写，并显式按 UTF-8 编解码，避免本地编码导致中文乱码；
+- 消息里的字符串若含换行，`json.dumps` 会把它转义成 `\n` 两个字符，不会破坏「一行一条消息」的约定。
+
+版本背景：2026-07-28 版要求 Server 必须实现 `server/discover`（旧版用来探活的 `ping` 已被移除），它的结果与 `tools/list` 等列表结果一样要带 `ttlMs`、`cacheScope` 缓存提示；Server 也不能再往 stdout 写 JSON-RPC 请求，向客户端要信息改用多轮往返请求（MRTR）。协议内的 Logging 已被弃用，规范建议 stdio Server 直接把日志写到 stderr。
+
+<sub>考点：MCP传输方式、JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（stdio）：https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-071"></a>
+
+### AGT-PROTO-071　挑战 · 考频 ★★
+
+下面是一个 MCP 客户端（2026-07-28 版）处理多轮往返请求（MRTR）的函数：调用工具，若 Server 返回 `input_required`，就按 `inputRequests` 收集信息并重试原请求，最多 `max_rounds` 轮。为简洁起见，请求省略了 `_meta`；`send` 发出一个 JSON-RPC 请求并返回其 `result`，`answer` 根据 `inputRequests` 生成 `inputResponses`。
+
+接入一个部署在负载均衡后面的 Server 后，凡是需要用户确认的工具调用都无法完成。请找出两处违反 MRTR 规则的错误，说明原因并修正。
+
+```python
+import itertools
+
+_ids = itertools.count(1)
+
+def call_tool(send, name, args, answer, max_rounds=3):
+    params = {"name": name, "arguments": args}
+    req_id = next(_ids)
+    for _ in range(max_rounds):
+        result = send({"jsonrpc": "2.0", "id": req_id, "method": "tools/call", "params": params})
+        if result.get("resultType", "complete") != "input_required":
+            return result
+        params = {"name": name, "arguments": args,
+                  "inputResponses": answer(result.get("inputRequests", {}))}
+    raise RuntimeError("还需要更多输入，已达到最大轮数")
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题 1（第 7、9 行）**：请求 id 只在循环外生成一次，重试时沿用了原请求的 id。MRTR 中，收到 `input_required` 时原请求就已结束，重试是一个独立的新请求，规范要求它的 JSON-RPC id 必须与原请求不同。删去第 7 行，改为每次发送时生成新 id：
+
+```python
+result = send({"jsonrpc": "2.0", "id": next(_ids), "method": "tools/call", "params": params})
+```
+
+**问题 2（第 12～13 行）**：没有把 Server 返回的 `requestState` 带回去。Server 可以把继续处理所需的上下文编码在 `requestState` 里，这样负载均衡后的任何实例都能处理重试。结果中含有它时，客户端必须在重试中原样回传，不得解析或修改；结果中没有它时，重试也不能自行添加。在构造 `params` 之后补上：
+
+```python
+if "requestState" in result:
+    params["requestState"] = result["requestState"]
+```
+
+**修正后的代码：**
+
+```python
+import itertools
+
+_ids = itertools.count(1)
+
+def call_tool(send, name, args, answer, max_rounds=3):
+    params = {"name": name, "arguments": args}
+    for _ in range(max_rounds):
+        result = send({"jsonrpc": "2.0", "id": next(_ids), "method": "tools/call", "params": params})
+        if result.get("resultType", "complete") != "input_required":
+            return result
+        params = {"name": name, "arguments": args,
+                  "inputResponses": answer(result.get("inputRequests", {}))}
+        if "requestState" in result:
+            params["requestState"] = result["requestState"]
+    raise RuntimeError("还需要更多输入，已达到最大轮数")
+```
+
+**解析：**
+
+MRTR 对客户端的要求可以归纳为四条：
+
+1. 收到带 `inputRequests` 的 `input_required` 结果时，先收集齐所需信息再重试；
+2. 原样回传 `requestState`；
+3. 重试使用新的请求 id；
+4. `inputResponses` 与 `requestState` 只用于对原请求的这次重试，不能挪用到并行发出的其他请求上。
+
+代码中的另外两个细节也值得注意：`resultType` 缺失时按 `"complete"` 处理，以兼容旧版 Server；设置最大轮数，因为 Server 可能连续多次返回 `input_required`（例如用户提交的信息仍不完整），不能无限循环。
+
+对比旧版：2025-11-25 及更早，Server 在处理中途主动发来 `elicitation/create` 请求，客户端一边答复这个反向请求，一边在原 id 上等待最终结果，读循环必须能处理「既有 method 又有 id」的消息。MRTR 把这种交互变成了普通的「请求—结果—重试」，客户端不再需要处理来自 Server 的请求，Server 也不必挂起状态。
+
+<sub>考点：MCP客户端原语、JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（Multi Round-Trip Requests）：https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 编程题
+
+<a name="AGT-PROTO-035"></a>
+
+### AGT-PROTO-035　进阶 · 考频 ★★
+
+实现 A2A 任务状态历史的合法性校验：
+
+```python
+def first_illegal(states: list[str]) -> int: ...
+```
+
+- `states` 是一个任务依次经历的状态；
+- 第一个状态必须是 `submitted`，否则返回 0；`states` 为空时也返回 0；
+- 按下面的简化迁移表检查每一步 `states[i-1] → states[i]`，返回第一个非法迁移的下标 `i`；全部合法返回 -1；
+- 出现表中没有的状态名，视为非法迁移。
+
+| 当前状态 | 允许迁移到 |
+|---|---|
+| submitted | working、rejected、canceled、failed |
+| working | working、input-required、auth-required、completed、failed、canceled |
+| input-required | working、canceled、failed |
+| auth-required | working、canceled、failed |
+| completed、failed、canceled、rejected（终态） | 无 |
+
+<details>
+<summary>答案与解析</summary>
+
+**参考实现：**
+
+```python
+TERMINAL = {"completed", "failed", "canceled", "rejected"}
+NEXT = {
+    "submitted": {"working", "rejected", "canceled", "failed"},
+    "working": {"working", "input-required", "auth-required",
+                "completed", "failed", "canceled"},
+    "input-required": {"working", "canceled", "failed"},
+    "auth-required": {"working", "canceled", "failed"},
+}
+
+def first_illegal(states):
+    if not states or states[0] != "submitted":
+        return 0
+    for i in range(1, len(states)):
+        prev, cur = states[i - 1], states[i]
+        if prev in TERMINAL or cur not in NEXT.get(prev, set()):
+            return i
+    return -1
+```
+
+**测试用例：**
+
+```python
+ok = ["submitted", "working", "input-required", "working", "working", "completed"]
+assert first_illegal(ok) == -1
+assert first_illegal(["submitted"]) == -1
+assert first_illegal([]) == 0
+assert first_illegal(["working", "completed"]) == 0
+assert first_illegal(["submitted", "working", "completed", "working"]) == 3   # 终态不能再变
+assert first_illegal(["submitted", "completed"]) == 1                        # 没处理就完成
+assert first_illegal(["submitted", "working", "input-required", "completed"]) == 3
+assert first_illegal(["submitted", "working", "paused"]) == 2                # 未知状态
+assert first_illegal(["submitted", "rejected"]) == -1
+assert first_illegal(["submitted", "working", "auth-required", "canceled"]) == -1
+assert first_illegal(["submitted", "canceled", "canceled"]) == 2             # 终态到自身也非法
+```
+
+**解析：**
+
+**思路**：用字典描述「当前状态 → 允许的下一状态集合」，逐对检查相邻状态。终态不在 `NEXT` 的键里，`NEXT.get(prev, set())` 返回空集，之后的任何迁移都会被判非法；未知的当前状态同理。
+
+**要点**：
+- 终态之后不允许任何迁移，包括「迁移到自己」（`canceled → canceled`）；
+- input-required 不能直接跳到 completed：调用方补充信息后要先回到 working；
+- working → working 是合法的，长任务可以多次报告进度。
+
+**复杂度**：时间 $O(n)$，空间 $O(1)$。
+
+实际系统中，这个检查放在状态更新的唯一入口（如 `move()` 方法）里，非法迁移直接抛异常；每次合法迁移再触发推送通知并记审计日志。注意：这张迁移表是为题目简化的模型，A2A 规范定义了各状态的含义，具体实现的迁移规则可能更宽松。
+
+<sub>考点：A2A任务生命周期</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-054"></a>
+
+### AGT-PROTO-054　进阶 · 考频 ★★
+
+平台在技能入库前要做格式检查。按 Agent Skills 规范实现 SKILL.md 校验：
+
+```python
+def check_skill(dirname: str, text: str) -> list[str]: ...
+```
+
+`dirname` 是技能所在目录名，`text` 是 SKILL.md 的全文。规则如下：
+
+- 第一行必须是 `---`，之后必须还有一行 `---` 将 frontmatter 闭合，否则只返回 `["no_frontmatter"]`。
+- frontmatter 中每个顶层字段占一行，格式为 `key: value`（value 去掉首尾空白；若被一对相同的单引号或双引号包住，去掉引号）。以空格或制表符开头的行属于上一个字段的嵌套内容，直接忽略。
+- `name`：缺失或为空 → `name_missing`；否则长度超过 64、或不是「小写字母与数字组成的若干段、段与段之间用单个连字符连接」（即不能以连字符开头或结尾，不能有连续连字符）→ `name_invalid`；与 `dirname` 不同 → `name_mismatch`（可与 `name_invalid` 同时出现）。
+- `description`：缺失或为空 → `description_missing`；超过 1024 个字符 → `description_too_long`。
+- `compatibility` 可选；出现时长度必须在 1～500 之间，否则 → `compatibility_invalid`。
+
+按 name、description、compatibility 的顺序返回全部错误码，没有错误时返回空列表。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考实现：**
+
+```python
+import re
+
+NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+
+
+def check_skill(dirname, text):
+    lines = text.split("\n")
+    if lines[0].strip() != "---":
+        return ["no_frontmatter"]
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    if end is None:
+        return ["no_frontmatter"]
+    fm = {}
+    for line in lines[1:end]:
+        if not line.strip() or line[0] in " \t" or ":" not in line:
+            continue                       # 跳过空行与缩进的嵌套内容
+        key, val = line.split(":", 1)
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "'\"":
+            val = val[1:-1]
+        fm[key.strip()] = val
+    errs = []
+    name = fm.get("name", "")
+    if not name:
+        errs.append("name_missing")
+    else:
+        if len(name) > 64 or not NAME_RE.fullmatch(name):
+            errs.append("name_invalid")
+        if name != dirname:
+            errs.append("name_mismatch")
+    desc = fm.get("description", "")
+    if not desc:
+        errs.append("description_missing")
+    elif len(desc) > 1024:
+        errs.append("description_too_long")
+    if "compatibility" in fm and not 1 <= len(fm["compatibility"]) <= 500:
+        errs.append("compatibility_invalid")
+    return errs
+```
+
+**测试用例：**
+
+```python
+ok = "---\nname: pdf-processing\ndescription: Extract PDF text. Use when handling PDFs.\n---\n# 步骤\n"
+assert check_skill("pdf-processing", ok) == []
+assert check_skill("pdf", ok) == ["name_mismatch"]
+assert check_skill("x", "# 没有 frontmatter") == ["no_frontmatter"]
+assert check_skill("x", "---\nname: x\n") == ["no_frontmatter"]          # 没有闭合的 ---
+assert check_skill("PDF--Tool", "---\nname: PDF--Tool\ndescription: ''\n---\n") == ["name_invalid", "description_missing"]
+for n in ["-pdf", "pdf-", "pdf--x", "pdf_x", "Pdf", "a" * 65]:
+    assert check_skill(n, f"---\nname: {n}\ndescription: d\n---\n") == ["name_invalid"], n
+assert check_skill("a" * 64, "---\nname: " + "a" * 64 + "\ndescription: d\n---\n") == []
+assert check_skill("s", "---\nname: s\ndescription: " + "x" * 1025 + "\n---\n") == ["description_too_long"]
+assert check_skill("s", "---\nname: s\ndescription: " + "x" * 1024 + "\n---\n") == []
+nested = "---\nname: \"data-tool\"\ndescription: d\nmetadata:\n  author: a\n  name: other\ncompatibility: \n---\n"
+assert check_skill("data-tool", nested) == ["compatibility_invalid"]
+assert check_skill("s", "---\ndescription: d\n---\n") == ["name_missing"]
+assert check_skill("s", "---\nname: s\ndescription: d\ncompatibility: " + "y" * 501 + "\n---\n") == ["compatibility_invalid"]
+```
+
+**解析：**
+
+**实现要点**：
+
+1. **frontmatter 定界**：先确认首行是 `---`，再找闭合的 `---`；找不到就直接返回，不再检查其他规则。
+2. **只解析顶层字段**：`metadata` 下缩进的 `name: other` 属于嵌套内容，必须跳过，否则会覆盖真正的 `name`。生产中应使用 YAML 解析器，这里用逐行解析只是为了不依赖第三方库。
+3. **name 规则**：正则 `[a-z0-9]+(-[a-z0-9]+)*` 配合 `fullmatch`，一次性排除大写、下划线、首尾连字符和连续连字符；长度另外检查。
+4. **错误码可以并存**：名字不合法与目录不匹配是两个独立的问题，都要报出来，方便作者一次改完。
+
+**这些规则为什么重要**：name 同时是技能的标识和目录名，要稳定、可做路径、不易混淆；description 是模型决定是否启用技能的**唯一依据**，又会常驻在每次请求的上下文中，所以既不能缺，也不能过长。规范还建议 SKILL.md 正文控制在 500 行以内、引用的文件只嵌套一层。平台把这些检查放进入库的 CI，是技能治理的第一道关。
+
+<sub>考点：Agent Skills、技能与工具治理　｜　出处：Agent Skills 规范：https://agentskills.io/specification</sub>
+
+</details>
+
+---
+
+## 简答题
+
+<a name="AGT-PROTO-003"></a>
+
+### AGT-PROTO-003　进阶 · 考频 ★★★
+
+有人评价：「MCP 不过是给 Function Calling 换了个统一格式。」请从要解决的问题、所处的层次、Function Calling 没有而 MCP 提供的能力三个方面评价这句话，并说明引入 MCP 会带来哪些新问题。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **这句话不准确**：两者解决的问题不同、处在不同的层，是互补关系而不是替代关系。
+2. **要解决的问题**：Function Calling（FC）解决「模型怎么结构化地表达调用意图」；MCP 解决「工具从哪来、怎么用统一接口接入」，即 M 个应用 × N 个工具的集成与复用问题（M×N → M+N）。
+3. **所处层次**：FC 是模型 API 的协议（模型 ↔ Host）；MCP 是应用集成的协议（Host ↔ 工具服务）。Host 用 `tools/list` 拿到工具，转成 FC 的工具定义交给模型；模型返回调用后，Host 校验参数和权限，再转成 `tools/call`。模型本身感知不到 MCP。
+4. **MCP 额外提供的能力**：
+   - 除 Tools 外，还有 Resources（由应用决定放进上下文的只读数据）和 Prompts（由用户触发的模板）；
+   - 客户端能力 Elicitation：Server 在执行中途经由客户端向用户追问（2026-07-28 版以多轮往返请求 MRTR 实现；同属客户端能力的 Sampling、Roots 已被标为弃用）；
+   - 协商、通知与缓存：每个请求在 `_meta` 中携带协议版本与客户端能力，客户端可先调用 `server/discover` 了解 Server 的版本与能力；列表变更与资源更新经 `subscriptions/listen` 推送；进度与取消；列表结果带缓存提示（`ttlMs`、`cacheScope`）；
+   - 传输与授权：stdio 与 Streamable HTTP 两种传输，以及基于 OAuth 2.1 的授权规范。
+5. **带来的新问题**：
+   - 供应链与安全：接入第三方 Server 等于引入第三方代码和提示词，有工具投毒、定义被悄悄修改、同名工具遮蔽、结果回流注入等风险；
+   - 治理成本：鉴权、多租户隔离、版本锁定、审计、限流都要额外建设；
+   - 上下文与性能：接入的 Server 越多，工具定义越占 token；多一跳进程或网络调用，增加延迟与故障点。
+
+**评分要点（共 10 分）：**
+
+- 指出两者互补而非替代，并分别说清各自解决的问题（3 分）
+- 说清 FC 与 MCP 所在的层次以及 Host 中的衔接链路（2 分）
+- 列出至少三项 MCP 额外提供的能力（原语、协商与通知、传输与授权等）（3 分）
+- 说出至少两类新问题（安全治理、上下文开销、延迟与故障点等）（2 分）
+
+**讲解：**
+
+**常见失分点**：只回答「MCP 统一了接口」，讲不出 N×M 这笔账；把 MCP 说成 FC 的升级版或替代品；以为「模型直接连 MCP Server」；只讲好处不讲代价。高分回答通常会画出「tools/list → 转成 FC 定义 → tool_calls → 校验与鉴权 → tools/call → 结果回填」这条链路。
+
+<sub>考点：MCP动机、MCP与Function Calling　｜　出处：MCP 规范 2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-011"></a>
+
+### AGT-PROTO-011　进阶 · 考频 ★★
+
+按 MCP 2025-11-25 版规范，客户端原语 Sampling、Roots、Elicitation 分别解决什么问题？为什么说它们让 Server 可以「反向求助」？各自有哪些需要 Host 把关的安全要点？
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **为什么叫反向**：Tools、Resources、Prompts 是 Server 向 Host 提供的能力；客户端原语方向相反，是 Client 向 Server 提供的能力，由 Server 主动发起请求、Client 回复。所以客户端的读循环必须能处理「既有 method 又有 id」的、来自 Server 的请求。
+2. **Sampling（`sampling/createMessage`）**：Server 借用 Host 的模型，不必自带模型与密钥，Host 统一选模型、控成本。
+   - 把关：让用户能审阅、修改或拒绝采样请求和结果；限制频率与 token；由 Host 决定是否附带对话上下文，防止 Server 借采样套取数据或刷用量。
+3. **Roots（`roots/list`）**：Client 告诉 Server 应当在哪些目录或 URI 范围内工作，根目录变化时发通知。
+   - 把关：Roots 只是告知边界，不是强制隔离；本地 Server 仍要靠沙箱、受限账号、只读挂载兜底。
+4. **Elicitation（`elicitation/create`）**：Server 在执行中途向用户追问缺失信息，用户可以接受、拒绝或取消。
+   - 把关：清楚展示是哪个 Server 在提问；不得用它索要密码、密钥等敏感信息；用户拒绝时 Server 要能妥善处理。
+5. **共同点**：都是可选能力，需要客户端在 initialize 时声明，Server 只能使用客户端声明过的能力；三者都把最终决定权留在 Host 和用户手里。
+
+**评分要点（共 10 分）：**
+
+- 说清「反向」的含义：由 Server 发起请求、Client 响应（2 分）
+- 正确说明 Sampling 的作用与把关要点（2 分）
+- 正确说明 Roots 的作用，并指出它不是强制隔离（2 分）
+- 正确说明 Elicitation 的作用及不得索要敏感信息等要点（2 分）
+- 提到能力需在初始化时声明、决定权在 Host 与用户（2 分）
+
+**讲解：**
+
+**常见失分点**：把 Sampling 说成「Server 自己调用模型」；把 Roots 当成沙箱；不知道 Elicitation，或把它与 Prompts 混淆；忽略这些原语需要能力协商。可以用一个例子把三者串起来：代码评审 Server 先通过 Roots 得知仓库目录，用 Sampling 请 Host 的模型摘要 diff，发现缺少「评审重点」时用 Elicitation 追问用户。
+
+**新版变化（2026-07-28）**：
+- **不再有反向请求**：Server 不得再主动向客户端发送 JSON-RPC 请求，改用多轮往返请求（MRTR）：Server 对 `tools/call`、`prompts/get`、`resources/read` 返回 `resultType: "input_required"` 的中间结果，在 `inputRequests` 中列出需要的 `elicitation/create` 等请求；客户端收集答案后，用新的请求 id 重试原请求，附上 `inputResponses` 和原样回传的 `requestState`。Server 无需挂起状态，任何实例都能处理重试。
+- **Sampling、Roots 被标为弃用**（SEP-2577）：弃用期内仍可经 MRTR 使用，但新实现不应再采用。替代方案：需要模型的 Server 直接对接模型提供商的 API；目录信息通过工具参数、资源 URI 或 Server 配置传递。`notifications/roots/list_changed` 已被移除。
+- **Elicitation 保留**，同样经 MRTR 承载。客户端能力不再在 initialize 时声明，而是放在每个请求 `_meta` 的 `io.modelcontextprotocol/clientCapabilities` 中，Server 不得请求客户端没有声明的能力。
+
+<sub>考点：MCP客户端原语　｜　出处：MCP 规范 2025-11-25（Client Features）：https://modelcontextprotocol.io/specification/2025-11-25/client/sampling ；2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-017"></a>
+
+### AGT-PROTO-017　进阶 · 考频 ★★
+
+按 MCP 2025-11-25 版规范，请描述 MCP 初始化握手的三个步骤，并说明：协议版本如何协商、协商失败怎么办；能力协商约束了什么；为什么握手最后还需要一条 `notifications/initialized` 通知。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **三步握手**：
+   - Client 发 `initialize` 请求，带上自己支持的协议版本（通常是最新的）、客户端能力（如 roots、sampling、elicitation）和 clientInfo；
+   - Server 回复选定的协议版本、服务端能力（如 tools、resources、prompts、logging 及其子能力）和 serverInfo，可附带使用说明；
+   - Client 发 `notifications/initialized` 通知，此后进入正常操作阶段。
+2. **版本协商**：版本号是日期字符串。Server 支持客户端提出的版本，就回复同一个版本；否则回复一个自己支持的版本（通常是最新的）。Client 如果不支持 Server 回复的版本，应断开连接。HTTP 传输下，之后的请求还要在请求头中带上协商好的协议版本。
+3. **能力协商**：双方只使用对方声明过的能力。例如 Server 没声明 prompts，Client 就不该调 `prompts/list`；Server 没声明 `listChanged`，就不会发列表变更通知；Client 没声明 sampling，Server 就不能发采样请求。新特性因此可以渐进启用，新老版本的实现也能互通。
+4. **为什么需要 initialized 通知**：它告诉 Server「客户端已经处理完协商结果，可以开始正常交互了」。在 Server 回复 initialize 之前，Client 除 ping 外不应发送其他请求；在收到 initialized 之前，Server 除 ping 和日志外不应主动发起请求（如采样、列根目录），避免在双方状态未就绪时交换消息。它是通知而不是请求，因为 Server 不需要回复。
+5. **关闭**：没有专门的关闭消息，由传输层完成：stdio 下 Client 关闭 Server 的 stdin，等待进程自行退出，超时再强制结束；HTTP 下关闭连接或显式删除会话。
+
+**评分要点（共 10 分）：**
+
+- 正确描述三步握手及各步携带的内容（3 分）
+- 正确说明版本协商规则及协商失败的处理（2 分）
+- 正确说明「只用对方声明过的能力」并举例（2 分）
+- 说清 initialized 通知的作用及其前后的消息约束（2 分）
+- 提到关闭由传输层完成、HTTP 下携带协议版本头等细节（1 分）
+
+**讲解：**
+
+**常见失分点**：把握手说成两步，漏掉 initialized 通知；以为版本不匹配时由 Client 自动降级重试（实际是 Server 回一个它支持的版本，Client 不支持就断开）；不知道能力是逐项细分的（如 resources 下的 subscribe、listChanged）；把 initialized 当成需要回复的请求。
+
+**新版变化（2026-07-28）**：初始化握手被整体移除（SEP-2575），MCP 改为无状态协议。
+- 每个请求都在 `_meta` 中携带 `io.modelcontextprotocol/protocolVersion` 和 `io.modelcontextprotocol/clientCapabilities`（必填），并建议携带 `clientInfo`；Server 在结果的 `_meta` 中带上 `serverInfo`。Server 不得依赖同一连接上之前的请求来确定版本、能力或客户端身份。
+- Server 必须实现 `server/discover`，用来公布支持的协议版本、能力与身份；客户端可以先调用它，也可以直接发请求。版本不受支持时，Server 返回 `UnsupportedProtocolVersionError` 并列出支持的版本，客户端换一个双方都支持的版本重试。
+- `notifications/initialized` 与 `ping` 一并移除；HTTP 下也不再有 `Mcp-Session-Id` 会话。
+- 同时支持新旧两代协议的客户端，在 stdio 上先发 `server/discover` 探测对端，收到非新版错误或超时，再回退到 `initialize` 握手。
+
+<sub>考点：JSON-RPC生命周期　｜　出处：MCP 规范 2025-11-25（Lifecycle）：https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle ；2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-027"></a>
+
+### AGT-PROTO-027　挑战 · 考频 ★★
+
+一个远程 MCP Server 要接入企业的统一身份系统，供数千名员工通过各自的 AI 客户端使用。请说明基于 MCP 授权规范的完整授权流程，以及实现时最容易被忽略的安全要求；并说明本地 stdio Server 的凭证应当如何处理。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**角色**：MCP Server 是 OAuth 2.1 资源服务器，MCP Client 是 OAuth 客户端，企业身份系统充当授权服务器。
+
+**流程**：
+1. 客户端不带令牌访问 Server，收到 401，`WWW-Authenticate` 头指向 Server 的受保护资源元数据；
+2. 客户端读取该元数据，找到授权服务器，再读取授权服务器的元数据（授权端点、令牌端点等）；
+3. 客户端没有预注册信息时，优先使用客户端 ID 元数据文档（CIMD）：以自己托管的元数据文档的 HTTPS URL 作为 client_id，授权服务器按 URL 拉取并校验；授权服务器不支持 CIMD 时，再退回动态客户端注册（DCR，2026-07-28 版已弃用）或请用户手动填写客户端信息；
+4. 用户在浏览器中登录并同意授权，走授权码流程，**必须使用 PKCE**；申请时用 resource 参数指明目标 Server；授权响应带有 `iss` 参数时，客户端要先核对它与预期的授权服务器一致，再用授权码换令牌；
+5. 客户端获得短期访问令牌（及刷新令牌），之后每个请求都在 Authorization 头里携带 Bearer 令牌；
+6. Server 校验令牌的签名、有效期、受众和 scope，再按「用户 × 工具」做细粒度授权。
+
+**容易被忽略的安全要求**：
+- **受众校验**：只接受颁发给本 Server 的令牌；
+- **禁止令牌透传**：访问上游 API 时使用 Server 自己获取的凭证，按用户、租户分别保存在密钥管理服务中，不共用高权限服务账号；
+- **身份只从令牌解析**：MCP 是无状态协议，每个请求都要独立校验令牌；不能凭连接、进程或客户端自报的 `clientInfo` 识别用户；Server 签发的跨调用句柄（如任务 id、购物车 id）只是名字，每次调用都要校验「这个用户能否使用这个句柄」；
+- 令牌只放请求头，不进 URL 和日志；刷新令牌轮换；全程 HTTPS，重定向地址严格校验；
+- 最小权限：scope 读写分离，破坏性操作再加人工确认。
+
+**stdio Server**：不走 OAuth。它是用户本机的子进程，凭证由 Host 通过环境变量或本地配置注入；权限边界主要靠操作系统账号和沙箱，凭证要最小权限，不写进日志。
+
+**评分要点（共 10 分）：**
+
+- 正确说明三方角色（2 分）
+- 按顺序说清 401 → 元数据发现 → 注册（优先 CIMD）→ 授权码 + PKCE → Bearer 令牌的流程（3 分）
+- 说出受众校验与禁止令牌透传（2 分）
+- 说出身份只从令牌解析（不靠连接、clientInfo 或句柄）、令牌存放、最小权限等其他要求（2 分）
+- 说明 stdio Server 从环境变量取凭证、不走 OAuth（1 分）
+
+**讲解：**
+
+**常见失分点**：只说「用 OAuth」，讲不出发现流程和 PKCE；不知道令牌要绑定受众；让 Server 把用户令牌直接转发给上游；用会话 ID、连接或 `clientInfo` 识别用户；以为 stdio Server 也要走 OAuth；仍把 DCR 当作首选的注册方式（2026-07-28 版已弃用，推荐 CIMD）。旧版（2025-11-25）的回答常写「会话 ID 不是身份」，道理相同：新版已没有协议级会话，但任何「连接级」或「客户端自报」的标识都不能代替令牌。
+
+<sub>考点：MCP鉴权　｜　出处：MCP 规范 2026-07-28（Authorization）：https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-036"></a>
+
+### AGT-PROTO-036　进阶 · 考频 ★★
+
+A2A 中调用方获取任务进展与结果有三种方式：请求加轮询、流式订阅、推送通知。请分别说明它们的工作方式与适用场景；并结合 Task 的生命周期说明，调用方遇到 input-required、或远端长时间停留在 working 时应该怎么处理。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **请求加轮询**：发消息创建任务，拿到 taskId 后定期查询任务状态，直到终态。实现最简单，适合短任务；缺点是有轮询延迟和无效请求，需要设轮询间隔与次数上限。
+2. **流式（SSE）**：发起任务时订阅一条 SSE 流，实时收到状态变化和 Artifact 分块。适合需要实时展示进度的交互；前提是 Agent Card 声明了流式能力，调用方要保持连接，断线后要能重新订阅。
+3. **推送通知（webhook）**：调用方登记一个 webhook，状态变化时远端主动回调。适合跑几小时甚至几天的任务，调用方不必一直保持连接。要求：webhook 要鉴权、验签，防止伪造回调；按任务 id 和状态幂等处理重复推送；收到通知后可以再查询一次任务，拿到权威状态。
+4. **input-required**：这是中断态，不是终态。调用方在**同一个 taskId（及 contextId）**下发送补充信息，任务回到 working；需要用户回答的，转给用户并设等待超时。auth-required 类似，完成授权后继续。
+5. **长时间停在 working**：调用方设总超时和预算（时长、费用），超时后调用取消接口，按失败处理并记录；必要时换一个 Agent 或升级给人。远端产出的 Artifact 也要当作不可信输入，校验后再用。
+6. **终态之后**：completed、failed、canceled、rejected 不能再变；要修改或追加，就新建任务并沿用 contextId。
+
+**评分要点（共 10 分）：**
+
+- 正确说明三种方式的机制（3 分）
+- 给出各自的适用场景与前提（如流式需要能力声明、长任务用推送）（2 分）
+- 说出 webhook 的鉴权、验签与幂等要求（2 分）
+- 正确处理 input-required：同一 taskId 补充信息、回到 working（2 分）
+- 对长时间 working 设超时、预算与取消（1 分）
+
+**讲解：**
+
+**常见失分点**：把 input-required 当成终态而新建任务；只会轮询，说不出长任务该用推送；忽略 webhook 被伪造与重复推送的问题；没有超时与预算，远端卡住时调用方无限等待。
+
+<sub>考点：A2A任务生命周期、A2A Agent Card　｜　出处：A2A 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-039"></a>
+
+### AGT-PROTO-039　挑战 · 考频 ★★
+
+团队 A 有一个「市场调研 Agent」，团队 B 想在自己的 Agent 里调用它。有人提议：把调研 Agent 直接包装成一个 MCP 工具 `market_research(query) -> report`，省得再接一套 A2A。请分析这种做法在什么情况下可行、什么情况下应该改用 A2A，并说明无论用哪种方式，调用方都要做好哪些防护。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**可行的情况**
+- 任务短小、确定，一问一答，几秒到几十秒就能返回；
+- 不需要中途追问，不需要进度、流式或多种格式的产出；
+- 两个团队在同一信任域内，接口稳定，像调用普通服务一样即可。
+此时包装成工具最简单，模型只需把它当成一个函数。
+
+**应该改用 A2A 的情况**
+- **长任务**：调研可能持续几十分钟到数小时，一次同步的工具调用会超时，需要 Task 生命周期以及轮询、流式或推送。MCP 的官方 Tasks 扩展（`io.modelcontextprotocol/tasks`）也能把一次长调用变成可轮询的任务句柄，但它管的只是单次工具调用的异步执行；
+- **中途交互**：需要补充信息（input-required）或额外授权（auth-required）。MCP 2026-07-28 版的多轮往返请求（MRTR）也能让一次工具调用中途返回 `input_required`、经客户端向用户追问后重试，但追问对象是终端用户（填表单或跳转网页），不是 Agent 之间围绕任务的协商；
+- **产出复杂**：报告、图表、结构化数据等多个 Artifact，可能分块流式交付；
+- **跨团队的发现与演进**：通过 Agent Card 发现能力、声明鉴权方案，远端可以独立升级实现；
+- **可追踪**：每个任务有 id 和状态历史，便于跨团队排查问题。
+包装成普通工具会丢掉这些语义：即使借助 Tasks 扩展解决了异步执行，Agent Card 发现、多个 Artifact 的交付、Agent 之间的协商仍要自己重新发明；不支持 Tasks 扩展时，连「任务 id + 轮询」也得在工具参数里自造一套。
+
+**无论哪种方式都要做的防护**
+- 鉴权与最小权限，只授予必要的 scope；
+- 超时、预算与取消，限制时长、费用和重试次数；
+- 产出校验：远端结果按不可信输入处理，校验格式与内容，不能直接触发高风险操作；
+- 审计与观测：记录任务 id、状态变化、耗时与成本，trace 跨团队串联。
+
+另外，如果两个 Agent 本就在同一进程或同一框架内，直接用框架的子 Agent 或转交机制即可，不必引入任何协议。
+
+**评分要点（共 10 分）：**
+
+- 说出包装成工具可行的条件（短、确定、一问一答）（2 分）
+- 说出长任务、中途交互、复杂产出、发现与演进等改用 A2A 的理由（4 分）
+- 给出鉴权、超时预算、产出校验、审计等防护（3 分）
+- 提到同进程内无需协议等边界（1 分）
+
+**讲解：**
+
+**常见失分点**：一刀切地回答「必须用 A2A」或「工具就够了」；讲不出包装成工具会丢掉哪些语义；忽略远端 Agent 的不可信与成本风险。好的回答以任务形态（时长、交互、产出）为判断依据。也要注意新版 MCP 已有 MRTR 和 Tasks 扩展，不能再简单说「MCP 工具调用没有多轮交互、不能跑长任务」，要讲清它们与 A2A 任务语义的差别。
+
+<sub>考点：A2A与MCP分工　｜　出处：A2A 规范 1.0：https://a2a-protocol.org/latest/specification/ ；MCP 规范 2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog ；MCP Tasks 扩展：https://modelcontextprotocol.io/extensions/tasks/overview</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-042"></a>
+
+### AGT-PROTO-042　进阶 · 考频 ★★
+
+团队的系统提示词已经膨胀到 2 万 token，里面塞满了报销、合同审批、周报生成等十几套流程规范和模板。有人建议改用 Agent Skills。请说明 Agent Skills 是什么、渐进式披露分哪几层，比较它与系统提示词、MCP、RAG 的区别，并给出改造时的注意事项。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **是什么**：一个技能就是一个文件夹，核心是 SKILL.md：开头的 YAML frontmatter 写 name 和 description，正文写操作步骤；旁边可以放脚本、模板和参考文档。
+2. **渐进式披露的三层**：
+   - 元数据：启动时只把每个技能的 name 和 description 放进系统提示词，每个约几十到一百 token；
+   - 正文：模型判断任务相关时，才读取 SKILL.md 正文；
+   - 资源与脚本：正文引用的参考文档用到才读；脚本直接执行，只有输出进入上下文。
+3. **与系统提示词**：系统提示词每次请求全量加载，十几套流程即使用不到也占 token、分散注意力；Skills 平时只常驻元数据。全局性的规则（身份、安全红线、输出风格）仍应留在系统提示词里。
+4. **与 MCP**：MCP 解决「能连上什么」（能力与数据的接入），Skills 解决「该怎么做」（流程、规范、模板等程序性知识）。两者互补，Skill 的正文可以指导模型调用某个 MCP 工具。
+5. **与 RAG**：RAG 按语义检索文档片段，适合海量事实性知识；Skills 由模型根据描述主动选择整本「操作手册」，还能附带可执行脚本，更适合流程类知识。
+6. **改造注意事项**：
+   - 按流程拆成技能，每个 description 写清「做什么 + 什么时候用」，用真实请求测试触发的准确率；
+   - 把确定性的计算与校验（如报销标准核对）写成脚本，减少模型自行推理出错；
+   - 依赖文件系统和代码执行环境，脚本在沙箱中运行；第三方技能要审核；
+   - 技能很多时元数据本身也会膨胀，需要分组或对技能做检索；
+   - 改造前后用评测集对比任务成功率和 token 用量。
+
+**评分要点（共 10 分）：**
+
+- 说清技能的组成（SKILL.md、frontmatter、附带资源）（2 分）
+- 正确描述三层渐进式披露（2 分）
+- 正确比较与系统提示词、MCP、RAG 的区别（3 分）
+- 给出描述写法、脚本化、沙箱与审核、评测验证等注意事项（3 分）
+
+**讲解：**
+
+**常见失分点**：把 Skills 说成一种新协议或 MCP 的替代品；以为技能正文一开始就全部加载；忽略脚本执行的安全风险；只讲概念，不讲改造后怎么验证效果。
+
+<sub>考点：Agent Skills</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-057"></a>
+
+### AGT-PROTO-057　进阶 · 考频 ★★
+
+你负责评审其他团队提交到平台的 MCP Server。请给出一份评测清单：应当从哪些维度评估一个 MCP Server 的质量，每个维度用什么方法检查？如果被评审的是一个 Agent Skill，又要额外关注什么？
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**MCP Server 的评测维度**
+1. **可发现性与描述**：工具名清楚、带命名空间；描述写清做什么、什么时候用、有什么限制；参数有说明和示例；不与已有工具重叠。方法：静态检查 + 混入干扰工具的选择测试（模型能否在一堆相似工具中选对）。
+2. **Schema 质量**：类型、枚举、必填项准确，不用一个笼统的 `query` 包打天下；需要结构化结果的提供 `outputSchema` 与 `structuredContent`；工具列表按固定顺序返回，以利于 Prompt Caching。方法：Schema 检查，用非法参数做模糊测试。
+3. **错误语义**：区分协议错误与工具执行错误；执行错误以 `isError: true` 返回可操作的信息（如「日期必须晚于今天，今天是……」），不暴露堆栈；空结果要说明含义。方法：注入故障，看模型能否根据错误信息自行恢复。
+4. **副作用与安全**：工具标注（只读、破坏性、幂等）与实际行为一致；破坏性操作需要确认；写操作支持幂等键；最小权限；校验输入、清理输出（不泄露密钥，不夹带可疑指令）；有限流。方法：安全评审与越权测试。
+5. **性能与成本**：P50 / P99 时延、超时、分页；单次返回的 token 量，过大的结果要截断并给出继续获取的方式。方法：压测，统计典型返回的 token 数。
+6. **可靠性与兼容**：版本策略、向后兼容、针对后端接口的契约测试、健康检查。
+7. **任务级效果**：用参考 Agent 跑场景集，统计工具选择准确率、参数准确率、任务成功率和调用次数，与基线（不接入或旧版本）对比，并在多个模型、客户端上验证。
+
+**Agent Skill 额外关注**
+- 触发：用「应触发 / 不应触发」的问法测精确率与召回率，并检查与相似技能是否混淆；
+- 遵循：触发后模型是否按步骤执行，是否读取了必须读的文件、运行了脚本；
+- 脚本：结果正确，在沙箱中运行，依赖写清楚；
+- 成本：元数据与正文的 token 量；
+- 来源与完整性：记录摘要，内容变化后重新审核；技能内容按不可信输入对待，其中申请的预授权工具（如 `allowed-tools`）要单独审批。
+
+**评分要点（共 10 分）：**
+
+- 覆盖描述与可发现性、Schema 质量、错误语义三个维度并给出检查方法（3 分）
+- 覆盖副作用、安全与性能成本维度（2 分）
+- 提出任务级评测：选择准确率、成功率、与基线对比（2 分）
+- 说明 Skill 额外的触发、遵循、脚本与来源完整性检查（3 分）
+
+**讲解：**
+
+**常见失分点**：只测「接口能不能调通」，不测模型能否用对；不检查错误信息是否可操作；忽视返回结果的 token 量；评审技能时把它当普通文档，不检查触发效果与脚本安全。一个 MCP Server 的「用户」首先是模型，评测要站在模型的角度：看得懂、选得对、出错了能自救、结果不撑爆上下文。
+
+<sub>考点：技能与工具治理、MCP服务端原语　｜　出处：MCP 规范 2026-07-28（Tools）：https://modelcontextprotocol.io/specification/2026-07-28/server/tools ；Agent Skills 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-059"></a>
+
+### AGT-PROTO-059　进阶 · 考频 ★★
+
+Skill、MCP、CLI（让 Agent 直接在 Shell 中调用命令行工具）、插件（如 Claude Code 的 plugin）分别适合什么场景？有人认为「有了 CLI 和 Skills，MCP 已经过时了」，你怎么看？请从上下文开销、鉴权与治理、可组合性、运行环境要求、分发方式几个方面比较。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **上下文开销**
+   - MCP：工具定义默认在每次请求时都要发给模型，数量一多就是几万 token，需要工具检索或延迟加载来缓解；
+   - CLI：git、kubectl、gh 等常用命令模型在训练中已经见过，需要时运行 `--help` 即可，几乎没有常驻开销；
+   - Skill：平时只常驻名称和描述，正文按需加载。
+2. **鉴权与治理**
+   - MCP：远程 Server 可以按用户走 OAuth 授权，工具粒度清晰，便于在网关统一审计、限流与隔离租户，适合多租户的 SaaS 集成；
+   - CLI：依赖本机已有的凭证和环境变量，权限往往很大，在服务端、多租户场景下很难治理，需要权限规则与沙箱兜底；
+   - Skill：本身不带鉴权，它的脚本以当前环境的权限运行，需要审核。
+3. **可组合性**
+   - CLI 天然可以用管道、脚本组合，中间数据留在环境里，不进上下文；
+   - MCP 的逐次调用要把每一步结果送回模型，组合靠模型；Code Mode 把 MCP 工具变成代码 API，可以弥补这一点；
+   - Skill 可以把多个 CLI 命令或 MCP 工具编排成一个流程。
+4. **运行环境要求**
+   - CLI 与 Skill 都需要 Shell 和文件系统（最好是沙箱）；
+   - MCP 只需要 Host 能连上 Server，适用于网页聊天、移动端等没有 Shell 的客户端。
+5. **分发方式**
+   - 插件是打包与分发层：Claude Code 的插件可以把技能、子 Agent、钩子、MCP Server 等组件打包成一个单元，通过插件市场安装与更新；它不是与 MCP 并列的新协议。
+6. **结论**：MCP 没有过时，四者分工不同。
+   - 远程服务、需要按用户授权和统一治理的集成 → MCP；
+   - Agent 有 Shell、操作本地开发工具链 → CLI；
+   - 「怎么做」的流程知识与模板 → Skill（它可以调用 CLI，也可以调用 MCP 工具）；
+   - 把一整套配置分享给团队 → 插件。
+   MCP 真正的问题是工具一多就带来上下文开销，这可以用工具检索、Code Mode 等手段缓解，而不是用 CLI 全盘替代。
+
+**评分要点（共 10 分）：**
+
+- 比较上下文开销：MCP 定义常驻、CLI 依赖模型已有知识、Skill 渐进加载（2 分）
+- 比较鉴权与治理：MCP 便于按用户授权与集中治理，CLI 难治理（2 分）
+- 比较可组合性与运行环境要求（2 分）
+- 说明插件是打包与分发层，而不是新协议（2 分）
+- 给出有理有据的结论与各自的适用场景（2 分）
+
+**讲解：**
+
+**常见失分点**：只从 token 开销一个角度得出「MCP 过时」的结论；不知道 CLI 方案依赖 Shell 与本地凭证，在服务端、多租户场景下难以治理；把插件和 MCP 当作同一层的东西；把 Skill 理解为 MCP 的替代品，而不是「流程知识」的载体。
+
+<sub>考点：MCP动机、Agent Skills、Code Mode　｜　出处：Claude Code 文档 Plugins：https://code.claude.com/docs/en/plugins ；Agent Skills 规范</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-062"></a>
+
+### AGT-PROTO-062　挑战 · 考频 ★
+
+在客服 Agent 中引入生成式 UI：Agent 不再只回复文字，而是返回可交互的卡片（订单列表、改签表单、「确认退款」按钮）。请说明：(1) 用户在卡片上的操作怎样回传给 Agent 并触发后端动作；(2) 这套机制的安全边界应当划在哪里；(3) 声明式组件（如 A2UI）与沙箱 HTML（如 MCP Apps）两条路线各有什么取舍。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**(1) 动作回传链路**
+1. Agent 输出界面描述：A2UI 中是组件列表加数据模型；MCP Apps 中是工具结果加上它引用的界面资源；
+2. 客户端渲染界面。用户修改表单字段这类本地交互只更新本地状态（数据绑定），不需要每次都回传；
+3. 用户点击提交时，生成一个动作事件：A2UI 中，`action` 消息带上动作名、界面 id、来源组件 id，以及从数据模型中解析出的上下文（如订单号、改签日期）；MCP Apps 中，界面通过 Host 发起 `tools/call`；
+4. Agent 或 Host 把事件**当作不可信输入**：校验参数，按会话中的用户身份做授权，再映射为具体的工具调用并执行；
+5. 把结果和界面的更新（局部更新组件或数据）返回给客户端。
+
+**(2) 安全边界**
+- **渲染边界**：模型生成的内容不能在宿主环境中执行。声明式方案只允许使用可信目录中的组件；HTML 方案放在沙箱 iframe 中，配合 CSP 白名单与能力限制。
+- **数据边界**：只下发用户有权看到的数据，尽量减少个人信息。
+- **动作边界**：后端以会话中的身份授权，不信任界面传来的用户 id、金额等参数；写操作要有幂等键。
+- **确认边界**：退款这类高风险操作的确认框必须由 Host 原生提供，不能由 Agent 生成，否则被注入的 Agent 可以伪造一个看似正常的确认界面。
+- **注入**：由外部数据渲染出的内容不能自动触发动作；链接与外部资源受限；所有界面动作都要记审计日志，并提供纯文本的降级展示。
+
+**(3) 两条路线的取舍**
+- **声明式组件（A2UI）**：原生外观与无障碍支持好；不执行代码，安全面小；适合流式生成与增量更新。代价是表达力受组件目录限制，每个平台都要实现渲染器，目录也需要版本协商。
+- **沙箱 HTML（MCP Apps）**：表达力强（图表、编辑器、地图），可以复用现有的 Web 技术栈，一份实现能在多个 Host 中运行。代价是更重、风格与宿主不一致，安全依赖 iframe 沙箱与 Host 转发，需要严格配置 CSP 与权限。
+- AG-UI 这类事件协议负责 Agent 与前端之间的连接，可以承载上述两种界面格式。
+
+**评分要点（共 10 分）：**
+
+- 描述从界面描述、渲染、本地状态到动作事件、后端授权执行、界面更新的完整链路（3 分）
+- 划清渲染、数据、动作三个边界，指出界面传回的参数不可信（3 分）
+- 指出高风险确认必须由 Host 原生提供，防止伪造确认界面（2 分）
+- 比较声明式组件与沙箱 HTML 的取舍（2 分）
+
+**讲解：**
+
+**常见失分点**：以为「按钮点了就直接调后端接口」，跳过了服务端授权与参数校验；信任界面传回的用户 id 或金额；允许 Agent 自己渲染「确认退款」对话框；只讲界面效果、不讲安全边界。生成式 UI 本质上把一部分「交互」交给了模型，安全原则与工具调用相同：模型生成的东西都要当作不可信输入，关键决策由确定性的代码和用户本人把关。
+
+<sub>考点：生成式UI协议　｜　出处：A2UI：https://a2ui.org/concepts/overview/ ；MCP Apps：https://modelcontextprotocol.io/extensions/apps/overview</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-067"></a>
+
+### AGT-PROTO-067　进阶 · 考频 ★★
+
+MCP 2026-07-28 版把 Roots、Sampling、Logging 以及 OAuth 动态客户端注册（DCR）标为弃用。请分别说明它们原来解决什么问题、为什么被弃用、应迁移到什么方案；并说明「弃用」对现有实现和新实现分别意味着什么。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **Roots**
+   - 原用途：客户端告诉 Server 应当在哪些目录或 URI 范围内工作。
+   - 弃用原因：客户端支持少、Server 依赖少；语义含糊，只是参考信息，Server 不一定遵守；还会向 Server 暴露客户端的文件系统信息。
+   - 迁移：通过工具参数、资源 URI 或 Server 配置（启动参数、环境变量等）显式传递目录或文件。
+2. **Sampling**
+   - 原用途：Server 借用 Host 的模型生成内容，自己不必持有模型和密钥。
+   - 弃用原因：正确实现需要人在回路审批、模型选择、安全控制等一整套机制，客户端支持一直很少；它也是三者中安全风险最高的一项，给提示注入和数据外泄留下了攻击面。
+   - 迁移：需要模型能力的 Server 直接对接模型提供商的 API，自行掌控模型选择、参数和成本。
+3. **Logging**
+   - 原用途：Server 通过 `notifications/message` 把结构化日志发给客户端，客户端用 `logging/setLevel` 控制级别（新版已移除 `logging/setLevel`，改为在每个请求的 `_meta` 中用 `io.modelcontextprotocol/logLevel` 指定）。
+   - 弃用原因：stderr、OpenTelemetry 等通用设施成熟、普及，比在应用协议里再造一条日志通道更合适，而协议层的实现成本不低。
+   - 迁移：stdio Server 把日志写到 stderr；需要结构化观测时用 OpenTelemetry（新版还约定了在 `_meta` 中透传 `traceparent` 等追踪上下文）。
+4. **动态客户端注册（DCR，RFC 7591）→ 客户端 ID 元数据文档（CIMD）**
+   - 原用途：事先互不认识的客户端，在授权服务器上自动注册、获得 client_id。
+   - 替代方案：客户端以一个 HTTPS URL 作为 client_id，该 URL 指向它自己托管的元数据文档（client_name、redirect_uris 等）；授权服务器在授权时按 URL 拉取并校验，无需事先注册，同一个 client_id 还能在不同授权服务器之间通用。
+   - 优先顺序：已有的预注册信息 → CIMD（授权服务器在元数据中声明 `client_id_metadata_document_supported`）→ DCR（仅为兼容保留）→ 请用户手动填写。
+5. **「弃用」意味着什么**
+   - 弃用不等于移除：这些特性仍在规范中、完全可用，至少保留 12 个月（最早在 2027-07-28 或之后发布的修订版中移除），并列入官方的弃用特性登记表；
+   - 新实现不应再采用它们（除非为了兼容已有的对端）；现有实现应在移除前完成迁移，期间仍要正确处理对端声明的这些能力；
+   - 弃用期内，Sampling、Roots 请求也改由多轮往返请求（MRTR）承载，而不是由 Server 主动发起。
+
+**评分要点（共 10 分）：**
+
+- 说清 Roots 的用途、弃用原因与迁移方案（2 分）
+- 说清 Sampling 的用途、弃用原因（含安全风险）与迁移方案（2 分）
+- 说清 Logging 的用途，以及迁移到 stderr 或 OpenTelemetry（2 分）
+- 说明 DCR 被 CIMD 取代，并讲清 CIMD 的工作方式（2 分）
+- 说明弃用与移除的区别：至少 12 个月过渡期、新实现不采用、现有实现迁移（2 分）
+
+**讲解：**
+
+**常见失分点**：把「弃用」理解为「已经删除、现在不能用」；把 Elicitation 也算进弃用名单（它没有被弃用，只是改由 MRTR 承载）；只会说「Sampling 不安全」，讲不出替代方案及其代价（Server 要自己管理模型密钥与成本）；不知道 DCR 的替代方案 CIMD 是什么。可以补一句总的判断：这几项采用率低、与已有方案重叠、实现负担与收益不成比例，而 MCP 希望核心协议保持精简。
+
+<sub>考点：MCP客户端原语、MCP鉴权　｜　出处：MCP 规范 2026-07-28 弃用特性登记表：https://modelcontextprotocol.io/specification/2026-07-28/deprecated ；SEP-2577：https://modelcontextprotocol.io/seps/2577-deprecate-roots-sampling-and-logging ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 场景分析题
+
+<a name="AGT-PROTO-023"></a>
+
+### AGT-PROTO-023　挑战 · 考频 ★★
+
+团队自研 Host，用 stdio 接入了一个第三方的本地 MCP Server。开发环境一切正常，上线到员工的 Windows 电脑后出现两类问题：
+
+1. 运行一段时间后，工具调用偶发「卡死」：既不返回结果也不报错，只能重启 Host；
+2. 处理含中文的文件时，偶尔出现 JSON 解析失败或乱码。
+
+客户端的实现是：主线程写入请求后，直接在 Server 的 stdout 上 `readline()` 等待响应；Server 的 stderr 用管道接了回来，但从不读取；管道以文本模式打开。请分析可能的原因，给出修复方案和防止再次发生的措施。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**原因分析**
+
+1. **stderr 管道写满导致死锁**：Server 的日志写 stderr，客户端接了管道却从不读取。管道缓冲区写满后，Server 阻塞在写日志上，不再处理请求；客户端又在阻塞等待响应，双方互相等待，表现为「卡死」。开发环境日志少、缓冲区没写满，所以复现不了。
+2. **主线程无超时阻塞**：直接在主线程 `readline()`，Server 崩溃、不回复或只发了通知时，客户端会一直等下去，也没有机会发送取消通知。
+3. **没有处理插入的消息**：stdio 上所有消息共用一条通道，等待响应期间，Server 可能先发来与该请求相关的进度、日志通知，或者 `subscriptions/listen` 订阅流上的列表变更通知。把读到的第一行当成响应，会错配或卡在等待。如果对端是旧版（2025-11-25 及更早）Server，还可能夹带 Sampling 这类「既有 method 又有 id」的反向请求。
+4. **编码问题**：Windows 下文本模式的管道默认使用本地编码（如 GBK），Server 按 UTF-8 写出的中文按本地编码读入就会乱码，甚至导致解析失败；文本模式还可能转换换行符。
+5. （排查时顺带确认）Server 是否把日志打到了 stdout、是否输出了多行格式化的 JSON，这两者都会破坏「一行一条消息」的约定。
+
+**修复方案**
+
+1. 用两个后台线程分别持续读取 stdout 与 stderr：stdout 的每行解析后放进队列，stderr 写入日志系统；
+2. `request()` 发出请求后从队列取消息：通知按 `progressToken`、`subscriptionId` 等字段分发，只有同 id 的响应才返回（兼容旧版 Server 时，反向请求交给处理器并回复）；等待设超时，超时后发送 `notifications/cancelled`，并给模型回填可行动的错误信息；
+3. 管道一律用二进制模式读写，显式按 UTF-8 编解码；
+4. 关闭时先关 Server 的 stdin，等进程自行退出，超时再强制结束，最后回收读线程。
+
+**防止再次发生**
+
+- 用「大量日志、中文内容、Server 中途崩溃、慢响应」的集成测试覆盖这些场景；
+- 每次工具调用记录 tool span（耗时、超时、取消次数），对长时间未返回的调用告警；
+- 第三方 Server 放进沙箱运行，并设内存与时长上限；
+- Server 进程意外退出时自动重启：协议是无状态的，在途请求随进程丢失，按工具是否幂等决定能否在新进程上重试，并重新建立 `subscriptions/listen` 订阅。
+
+**评分要点（共 10 分）：**
+
+- 指出 stderr 未读取导致管道写满、双方互相等待（3 分）
+- 指出主线程无超时阻塞读取，并给出读线程 + 队列 + 超时与取消的方案（2 分）
+- 指出需要处理等待期间插入的通知（兼容旧版时还有反向请求）（2 分）
+- 指出 Windows 文本模式管道的编码问题，并给出二进制 + UTF-8 的修复（2 分）
+- 给出测试、监控或优雅关闭等防复发措施（1 分）
+
+**讲解：**
+
+**常见失分点**：只回答「加超时重试」，说不出卡死的根因是 stderr 管道写满；不知道等待响应时可能先收到通知；忽略 Windows 的编码问题。stdio 集成看起来最简单，线上问题却往往出在这些进程与管道的细节上。
+
+<sub>考点：MCP传输方式、JSON-RPC生命周期　｜　出处：MCP 规范 2026-07-28（stdio）：https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-046"></a>
+
+### AGT-PROTO-046　挑战 · 考频 ★★
+
+某数据分析 Agent 通过 MCP 接入了 8 个 Server、共 140 个工具（每个工具定义平均约 300 token），系统提示词里还写了十几套分析流程规范（约 1.5 万 token）。典型请求是「对比各区域上季度的退货率，找出异常门店」，需要拉取几千行明细再汇总。上线后发现：每次请求的输入 token 很高、首 token 延迟长、成本超预算，模型还经常选错工具，或者把明细数据算错。请分析原因，给出改造方案，并说明如何验证效果。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**原因分析**
+1. **工具定义常驻**：140 × 300 ≈ 4.2 万 token 的工具定义每次请求都要发送；相似工具多，模型容易选错。
+2. **流程规范全量加载**：1.5 万 token 的规范大部分与当前请求无关，既占 token 又分散注意力。
+3. **中间数据进入上下文**：几千行明细作为工具结果进入上下文，并在之后每一轮被重复输入；让模型「看着明细心算」，又贵又容易算错。
+4. 前缀很长，预填充时间长，首 token 延迟高；如果每次动态拼装工具列表，Prompt Caching 也很难命中。
+
+**改造方案**
+1. **Code Mode 处理数据**：把数据类工具暴露为代码 API，模型写代码在沙箱中拉数、过滤、聚合，只回传汇总表和异常门店列表；计算由代码完成，结果确定、可复现。
+2. **工具按需加载**：对工具做检索（Top-k 加少量常驻），或提供搜索工具的元工具；Code Mode 下让模型按需浏览 API 目录，只读用得到的签名；工具名加 Server 前缀，减少混淆。
+3. **流程规范改成 Skills**：每套流程一个技能，只常驻 name 和 description；确定性的口径计算写成脚本。
+4. **沙箱与数据治理**：容器或 V8 isolate 级隔离，限制 CPU、内存、时长、网络；数据只能经工具代理访问，代理负责权限、行级过滤、调用计数与审计；敏感字段在代码中脱敏后再回传。
+5. **缓存友好**：系统提示词与常驻工具保持稳定、放在最前，新加载的内容只追加。
+
+**验证**
+- 用一批真实分析任务做评测集，对比改造前后的答案正确率（数值类用规则比对）、每任务输入 token、模型调用次数、首 token 与端到端延迟、成本；
+- 离线评估工具检索与技能触发的召回率；
+- 线上监控沙箱错误率、代码重试次数和工具代理的拒绝次数，确认没有引入新的失败模式。
+
+**评分要点（共 10 分）：**
+
+- 定位三类开销：工具定义常驻、流程规范全量加载、中间数据进入上下文（3 分）
+- 给出用 Code Mode 处理大数据与计算的方案（2 分）
+- 给出工具按需加载与 Skills 改造（2 分）
+- 说明沙箱、工具代理与数据治理要求（2 分）
+- 给出可量化的验证方案（1 分）
+
+**讲解：**
+
+**常见失分点**：只说「换个更大窗口的模型」；只做工具检索，忽略中间数据才是大头；上了 Code Mode 却不谈沙箱和权限；没有对比实验就宣称效果提升。
+
+<sub>考点：Code Mode、Agent Skills</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-047"></a>
+
+### AGT-PROTO-047　挑战 · 考频 ★★★
+
+某公司的售后客服 Agent（单个服务，由一个团队维护）要接入 10 个内部接口：查订单、查物流、改地址、申请退款等。团队内部有两种意见：
+
+- 甲：直接在 Agent 代码里为这 10 个接口写 Function Calling 的工具定义和执行函数，简单直接；
+- 乙：把这些接口按业务系统封装成几个 MCP Server，Agent 作为 MCP Host 接入，「这是行业标准」。
+
+另外，公司计划半年后让 IDE 编码助手、数据分析 Agent 和员工的桌面 AI 客户端也能使用其中的部分能力。请分析：(1) 甲、乙两种方案分别解决什么层面的问题，是否互斥；(2) 选型应当看哪些因素，现在和半年后分别怎么选；(3) 如果采用 MCP，一次工具调用从模型到后端的完整链路是怎样的；(4) 哪些问题无论选哪种方案都不会自动解决。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**(1) 层面不同，并不互斥**
+- Function Calling 是**模型与应用之间**的接口：模型用什么格式表达「调用哪个工具、传什么参数」；
+- MCP 是**应用与工具提供方之间**的协议：工具从哪里来、怎样被发现、怎样调用与授权。
+- 用了 MCP，Host 仍然要把 MCP 的工具定义转换成所用模型的 FC 格式交给模型。所以争论的实质是：工具在进程内注册（甲），还是在进程外以标准协议提供（乙）。
+
+**(2) 选型因素**
+- 消费方数量与复用：一个应用对 N 个系统时，进程内注册最简单；M 个应用都要接 N 个系统时，MCP 把 M×N 份集成变成 M+N；
+- 归属与演进：业务系统团队愿意自己维护 Server、独立升级时，MCP 的边界更清晰；
+- 部署形态：本地工具可以用 stdio，远程共享服务用 Streamable HTTP，跨语言、跨进程也不受限制；
+- 鉴权与治理：远程 Server 可以按用户走 OAuth 授权，在 Server 或网关统一审计；
+- 额外成本：多一跳网络、进程与版本管理、协议学习与排障成本，以及更大的安全审查面。
+
+**现在**：单个应用、单个团队、接口都在内部，选甲（进程内工具注册）就够了。但工具层要按「Schema 优先」来设计：命名规范、参数 Schema、错误语义都写清楚，将来可以平滑迁移成 MCP。
+**半年后**：消费方变多，而且包括 IDE、桌面客户端这类第三方 Host，应把这些能力封装为远程 MCP Server（由系统团队或平台团队维护），经网关统一鉴权与审计；客服 Agent 可以逐步改为通过 MCP 调用，也可以保留少量进程内工具。
+
+**(3) MCP 下的调用链路**
+1. Host 调用 `tools/list` 获取工具（可按结果中的缓存提示缓存），按用户权限过滤，加上 Server 前缀作为命名空间；
+2. 把 `inputSchema` 等转换成目标模型的工具定义（如 OpenAI 的 `parameters`）；
+3. 模型返回工具调用 → Host 校验参数、权限，高风险操作先请用户确认；
+4. Host 发送 `tools/call`（携带代表该用户的令牌）→ Server 校验输入、调用后端接口，返回 `content` / `structuredContent`，或 `isError: true` 的执行错误；
+5. Host 把结果映射成模型的工具结果消息（必要时截断大结果），进入下一轮推理。
+模型始终感知不到 MCP 的存在。
+
+**(4) 不会自动解决的问题**
+- 工具描述的质量与选择准确率；
+- 工具一多导致的上下文膨胀，需要工具检索、延迟加载或 Code Mode；
+- 有副作用操作的确认与幂等；后端的最小权限；
+- 工具结果中的提示注入；
+- 可观测、评测与时延预算。
+
+**评分要点（共 10 分）：**
+
+- 指出 FC 是模型与应用之间的接口、MCP 是应用与工具提供方之间的协议，二者互补（2 分）
+- 给出复用规模、归属、部署、鉴权、额外成本等选型因素，并分别给出现在与半年后的选择（3 分）
+- 完整描述 MCP 下从 tools/list 到结果回填的调用链路，指出模型感知不到 MCP（3 分）
+- 列出 MCP 不能自动解决的问题（2 分）
+
+**讲解：**
+
+**常见失分点**：把 MCP 当成 FC 的替代品，回答成「二选一」；只说「MCP 是标准所以更好」，讲不出它解决的是 M×N 集成与跨团队复用问题；调用链路中漏掉「Host 把 MCP 工具转换成模型的工具格式」这一步；以为接入 MCP 后工具选择准确率、注入防护就自然有了保障。
+
+这道题的考点是「按场景选型」：单一应用的早期阶段，直接写工具更快；能力需要被多个 Host 复用时，再把它们沉淀为 MCP Server。
+
+<sub>考点：MCP与Function Calling、MCP动机、MCP架构　｜　出处：MCP 规范 2026-07-28（Tools）：https://modelcontextprotocol.io/specification/2026-07-28/server/tools</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-051"></a>
+
+### AGT-PROTO-051　挑战 · 考频 ★★
+
+公司内部有三个通过 A2A 互相委托的 Agent：差旅助手 T、报销审核 R、预算查询 B。上线后发生了一起事故：T 委托 R 预审一笔差旅费用；R 为了核实预算委托 B；B 认为需要确认出差事由，又委托 T「去问一下员工」；T 把这当作一个新任务，再次委托 R……委托链循环了几十层，直到网关限流才停下，期间产生了大量模型费用。
+
+请分析：(1) 为什么会形成递归委托；(2) 在 A2A 的任务语义下应当如何设计防护；(3) 哪些交互其实更适合做成 MCP 工具，而不是 A2A 委托。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**(1) 成因**
+- 每个 Agent 都不透明且自主，只根据自己的局部上下文决定是否委托，没有人看得到整条委托链；
+- 委托时没有传递来源信息（根任务、调用路径、深度、剩余预算），下游无法知道自己是否已经身处一个环中；
+- B 需要向员工补充信息时，**新建了一个下游委托**，而不是把问题沿原链路交还给上游；
+- 没有深度上限、预算上限和去重机制。
+
+**(2) 防护设计**
+- **传递委托上下文**：在消息的 metadata 或扩展字段中携带根追踪 id、经过的 Agent 列表、当前深度、剩余预算与截止时间。接收方发现自己已在路径中（成环）、深度超限或预算耗尽时，直接拒绝（任务进入 rejected），或以失败结束并说明原因。
+- **正确使用中断状态**：B 需要事由时，应让自己的任务进入 input-required，把问题交还给 R；R 同样交还给 T；最终由 T 询问员工，再带着原任务 id 把答案逐级送回。问题沿原链路向上冒泡，而不是派生新的下游任务。
+- **去重**：同一根 id 下的相同请求，直接返回已存在的任务，不再新建。
+- **预算、超时与级联取消**：每次委托都分配预算与截止时间；上游取消时，向下游传播取消。
+- **限定委托关系**：在配置中规定每个 Agent 可以委托给谁，让委托关系图在设计上就是无环的（如 B 不允许委托 T）；在 Agent Card 中写清能力边界（B 只做预算查询，不与员工交互）。
+- **可观测**：跨 Agent 传递链路追踪上下文，对深度、扇出和费用异常设置告警。
+
+**(3) 更适合做成 MCP 工具的交互**
+「查某部门的剩余预算」是输入输出明确、无状态的一问一答，应当做成 MCP 工具（或普通 API），由 R 直接调用，而不是委托给一个会自主决策、还会继续委托别人的 Agent。A2A 留给真正开放式、耗时长、需要多轮协商的任务，例如完整的报销审核。能用工具解决的地方不用自主 Agent，自主性越少，越不容易出现循环。
+
+**评分要点（共 10 分）：**
+
+- 指出缺少链路信息、局部决策、错误地新建下游委托等成因（2 分）
+- 给出传递根 id、路径、深度与预算并据此拒绝的机制（3 分）
+- 说明应当用 input-required 把问题沿原链路交还给上游（2 分）
+- 提到去重、超时与级联取消、限定委托关系、可观测中的至少两项（1 分）
+- 指出无状态的查询应做成 MCP 工具，A2A 留给开放式长任务（2 分）
+
+**讲解：**
+
+**常见失分点**：只回答「加最大深度」；不知道 A2A 的 input-required 正是为「向调用方追问」设计的，反而让下游自己去找人；把所有能力都包装成 Agent 互相委托，忽略了「工具 vs Agent」的选择。A2A 规范本身没有规定防循环机制，需要在自己的部署中通过元数据约定和网关策略来实现。
+
+<sub>考点：A2A与MCP分工、A2A任务生命周期　｜　出处：A2A 规范 1.0：https://a2a-protocol.org/latest/specification/</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-055"></a>
+
+### AGT-PROTO-055　挑战 · 考频 ★★
+
+团队给内部 Agent 上线了 30 个技能（Agent Skills）。一周后统计发现：
+
+1. 「合同审查」技能在相关请求中只有约 35% 被触发，其余时候模型直接凭经验作答；
+2. 「周报生成」与「日报生成」两个技能经常互相误触发；
+3. 「报销计算」技能被触发后，模型常常只读了 SKILL.md 就开始计算，没有去读正文中提到的 `references/税率表.md`，导致结果出错。
+
+请分别分析原因并给出改进方案，再说明如何建立评测，防止以后修改技能时效果回退。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**1. 触发率低**
+- 原因：description 写得笼统（如「处理合同相关事务」），既没说清「做什么」，也没写「什么时候用」，缺少用户真实会说的词（审合同、看条款、违约风险、保密协议）；关键用途没有放在描述开头，而部分 Host 会截断过长的描述（例如 Claude Code 文档写明，技能列表中 description 与 when_to_use 合计超过 1,536 个字符的部分会被截掉）；技能数量多，描述之间互相稀释注意力。
+- 改进：按「做什么 + 什么时候用 + 用户常用说法」重写描述，最关键的用途放在最前面；对必须走固定流程的场景，提供显式的调用入口（如斜杠命令），不完全依赖模型自行判断。
+
+**2. 互相误触发**
+- 原因：两个描述高度重叠，模型无从区分。
+- 改进：在描述中写清边界（「仅用于汇总一周的工作；单日总结请用 daily-report」）；或者合并成一个技能，用参数区分周期；命名保持一致、便于区分。
+
+**3. 不读参考文件**
+- 原因：正文没有明确说明「何时必须读取哪个文件」；参考文件嵌套太深、链接不显眼；而且查表计算这类确定性工作本就不该交给模型「读表心算」。
+- 改进：在正文的步骤中写明「计算前必须读取 references/税率表.md」；更好的做法是把计算写成脚本（如 `scripts/calc_tax.py`），正文要求必须运行脚本，脚本源码不进上下文、只有结果进入；参考文件保持只嵌套一层。
+
+**4. 评测与防回退**
+- **触发评测集**：每个技能准备「应触发」与「不应触发」的真实问法，包括容易混淆的近似说法；统计触发召回率、精确率，以及相似技能之间的混淆矩阵；
+- **执行评测**：技能触发后，检查模型是否按步骤执行（是否读取了必须读的文件、是否运行了脚本），以及最终结果是否正确；
+- **端到端对照**：比较有无该技能时的任务成功率；
+- **纳入 CI**：修改 description 也是代码变更，任何技能改动都要跑这些评测，结果不能低于基线；
+- **线上监控**：各技能的触发率、长期从未触发的技能、按失败原因打标签的统计；每个技能都要有负责人和版本号。
+
+**评分要点（共 10 分）：**
+
+- 分析触发率低的原因并给出重写描述等改进（2 分）
+- 分析误触发的原因并给出写清边界或合并的方案（2 分）
+- 分析不读参考文件的原因，提出在正文中写明要求、把确定性计算改为脚本（2 分）
+- 设计触发评测（应触发、不应触发、混淆矩阵）与执行评测（2 分）
+- 说明把技能评测纳入 CI 并做线上监控（2 分）
+
+**讲解：**
+
+**常见失分点**：只会说「把描述写详细一点」，没有「什么时候用」和「不该用的情况」；不知道描述可能被截断、需要把关键用途放在前面；把查表计算继续交给模型而不是脚本；没有触发层面的评测，只看最终任务的成功率，出了问题也无法定位是「没触发」还是「触发了没做对」。
+
+技能失效通常分三层排查：没被选中（描述与路由）、选中了没照做（正文写法）、照做了结果不对（脚本与资料）。评测也要按这三层分别建立。
+
+<sub>考点：Agent Skills、技能与工具治理　｜　出处：Agent Skills 规范：https://agentskills.io/specification ；Claude Code 文档 Skills：https://code.claude.com/docs/en/skills</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-068"></a>
+
+### AGT-PROTO-068　挑战 · 考频 ★★
+
+某支付团队的远程 MCP Server 提供 `create_refund(order_id, amount)` 工具，客户端与 Server 都已升级到 MCP 2026-07-28 版（Streamable HTTP）。退款要调用银行接口，耗时 20～40 秒：Server 先在 SSE 响应流上推送一条「已受理」进度，之后要等银行接口返回才有下一条消息。上线后发现：
+
+1. 中间的反向代理对空闲连接有 30 秒超时，部分响应流在给出结果之前被切断；
+2. 客户端按规范用新的请求 id 重新发起 `create_refund`，财务对账发现少量订单被退了两次款。
+
+请分析：(1) 为什么会出现重复退款；(2) 应当如何修复（工具设计、协议用法、部署三个层面）；(3) 如何验证修复有效。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**(1) 原因**
+- 2026-07-28 版取消了 SSE 断线续传与消息重投（`Last-Event-ID`、SSE 事件 id）：响应流一断，在途请求就丢失，客户端只能用新的请求 id 重发。旧版中，若 Server 支持续传，客户端还可以凭 `Last-Event-ID` 重连、取回原请求的结果。
+- Server 会把流断开视为取消，但取消只是「尽力而为」：断开时银行接口可能已经受理退款，副作用已经发生，客户端却不知道。
+- 重发的请求在协议看来是一个全新的请求，JSON-RPC id 也变了，Server 无从判断它与上一次是同一笔业务，于是又执行了一次。
+- 代理的 30 秒空闲超时碰上 20～40 秒的同步调用，让断流成了常见现象。
+
+**(2) 修复**
+- **工具设计：幂等**
+  - 给有副作用的工具增加幂等键参数（如 `idempotency_key`），由 Host 在发起这次业务操作时生成，重发时沿用同一个键。不能用 JSON-RPC id 充当幂等键，因为每次重发都会换新 id。
+  - Server 按「调用者身份 + 幂等键」去重：保存每个键的处理状态与结果，重复请求直接返回首次结果；仍在处理中的返回「处理中」，而不是再执行一次。
+  - 也可以拆成两步：`prepare_refund` 返回退款单句柄，`confirm_refund(refund_id)` 只对未完成的退款单执行；句柄同样要与调用者身份绑定。
+  - 提供 `get_refund_status`，结果不确定时先查询、再决定是否重发。
+- **协议用法：长任务不占着一条请求**
+  - 耗时长的操作改用官方 Tasks 扩展（`io.modelcontextprotocol/tasks`，客户端需在请求能力中声明支持）：Server 立即返回任务句柄，客户端用 `tasks/get` 轮询；任务 id 可以跨断线、跨重启继续使用，不再受代理超时影响。
+  - Host 对有副作用的调用不能「断了就盲目重发」：要么带同一个幂等键重发，要么先查状态。
+- **部署：减少断流**
+  - 长时间的响应流定期发送 SSE 注释行（以冒号开头）作保活，响应头带 `X-Accel-Buffering: no` 关闭代理缓冲；按业务时长调整代理的空闲超时。
+
+**(3) 验证**
+- 故障注入：在执行中途、银行接口返回前后的不同时刻切断响应流，确认重发后每笔订单只退款一次、返回结果一致；
+- 并发测试：同一幂等键的两个请求同时到达，只执行一次；
+- 线上监控：重发率、幂等命中率、断流次数；每日与银行流水对账，出现重复立即告警。
+
+**评分要点（共 10 分）：**
+
+- 指出新版取消断线续传、断流即丢失在途请求、重发使用新 id（2 分）
+- 指出副作用可能已经发生，重发被当成新请求而重复执行（2 分）
+- 给出幂等键（不能用 JSON-RPC id）、按身份去重、先查后做等工具层修复（3 分）
+- 提到 Tasks 扩展或两步式句柄，以及保活、代理配置等措施（2 分）
+- 给出故障注入、并发测试与对账等验证手段（1 分）
+
+**讲解：**
+
+**常见失分点**：把问题归咎于「客户端不该重发」，而规范恰恰要求断流后用新 id 重发；想用 JSON-RPC 请求 id 去重；只调大代理超时而不做幂等；以为 Server 收到取消就一定没有执行。核心结论：在「至少一次」的重发语义下，有副作用的工具必须自己保证幂等，协议不会替你去重。
+
+<sub>考点：MCP传输方式、MCP服务端原语　｜　出处：MCP 规范 2026-07-28（Streamable HTTP、Cancellation）：https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http ；MCP Tasks 扩展：https://modelcontextprotocol.io/extensions/tasks/overview ；变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog</sub>
+
+</details>
+
+---
+
+## 系统设计题
+
+<a name="AGT-PROTO-030"></a>
+
+### AGT-PROTO-030　挑战 · 考频 ★★
+
+公司有几十个团队各自维护 MCP Server（工单、CRM、数据仓库、代码仓库等），需要提供给多个 Host 使用：IDE 编码助手、客服 Agent、数据分析 Agent，以及员工自己安装的桌面 AI 客户端。安全团队要求：统一鉴权、按租户与用户隔离、所有工具调用可审计、第三方 Server 可控。请设计一个企业级的 MCP 接入平台（MCP 网关），说明关键设计与取舍。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**1. 需求澄清**
+- 规模：Server 数十个、工具数百个，日调用量与峰值并发；是否有多租户（子公司、外部客户）；
+- 合规：哪些数据不能出域，审计日志保留多久；哪些操作必须人工确认。
+
+**2. 总体架构**
+- Host（各类 AI 客户端）→ **MCP 网关** → 各团队的 MCP Server。网关对 Host 表现为 MCP Server，对后端表现为 MCP Client；
+- 配套组件：注册中心（Server 名录、版本、负责人、工具定义快照）、认证授权服务（对接企业身份系统）、策略引擎、审计与观测管道、密钥管理服务。
+
+**3. 传输与鉴权**
+- 对外统一 Streamable HTTP + OAuth 2.1：企业身份系统作为授权服务器，授权码 + PKCE，令牌绑定受众；客户端注册优先使用 CIMD（DCR 在 2026-07-28 版已弃用）；
+- 网关校验令牌后解析出用户与租户；访问后端时使用网关自己的凭证或经令牌交换得到的、权限更窄的令牌，**不透传**用户令牌；
+- 必须在本机运行的 stdio Server（读本地文件、操作 git）不经过网关，由 Host 在沙箱中运行，凭证经环境变量注入，并纳入软件白名单管理。
+
+**4. 授权与隔离**
+- 策略按「租户 × 用户 × Server × 工具」配置，读写分离；破坏性操作（删除、对外发送、转账）标记为需确认，由 Host 发起人工确认；
+- 后端访问数据时按租户在存储层强制过滤；上游凭证按租户分别保存在密钥管理服务中，不共用高权限服务账号；
+- 按租户、按工具限流和配额，防止一个租户拖垮所有人。
+
+**5. Server 治理**
+- 只放行注册中心里审核过的 Server 和版本；接入时审核完整的工具描述，扫描可疑指令；
+- 给工具定义计算哈希并钉住；按 `ttlMs` 缓存后端的工具列表，并通过 `subscriptions/listen` 订阅列表变更，收到 `list_changed` 后重新拉取并比对，有变化就暂停该工具、重新审批；`cacheScope` 为 `private` 的结果只在同一用户的授权上下文内复用；
+- 对外暴露的工具名统一加命名空间，防止同名遮蔽；按 Host 场景过滤出工具子集，减少上下文占用。
+
+**6. 可靠性与兼容**
+- 每个请求设超时，超时即取消（HTTP 上关闭该请求的响应流，stdio 上发 `notifications/cancelled`）；对后端熔断，只对幂等工具重试。2026-07-28 版取消了断线续传，响应流断开后请求要用新 id 重发，有副作用的工具必须带幂等键；
+- 协议版本与能力随每个请求在 `_meta` 中声明，网关可用 `server/discover` 了解后端支持的版本；对仍停留在 2025-11-25 的后端，由网关兼容 initialize 握手与会话，或推动其升级；工具定义只做向后兼容的修改，破坏性修改发布新版本，旧版本保留一段时间。
+
+**7. 可观测与审计**
+- 网关可以直接依据 `Mcp-Method`、`Mcp-Name` 请求头做路由、限流与审计，不必解析请求体，但要确认请求的协议版本要求头与体一致，并由处理请求体的一方校验二者确实一致；
+- 每次工具调用记录 tool span：Server 名与版本、工具名、调用 id、参数摘要（脱敏）、耗时、结果大小、isError、租户、用户、对话或任务 id；trace 上下文经 `_meta` 中的 `traceparent` 透传到后端；
+- 看板：各工具成功率、P99、错误率、限流命中、待审批量；对异常模式告警（某工具调用量突增、参数中出现敏感路径）。
+
+**8. 取舍与风险**
+- 网关是单点和额外一跳：多实例无状态部署。2026-07-28 版协议没有会话，普通轮询负载均衡即可，不需要粘性路由和共享会话存储（工具自身的跨调用状态由后端以显式句柄保存）；
+- 集中治理会降低团队上线速度：提供自助接入流程和自动化扫描；
+- 网关只能管住经过它的流量，员工本机直连的 Server 需要通过终端管理和白名单补齐。
+
+**评分要点（共 10 分）：**
+
+- 给出网关居中、注册中心、策略引擎等清晰的架构（2 分）
+- 鉴权设计正确：OAuth 2.1 + PKCE、受众绑定、不透传令牌，并区分 stdio 的处理（2 分）
+- 授权与多租户隔离：细粒度策略、存储层过滤、凭证分离、限流配额（2 分）
+- 第三方 Server 治理：白名单、版本锁定、定义哈希、命名空间（2 分）
+- 可靠性与可观测：超时取消、幂等重试、版本兼容、tool span 与告警，并讨论网关自身的取舍（2 分）
+
+**讲解：**
+
+**常见失分点**：只画一个「网关」方框，讲不出鉴权链路；让网关把用户令牌透传给后端；忽略 stdio Server 无法经过网关；没有考虑工具定义被悄悄修改；没有审计字段和指标；仍按旧版思路设计粘性会话和共享会话存储。系统设计题要先澄清需求和规模，再给架构、关键设计、指标和风险。
+
+<sub>考点：MCP架构、MCP鉴权、MCP传输方式　｜　出处：MCP 规范 2026-07-28 变更日志：https://modelcontextprotocol.io/specification/2026-07-28/changelog ；Streamable HTTP：https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http</sub>
+
+</details>
+
+---
+
+<a name="AGT-PROTO-056"></a>
+
+### AGT-PROTO-056　挑战 · 考频 ★★
+
+公司的 Agent 平台已经有统一的 MCP 网关，负责鉴权、租户隔离与审计。如今平台上积累了约 120 个 Agent Skills 和 100 多个 MCP Server（合计 1,500 多个工具），由几十个团队各自维护。问题开始出现：同名或功能重叠的技能互相干扰；工具定义动辄占用几万 token；有些 Server 长期无人维护，后端接口早已变化；某次技能更新后，多个业务 Agent 的效果同时下降。
+
+请设计这些技能与工具的治理方案，覆盖：注册与准入、发现与加载、版本与发布、质量评测、可观测与淘汰。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**1. 先估算，明确「不能全量加载」**
+- 技能元数据：120 × 约 100 token ≈ 1.2 万 token，每次请求都要带；
+- 工具定义：1,500 × 约 300 token ≈ 45 万 token，超过多数模型的窗口；
+- Anthropic 的文档指出，可用工具超过 30～50 个后，Claude 选对工具的能力会明显下降。所以必须做「按需发现 + 限量加载」。
+
+**2. 注册与准入**
+- 统一目录：每个技能与工具都登记负责人、用途描述、版本、风险等级（只读 / 写 / 破坏性）、所需权限、依赖、评测结果和状态（实验 / 正式 / 弃用）；
+- 命名空间：工具名统一加上 Server 前缀（如 `crm.search_customer`）；技能以「来源 + URI」作为身份，禁止同名技能悄悄互相覆盖；
+- 准入检查：Schema 与命名规范、描述质量（写清做什么、什么时候用）、错误语义；安全扫描描述和技能内容中的可疑指令，脚本必须在沙箱中运行；
+- 固定版本：记录工具定义与技能文件的摘要，内容一变就需要重新审核。
+
+**3. 发现与加载**
+- 每个业务 Agent 声明自己需要的技能与工具子集（白名单），而不是默认看到全部；
+- 两级检索：先按业务域路由，再在域内对名称与描述做工具检索（BM25 或向量），结合延迟加载机制，只把相关的几个工具放进上下文；最常用的 3～5 个工具常驻；
+- 设上限：每轮激活的工具数、技能元数据的总 token 都有预算；技能正文在触发时才加载；
+- 批量数据处理类任务改用 Code Mode，让中间数据留在执行环境里，不经过上下文。
+
+**4. 版本与发布**
+- 语义化版本；工具 Schema 只做向后兼容的修改，不兼容的修改发布为新工具名；
+- 业务 Agent 锁定所用版本；新版本先灰度到少数 Agent，通过评测门禁后再扩大范围，并且可以一键回滚；
+- 弃用要有过渡期和通知；「修改描述」与修改代码一样走评审和评测。
+
+**5. 质量评测**
+- 每个技能与 Server 自带评测集：触发精确率与召回率、在干扰工具存在时的选择准确率、参数准确率、任务成功率、时延与错误率；
+- **消费方回归**：发布前，跑一遍使用它的业务 Agent 的回归集。这正是「一次技能更新拖垮多个 Agent」事故的解法。
+
+**6. 可观测与淘汰**
+- 按技能、工具统计调用量、成功率、时延、token 消耗，以及有哪些 Agent 在用；
+- 对 Server 做健康检查和契约测试，及时发现后端接口变化；
+- 长期无调用的进入弃用候选；无人负责的冻结；用描述的向量相似度找出功能重复的条目，推动合并；定期评审。
+
+**7. 取舍**：集中治理会拖慢团队，可以分级处理：实验区流程轻、正式区要求严。工具检索多了一步，还可能漏召回，要单独监控检索的召回率。
+
+**评分要点（共 10 分）：**
+
+- 给出 token 与工具数量的估算，说明必须按需加载（2 分）
+- 设计注册目录、命名空间、准入检查与摘要固定（2 分）
+- 设计白名单 + 两级检索 + 加载上限的发现与加载方案（2 分）
+- 设计版本、灰度、回滚，并包含消费方回归的评测门禁（2 分）
+- 设计可观测指标与弃用、合并、淘汰机制，并讨论取舍（2 分）
+
+**讲解：**
+
+**常见失分点**：只谈鉴权与审计（题目已说明网关负责这些），而没有回答「上千个工具怎么让模型用得上、用得对」；没有做数量与 token 的估算；只给技能或工具本身做评测，忽略了消费方的回归，这恰恰是题目中事故的根因；没有淘汰机制，目录只增不减。
+
+<sub>考点：技能与工具治理、Agent Skills、MCP架构　｜　出处：Claude 文档 Tool search tool：https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool ；MCP Skills 扩展：https://modelcontextprotocol.io/extensions/skills/overview ；Agent Skills 规范</sub>
+
+</details>
+
+---

@@ -1,0 +1,6 @@
+# 统一换行：仓库内文本文件一律以 LF 存储与检出（Windows 上也是 LF），保证 CI 重新生成的 docs/ 与 dist/ 和提交的内容一致
+* text=auto eol=lf
+# CSV 由 build.py 用 csv 模块生成（行尾 CRLF、字段内换行 LF），各平台逐字节一致，原样保存不做换行转换
+*.csv -text
+*.png binary
+*.woff2 binary

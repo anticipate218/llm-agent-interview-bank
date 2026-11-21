@@ -1,0 +1,953 @@
+domain: INF
+subcategory: KERNEL
+questions:
+
+  - id: INF-KERNEL-001
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [GPU内存层次]
+    tags: [A100, SRAM, HBM]
+    question: |
+      关于 GPU 的存储层次（以 A100 为例），下列说法正确的是：
+    options:
+      A: 'L2 缓存容量大、带宽高，推理框架会把 Decode 每步要读的权重常驻在 L2 中，避免反复读 HBM'
+      B: '共享内存是全卡共用的：一个线程块写入的数据，其他 SM 上的线程块可以直接读取，用于跨块归约'
+      C: '寄存器是片上容量最大的存储，FlashAttention 把整个 N×N 的打分矩阵放在寄存器里，避免写回 HBM'
+      D: 'HBM 带宽约 1.5～2.0 TB/s；108 个 SM 各有 192 KB 片上 SRAM，总带宽估计约 19 TB/s'
+    answer: D
+    explanation: |
+      **结论**：越靠近计算单元越快：寄存器 → 共享内存 / L1（每个 SM 私有）→ L2（全卡共享，A100 为 40 MB）→ HBM（显存，40 / 80 GB）。容量大体逐级增大，但寄存器文件是例外：A100 每个 SM 有 256 KB 寄存器，比 192 KB 的 L1 / 共享内存还大，只是分到每个线程最多 255 个 32 位寄存器。
+
+      FlashAttention 论文给出的 A100 数字：HBM 带宽 1.5～2.0 TB/s，108 个 SM 各有 192 KB 片上 SRAM，带宽估计约 19 TB/s，比 HBM 高一个数量级，但总容量只有约 20 MB。IO 感知算法的出发点就是：尽量让数据在 SRAM 中被反复使用，少回 HBM。
+
+      - A 错：L2 只有几十 MB，远小于动辄十几 GB 的权重。
+      - B 错：共享内存属于单个 SM，由在该 SM 上运行的线程块使用，跨线程块的归约要经过 L2 / HBM（如原子操作）；Hopper 引入的分布式共享内存也只允许同一线程块簇（cluster）内互访。
+      - C 错：全卡的寄存器加起来约 27 MB，比 40 MB 的 L2 还小；每个 SM 的寄存器文件只有 256 KB，FlashAttention 恰恰是为了不物化 N×N 矩阵，只在片上保留一个 $B_r\times B_c$ 的小块。
+    source: 'FlashAttention 论文 arXiv:2205.14135；NVIDIA A100 Tensor Core GPU 架构白皮书（每个 SM 256 KB 寄存器、192 KB L1 / 共享内存，L2 40 MB）https://images.nvidia.com/aem-dam/en-zz/Solutions/data-center/nvidia-ampere-architecture-whitepaper.pdf'
+
+  - id: INF-KERNEL-002
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [GPU内存层次, FlashAttention分块]
+    question: |
+      FlashAttention 的分块越大越好：块越大，K、V 被重复读取的次数越少，所以 $B_r$、$B_c$ 应该设到共享内存能容纳的上限。
+    answer: false
+    explanation: |
+      **错误**。分块大小是多个约束之间的折中：
+      - **片上资源**：Q、K、V 的块放在共享内存，打分块与输出累加器主要放在寄存器里。块太大会让寄存器溢出到更慢的本地内存，或让每个 SM 只能驻留更少的线程块（占用率下降），难以掩盖访存延迟；
+      - **并行度**：线程块的数量约为 batch × 头数 × $\lceil N/B_r\rceil$，块太大时，短序列、小 batch 下线程块不够分给所有 SM；
+      - **因果掩码**：对角线上的块需要逐元素掩码、有一部分计算被浪费，块越大浪费越多；
+      - **头维度**：$d$ 越大，同样的片上空间能放的行数越少。
+
+      FlashAttention 论文按 SRAM 大小 $M$ 取 $B_c=\lceil M/4d\rceil$、$B_r=\min(\lceil M/4d\rceil,d)$；实际 kernel 针对不同的 GPU 与头维度调优，常见 64～128 一类的取值。
+    source: 'FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-003
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [IO感知, GPU内存层次]
+    tags: [H100, 算术强度]
+    question: |
+      标准（朴素）注意力的实现分三步：计算 $S=QK^\top$ 写回 HBM；读出 $S$ 做 softmax 得到 $P$ 再写回；读出 $P$ 与 $V$ 相乘得到输出。对单个头，序列长度 $N=8192$，头维度 $d=128$，$S$、$P$ 用 BF16 存储。
+      (1) 两次矩阵乘的 FLOPs 是多少？只计 $S$、$P$ 的读写，HBM 访问量是多少字节？算术强度是多少？
+      (2) 在 H100（989 TFLOPS、3.35 TB/s）上，计算与读写 $S$、$P$ 各需多少时间？瓶颈在哪？
+      (3) 推导这个强度与 $N$、$d$ 的关系，并说明 FlashAttention 为什么能改变这个局面。
+    answer: '(1) 约 3.44×10^10 FLOPs，约 537 MB，强度 64 FLOP/B；(2) 计算约 35 µs，读写约 160 µs，受带宽限制，读写时间约为计算的 4.6 倍；(3) 强度 = 4N²d ÷ 8N² = d/2，与 N 无关且远低于拐点；FlashAttention 让 S、P 只留在片上，HBM 只需读写 Q、K、V、O 等 O(Nd) 量级的数据'
+    explanation: |
+      **(1)** 两次矩阵乘各 $2N^2d$，共 $4N^2d=4\times8192^2\times128\approx3.44\times10^{10}$ FLOPs。$S$ 写一次、读一次，$P$ 写一次、读一次，共 $4\times N^2\times2=8N^2\approx5.37\times10^8$ 字节（约 537 MB）。强度 $=3.44\times10^{10}\div5.37\times10^8=$ **64** FLOP/B。
+
+      **(2)** 计算 $3.44\times10^{10}\div989\times10^{12}\approx35$ µs；读写 $5.37\times10^8\div3.35\times10^{12}\approx160$ µs，约为计算的 4.6 倍。H100 的拐点约 295 FLOP/B，64 远在其左，**受带宽限制**；Q、K、V、O 本身只有约 8 MB，可以忽略。
+
+      **(3)** 强度 $=\dfrac{4N^2d}{8N^2}=\dfrac{d}{2}$：序列再长也不会改善，头维度 128 时只有 64。这就是「注意力慢在读写显存，不在计算」的定量依据（还没算 softmax 可能需要的多次读取、掩码与 dropout 的额外读写）。
+
+      FlashAttention 把 $S$、$P$ 分块留在片上 SRAM，与 softmax、掩码融合在同一个 kernel 中，HBM 只需读写 Q、K、V、O 这些 $O(Nd)$ 量级的数据（以及 K、V 块的重复读取），FLOPs 不变，HBM 流量大幅下降，注意力从带宽瓶颈转向算力瓶颈。
+    source: 'FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-004
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [IO感知]
+    tags: [FlashAttention]
+    question: |
+      FlashAttention 比标准注意力实现快的根本原因是：
+    options:
+      A: '它用分块与 online softmax 把注意力的 FLOPs 从 $O(N^2d)$ 降到了 $O(Nd)$'
+      B: '它用低秩投影近似 $QK^\top$，省掉了大部分打分计算，精度损失可以忽略'
+      C: '它让打分矩阵 $S$、$P$ 只在片上 SRAM 中分块计算、不写回 HBM，减少了显存读写'
+      D: '它在 Tensor Core 上改用 FP8 计算注意力，算力约为 BF16 的 2 倍'
+    answer: C
+    explanation: |
+      **结论**：FlashAttention 是 IO 感知的精确算法，省的是数据搬运，不是计算。
+
+      标准实现中，$N\times N$ 的打分矩阵要写回 HBM 再读出来，强度只有约 $d/2$，受带宽限制；FlashAttention 分块计算，用 online softmax 边算边归一化，$N\times N$ 矩阵从不出现在 HBM 中，额外显存也从 $O(N^2)$ 降到 $O(N)$。掩码、softmax、dropout 也融合在同一个 kernel 里，FLOPs 并没有减少。
+
+      - A 错：计算量仍是 $O(N^2d)$，反向重计算还会让 FLOPs 略增。
+      - B 错：那是 Linformer 一类的近似注意力；FlashAttention 是精确算法，online softmax 与一次性 softmax 在代数上完全相等。
+      - D 错：FlashAttention 第一代面向 FP16 / BF16；FP8 是 FlashAttention-3 在 Hopper 上新增的可选功能，并非加速的根本原因。
+    source: 'FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-005
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [IO感知]
+    question: |
+      关于「IO 感知」（IO-aware）的算子设计与 FlashAttention，下列说法正确的有：
+    options:
+      A: 'FlashAttention 让序列长度 512 的 BERT-large 端到端训练比 MLPerf 纪录快 10 倍以上'
+      B: 'IO 感知主要针对注意力这类有 $N\times N$ 中间结果的算子，对 LayerNorm、激活函数等逐元素算子意义不大'
+      C: 'IO 感知指设计算法时要考虑各级存储之间的数据搬运量，而不只是 FLOPs'
+      D: 'FlashAttention 的 HBM 访问量为 $\Theta(N^2d^2/M)$（$M$ 为 SRAM 大小），常见配置下少于标准实现'
+      E: 'FlashAttention 的额外显存（输入输出之外）从 $O(N^2)$ 降到了 $O(N)$'
+    answer: [C, D, E]
+    explanation: |
+      **结论**：C、D、E 正确。
+
+      - A 错：端到端训练中注意力只占一部分时间，加速比还与序列长度、头维度、GPU 有关。论文报告的是：BERT-large（序列 512）端到端训练比 MLPerf 1.1 的纪录快 15%，GPT-2（序列 1K）快 3 倍，长序列基准 Long Range Arena 上快 2.4 倍；序列很短时收益有限。
+      - B 错：逐元素算子的强度极低，把它们融合进相邻的 kernel、减少中间结果的读写，正是 IO 感知最常见的应用。
+      - C 对：GPU 上很多算子受带宽限制，减少 HBM 读写往往比减少 FLOPs 更有效。
+      - D 对：论文证明标准注意力的 HBM 访问量为 $\Theta(Nd+N^2)$，FlashAttention 为 $\Theta(N^2d^2/M)$。$d^2/M$ 通常远小于 1（如 $d=128$、$M$ 约为十万个元素量级），所以 FlashAttention 的 HBM 访问量明显更少；论文还证明，在一定的 SRAM 大小范围内，没有精确注意力算法能在所有 SRAM 大小下渐近地做得更好。
+      - E 对：只需保存输出与每行的 softmax 统计量。
+    source: 'FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-006
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [FlashAttention分块, FlashAttention-2与3]
+    question: |
+      FlashAttention-1 的前向是「外层循环遍历 K、V 块，内层循环遍历 Q 块」；FlashAttention-2 改为「外层遍历 Q 块，内层遍历 K、V 块」。这样调整的主要好处是：
+    options:
+      A: '每个 Q 块的输出与统计量留在片上累加、最后只写回一次 HBM，且各 Q 块可分给不同线程块并行'
+      B: '内层遍历 K、V 时可以提前判断哪些分数很小并跳过，从而减少 $QK^\top$ 的计算量'
+      C: 'K、V 块在整个前向中只需从 HBM 读取一次，而第一代要为每个 Q 块重复读取 K、V'
+      D: '因果掩码要求先处理完前面的 Q 块，只有外层遍历 Q 块才能按顺序施加掩码'
+    answer: A
+    explanation: |
+      **结论**：把「输出」放在外层，就把输出的反复读写变成了一次写回，并获得了沿序列方向的天然并行。
+
+      FlashAttention-1 外层取一个 K、V 块，内层遍历所有 Q 块：每处理一个 Q 块，都要把该块的部分输出 $O_i$ 与 $\ell_i$、$m_i$ 从 HBM 读出、更新后再写回，输出被反复读写。FlashAttention-2 外层取一个 Q 块、内层遍历全部 K、V 块：这个 Q 块的累加器始终留在片上，最后统一除以 $\ell$ 并写回一次；各 Q 块之间没有依赖，可以分给不同的线程块并行计算，长序列、小 batch 时也能占满 GPU。
+
+      - B 错：循环顺序不改变计算量。按分数大小跳过计算会变成近似注意力，FlashAttention-2 是精确的，只会跳过因果掩码下整块都在未来的 K、V 块。
+      - C 错：说反了，「K、V 只读一次」恰恰是 FlashAttention-1 的性质（外层遍历 K、V，每块只读一次）；FlashAttention-2 中每个 Q 块都要把 K、V 读一遍，不过多个线程块同时读同样的 K、V 块时，L2 缓存能吸收一部分。
+      - D 错：两种顺序都支持因果掩码，FlashAttention-2 还能直接跳过整块都在未来的 K、V 块。
+    source: 'FlashAttention-2 arXiv:2307.08691；FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-007
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [FlashAttention分块, Online Softmax, 反向重计算]
+    question: |
+      请说明 FlashAttention 的算法要点：前向如何分块、如何在看不到整行时做 softmax、反向传播如何处理；它的计算量、额外显存与 HBM 访问量分别如何；它在 Decode 阶段为什么收益有限。
+    answer: |
+      1. **分块（tiling）**：$Q$ 按 $B_r$ 行分块，$K$、$V$ 按 $B_c$ 行分块。外层取一个 Q 块载入 SRAM，内层逐个载入 K、V 块：计算打分块 $S_{ij}=Q_iK_j^\top$，加掩码，更新统计量与输出累加器；打分块只在片上存在，从不写回 HBM。
+      2. **online softmax**：每行维护当前最大值 $m$、分母 $\ell$ 与未归一化的输出 $o$。新块到来时 $m'=\max(m,\max_js_j)$，$\ell'=e^{m-m'}\ell+\sum_je^{s_j-m'}$，$o'=e^{m-m'}o+\sum_je^{s_j-m'}v_j$；全部处理完后输出 $o/\ell$。$e^{m-m'}$ 把旧结果换算到新的基准，代数上与一次性 softmax 完全相等，因此结果精确。
+      3. **融合**：矩阵乘、掩码、softmax、dropout 在同一个 kernel 中完成。
+      4. **反向重计算**：不保存 $N\times N$ 的 $P$，只保存输出 $O$ 与每行的 log-sum-exp；反向时按块从 Q、K 重新计算 $S$ 与 $P$，再计算 $dV$、$dP$、$dS$、$dQ$、$dK$。FLOPs 增加，但省去了 $N\times N$ 矩阵的读写，整体仍更快。
+      5. **复杂度**：FLOPs 仍为 $O(N^2d)$；额外显存从 $O(N^2)$ 降到 $O(N)$；HBM 访问量从 $\Theta(Nd+N^2)$ 降到 $\Theta(N^2d^2/M)$（$M$ 为 SRAM 大小）。
+      6. **Decode 时收益有限**：每条序列只有 1 个 query，不存在 $N\times N$ 矩阵可省，瓶颈是读取整段 KV；按 batch 与头划分的线程块又太少，小 batch、长上下文时大量 SM 闲置。需要 split-KV 的 FlashDecoding 与分页 KV 的 Decode kernel。
+    rubric:
+      - '说清分块与打分块不写回 HBM（2 分）'
+      - '写出 online softmax 的更新公式并说明为何精确（3 分）'
+      - '说明反向只保存 O 与 log-sum-exp、重计算 S 与 P（2 分）'
+      - '正确给出 FLOPs、额外显存与 HBM 访问量的变化（2 分）'
+      - '说明 Decode 阶段收益有限的原因（1 分）'
+    explanation: |
+      **常见失分点**：说 FlashAttention 是近似算法或降低了 FLOPs；更新公式中忘了给旧的输出累加器乘 $e^{m-m'}$；以为反向要保存 $P$；不知道 Decode 阶段需要 split-KV 一类的专门 kernel。
+    source: 'FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-008
+    type: code_output
+    difficulty: 2
+    frequency: 1
+    points: [FlashAttention分块]
+    tags: [因果掩码]
+    question: |
+      FlashAttention 处理因果注意力时，可以跳过整块都位于「未来」的 K、V 块，对角线附近的块则需要逐元素加掩码。下面的代码统计序列长度为 1000 时需要处理的块数。函数返回（总块数，实际处理的块数，其中需要逐元素掩码的块数）。输出是什么？
+    code: |
+      def count_tiles(T, Br, Bc, causal=True):
+          total = skipped = masked = 0
+          for i in range(0, T, Br):
+              last_row = min(i + Br, T) - 1            # 这个 Q 块中最靠后的一行
+              for j in range(0, T, Bc):
+                  total += 1
+                  if causal and j > last_row:          # 整块都在未来：直接跳过
+                      skipped += 1
+                  elif causal and j + Bc - 1 > i:      # 块内有一部分在未来：要逐元素加掩码
+                      masked += 1
+          return total, total - skipped, masked
+
+      print(count_tiles(1000, 128, 128))
+      print(count_tiles(1000, 128, 64))
+      print(count_tiles(1000, 128, 128, causal=False))
+    answer: |
+      (64, 36, 8)
+      (128, 72, 16)
+      (64, 64, 0)
+    explanation: |
+      - **$B_r=B_c=128$**：Q、K 各分成 $\lceil1000/128\rceil=8$ 块，共 64 个块对。第 $i$ 个 Q 块只需处理第 $0\sim i$ 个 K 块，共 $1+2+\cdots+8=36$ 个；其中对角线上的 8 个块需要逐元素掩码，其余 28 个整块可见，不用掩码。
+      - **$B_r=128$、$B_c=64$**：K 分成 16 块，共 128 个块对；第 $i$ 个 Q 块需要处理 $2(i+1)$ 个 K 块，共 72 个；每个 Q 块与两个 K 块部分重叠，需要掩码的共 16 个。
+      - **不加因果掩码**：64 个块全部处理，无需掩码。
+
+      因果注意力跳过了约一半的块，所以同样长度下它比非因果注意力快接近 2 倍（FlashAttention-2 论文报告约 1.7～1.8 倍）。只有对角线附近的块需要逐元素判断，其余块可以走不加掩码的快速路径。
+    source: 'FlashAttention-2 arXiv:2307.08691'
+
+  - id: INF-KERNEL-009
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [Online Softmax]
+    question: |
+      对长度为 $V$ 的向量做数值稳定的 softmax（先减去最大值），朴素实现需要扫描三遍：求最大值、求指数和、计算并写出结果，每个元素从显存读 ____ 次、写 1 次。online softmax 在一遍扫描中同时维护最大值与（随最大值修正的）指数和，每个元素只需读 ____ 次、写 1 次。
+    answer: ['3', '2']
+    explanation: |
+      - **安全 softmax**：第一遍读，求最大值 $m$；第二遍读，求 $\sum e^{x_i-m}$；第三遍读，计算 $e^{x_i-m}/\sum$ 并写出。共读 **3** 次、写 1 次。
+      - **online softmax**：第一遍读，同时维护 $m$ 与 $d$：遇到新元素时 $m'=\max(m,x)$，$d'=d\cdot e^{m-m'}+e^{x-m'}$；第二遍读，计算并写出结果。共读 **2** 次、写 1 次。
+
+      这个思路最早由 Milakov 与 Gimelshein（2018）提出，用于减少 softmax 的显存访问。在注意力中更进一步：把输出的加权和也按同样的方式修正，前向就只需扫描一遍 K、V，这正是 FlashAttention 的核心。
+    source: 'Online normalizer calculation for softmax（Milakov 与 Gimelshein, 2018）'
+
+  - id: INF-KERNEL-010
+    type: code_fill
+    difficulty: 2
+    frequency: 2
+    points: [FlashDecoding, Online Softmax]
+    tags: [split-KV, log-sum-exp]
+    question: |
+      FlashDecoding 把一个 query 要看的 KV 切成多段并行计算：每段返回「段内已归一化的输出」与「段内打分的 log-sum-exp」，最后合并成与整段 softmax 完全相同的结果。补全合并函数。
+    code: |
+      import torch
+
+      def merge_splits(outs, lses):
+          """outs：各段在段内归一化后的输出，形状 (B, H, d)；lses：各段打分的 log-sum-exp，形状 (B, H)"""
+          lse = torch.____(torch.stack(lses), dim=0)           # 全局的 log 分母
+          out = torch.zeros_like(outs[0])
+          for o, l in zip(outs, lses):
+              out = out + torch.exp(____)[..., None] * o       # 每段的权重 = 段分母 / 全局分母
+          return out, lse
+    answer: ['logsumexp', 'l - lse']
+    test: |
+      torch.manual_seed(0)
+      B, H, T, d = 2, 3, 100, 16
+      q = torch.randn(B, H, d, dtype=torch.float64)
+      k = torch.randn(B, H, T, d, dtype=torch.float64)
+      v = torch.randn(B, H, T, d, dtype=torch.float64)
+
+      def part(qq, kk, vv):
+          s = torch.einsum("bhd,bhtd->bht", qq, kk) / d ** 0.5
+          return torch.einsum("bht,bhtd->bhd", torch.softmax(s, -1), vv), torch.logsumexp(s, -1)
+
+      full, full_lse = part(q, k, v)
+      for bounds in ([0, 100], [0, 30, 100], [0, 7, 50, 51, 100]):     # 1 段、2 段、不等长的 4 段
+          segs = [part(q, k[:, :, a:b], v[:, :, a:b]) for a, b in zip(bounds, bounds[1:])]
+          out, lse = merge_splits([o for o, _ in segs], [l for _, l in segs])
+          assert torch.allclose(out, full) and torch.allclose(lse, full_lse)
+      big = q * 200                                                      # 打分很大时也要稳定
+      full, _ = part(big, k, v)
+      segs = [part(big, k[:, :, a:b], v[:, :, a:b]) for a, b in ((0, 40), (40, 100))]
+      out, _ = merge_splits([o for o, _ in segs], [l for _, l in segs])
+      assert torch.isfinite(out).all() and torch.allclose(out, full)
+    explanation: |
+      设第 $i$ 段的分母为 $Z_i=\sum_{j\in i}e^{s_j}$，段内输出 $o_i=\frac{1}{Z_i}\sum_{j\in i}e^{s_j}v_j$，$\mathrm{lse}_i=\log Z_i$。全局分母 $Z=\sum_iZ_i$，于是
+      $$o=\frac{1}{Z}\sum_j e^{s_j}v_j=\sum_i\frac{Z_i}{Z}o_i=\sum_ie^{\mathrm{lse}_i-\mathrm{lse}}\,o_i,\qquad \mathrm{lse}=\log\sum_ie^{\mathrm{lse}_i}$$
+
+      所以第一空是 `logsumexp`，第二空是 `l - lse`。`torch.logsumexp` 内部先减去最大值，打分很大时也不会溢出；权重 $e^{\mathrm{lse}_i-\mathrm{lse}}\le1$，同样安全。
+
+      这个合并满足结合律、与分段方式无关（测试中 1 段、2 段、不等长的 4 段结果相同），因此各段可以由不同的线程块并行计算，最后用一个小的归约 kernel 合并，结果精确。FlashAttention 前向中处理新块时用 $e^{m-m'}$ 修正旧结果，是同一个恒等式的流式版本。
+    source: 'Flash-Decoding 技术博客（Dao 等, 2023）'
+
+  - id: INF-KERNEL-011
+    type: code_debug
+    difficulty: 3
+    frequency: 2
+    points: [Online Softmax]
+    question: |
+      下面是单个 query 的 online softmax 加权求和（流式读入每个 key 的打分 $s_j$ 与对应的 value 向量 $v_j$）。它在大多数测试中结果正确，但当所有打分都很负（例如经过掩码或温度缩放后在 −1000 左右）时会出错。请指出 bug 并修正。
+    code: |
+      import math
+
+      def online_weighted_sum(scores, values):
+          m, l = 0.0, 0.0                       # 当前最大打分、当前分母
+          acc = [0.0] * len(values[0])          # 未归一化的加权和
+          for s, v in zip(scores, values):
+              m_new = max(m, s)
+              scale = math.exp(m - m_new)       # 把旧的累计量换算到新的最大值下
+              p = math.exp(s - m_new)
+              l = l * scale + p
+              acc = [a * scale + p * x for a, x in zip(acc, v)]
+              m = m_new
+          return [a / l for a in acc]
+    fixed_code: |
+      import math
+
+      def online_weighted_sum(scores, values):
+          m, l = -math.inf, 0.0                 # 当前最大打分、当前分母
+          acc = [0.0] * len(values[0])          # 未归一化的加权和
+          for s, v in zip(scores, values):
+              m_new = max(m, s)
+              scale = math.exp(m - m_new)       # 把旧的累计量换算到新的最大值下
+              p = math.exp(s - m_new)
+              l = l * scale + p
+              acc = [a * scale + p * x for a, x in zip(acc, v)]
+              m = m_new
+          return [a / l for a in acc]
+    test: |
+      def reference(scores, values):
+          mx = max(scores)
+          w = [math.exp(s - mx) for s in scores]
+          z = sum(w)
+          return [sum(wi * v[j] for wi, v in zip(w, values)) / z for j in range(len(values[0]))]
+
+      vals = [[1.0, 0.0], [0.0, 1.0], [2.0, 2.0]]
+      for sc in ([0.5, -1.0, 2.0], [300.0, 299.0, 301.0], [-1000.0, -1001.0, -999.0], [-800.0, -790.0, -805.0]):
+          out = online_weighted_sum(sc, vals)
+          assert all(abs(a - b) < 1e-9 for a, b in zip(out, reference(sc, vals))), sc
+    answer: |
+      **问题**：第 4 行把运行中的最大值 `m` 初始化为 0。它实际上是在计算 $\max(0,\max_js_j)$ 作为基准：打分中有正数或在 0 附近时，结果碰巧正确（softmax 对平移不变）；但所有打分都远小于 0 时，基准一直停在 0，$e^{s_j-0}$ 全部下溢为 0，分母 `l` 为 0，最后除以 0 出错（在 GPU 上则得到 NaN）。
+
+      **修正**：把 `m` 初始化为 $-\infty$：
+
+      ```python
+      m, l = -math.inf, 0.0
+      ```
+
+      第一个元素到来时 `m_new` 就等于它的打分，`scale = exp(-inf) = 0` 自然清空初始累加量，此后所有指数的参数都不超过 0，既不上溢，也不会因基准选错而整体下溢。
+    explanation: |
+      online softmax 的正确性依赖不变式：$m$ 等于**已处理元素**的最大值。初值取 0 相当于凭空多了一个打分为 0 的元素参与求最大值，破坏了这个不变式。
+
+      相关的数值细节：
+      - 实现中若某一行在当前块里**全部**被掩码为 $-\infty$，且此前也没有有效元素，会出现 $(-\infty)-(-\infty)=\text{NaN}$，kernel 里要对这种情况特判（例如把该行的 `m_new` 当作 0 处理，或跳过该块）；
+      - 累加器 $\ell$ 与输出用 FP32 保存，最后只除一次分母（FlashAttention-2 的做法），减少误差累积。
+
+  - id: INF-KERNEL-012
+    type: short
+    difficulty: 3
+    frequency: 2
+    points: [Online Softmax]
+    question: |
+      请推导 online softmax：(1) 写出处理新的一块打分时 $m$、$\ell$、$o$ 的更新公式；(2) 用归纳法证明处理完全部块后 $o/\ell$ 等于标准 softmax 的加权和；(3) 说明两个部分结果如何合并、为什么与处理顺序无关，这对 FlashDecoding 有什么意义；(4) 实现时有哪些数值细节需要注意。
+    answer: |
+      1. **更新公式**：设已处理的打分集合对应的统计量为 $(m,\ell,o)$，新块的打分为 $s_j$、对应 $v_j$：
+         $m'=\max(m,\max_js_j)$，$\ell'=e^{m-m'}\ell+\sum_je^{s_j-m'}$，$o'=e^{m-m'}o+\sum_je^{s_j-m'}v_j$；初值 $m=-\infty$，$\ell=0$，$o=0$。
+      2. **不变式与归纳**：设处理完前 $k$ 块（集合 $S_k$）后有 $m_k=\max_{j\in S_k}s_j$，$\ell_k=\sum_{j\in S_k}e^{s_j-m_k}$，$o_k=\sum_{j\in S_k}e^{s_j-m_k}v_j$。初值显然满足。归纳步：$e^{m_k-m_{k+1}}\ell_k=\sum_{j\in S_k}e^{s_j-m_{k+1}}$，加上新块的项就是 $\sum_{j\in S_{k+1}}e^{s_j-m_{k+1}}$，$o$ 同理。最终 $\dfrac{o}{\ell}=\dfrac{\sum_je^{s_j-m}v_j}{\sum_je^{s_j-m}}=\sum_j\mathrm{softmax}(s)_jv_j$，与 $m$ 的取值无关，结果精确。
+      3. **合并两个部分结果**：$(m_a,\ell_a,o_a)$ 与 $(m_b,\ell_b,o_b)$ 合并为 $m=\max(m_a,m_b)$，$\ell=e^{m_a-m}\ell_a+e^{m_b-m}\ell_b$，$o=e^{m_a-m}o_a+e^{m_b-m}o_b$。它满足交换律与结合律，所以 KV 可以任意切段、并行计算后再归约。FlashDecoding 正是这样做：各段返回段内输出与 $\mathrm{lse}=m+\log\ell$，最后按 $e^{\mathrm{lse}_i-\mathrm{lse}}$ 加权合并。
+      4. **数值细节**：$m$ 必须初始化为 $-\infty$（初始化为 0 在打分都很负时会整体下溢）；整行在某块中全被掩码时要避免 $(-\infty)-(-\infty)$ 产生 NaN；统计量与累加器用 FP32；只在最后除一次 $\ell$；所有指数的参数都不超过 0，不会上溢。
+    rubric:
+      - '正确写出 m、ℓ、o 的更新公式与初值（3 分）'
+      - '给出不变式并完成归纳证明，说明结果精确（3 分）'
+      - '写出两部分结果的合并公式，指出结合律对 split-KV 并行的意义（2 分）'
+      - '指出初值、全掩码行、FP32 累加等数值细节（2 分）'
+    explanation: |
+      **常见失分点**：只修正 $\ell$ 而忘了修正 $o$；新块的项也乘了 $e^{m-m'}$；说不出不变式，只会背公式；不知道合并操作满足结合律，因而无法解释 FlashDecoding 为何精确；忽视全掩码行的 NaN 问题。
+    source: 'Online normalizer calculation for softmax（Milakov 与 Gimelshein, 2018）；FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-013
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [反向重计算]
+    question: |
+      对单个注意力头，序列长度 $N=8192$，头维度 $d=128$。只计注意力中的矩阵乘（每次 $N\times N$ 与 $N\times d$ 规模的矩阵乘记为 $2N^2d$ FLOPs）。
+      (1) 前向需要多少 FLOPs？若反向保存了概率矩阵 $P$，需要哪几个矩阵乘、多少 FLOPs？FlashAttention 不保存 $P$、反向时重算，又需要多少？前向加反向合计增加了百分之几？
+      (2) 若保存 $P$（BF16），每个头需要多少显存？对 32 层、每层 32 个头的模型、每个样本共多少？FlashAttention 只保存每行的 log-sum-exp（FP32），每个头、整个模型各需多少？
+      (3) FLOPs 更多，为什么 FlashAttention 的反向反而更快？
+    answer: '(1) 前向 4N²d；保存 P 时反向 8N²d（dV、dP、dQ、dK 四个矩阵乘），重算时 10N²d；合计从 12N²d 增至 14N²d，约增加 16.7%；(2) 每头 128 MiB，整个模型每个样本 128 GiB；log-sum-exp 每头 32 KiB，整个模型 32 MiB；(3) 反向同样受 HBM 读写限制，重算发生在片上，省去了 N×N 矩阵的写入与读出'
+    explanation: |
+      **(1)**
+      - 前向：$S=QK^\top$、$O=PV$，共 $4N^2d$；
+      - 保存 $P$ 的反向：$dV=P^\top dO$、$dP=dO\,V^\top$、$dQ=dS\,K$、$dK=dS^\top Q$，共 $8N^2d$（$dS=P\circ(dP-D)$ 是逐元素运算，可忽略）；
+      - 重算：多一次 $S=QK^\top$，共 $10N^2d$，反向约为前向的 2.5 倍；
+      - 合计 $12N^2d\to14N^2d$，增加约 **16.7%**。
+
+      **(2)** $P$ 每头 $N^2\times2=8192^2\times2$ 字节 $=$ **128 MiB**；$32\times32=1024$ 个头，每个样本 **128 GiB**，根本放不下。log-sum-exp 每头 $8192\times4$ 字节 $=$ **32 KiB**，1024 个头共 **32 MiB**。
+
+      **(3)** 标准实现反向要从 HBM 读出 $N\times N$ 的 $P$，还要写出、读入 $dP$、$dS$ 等同样大小的中间矩阵，强度很低，受带宽限制。FlashAttention 按块从 Q、K 重算 $S$ 与 $P=\exp(S-L)$，$dP$、$dS$ 也只在片上存在，用多出的 FLOPs 换掉了大量 HBM 读写，整体更快。这与训练中的激活重计算（梯度检查点）是同一种「用计算换显存」的思路，但这里因为原本受带宽限制，连时间也一起省下了。
+    source: 'FlashAttention 论文 arXiv:2205.14135；FlashAttention-2 arXiv:2307.08691'
+
+  - id: INF-KERNEL-014
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [反向重计算]
+    question: |
+      FlashAttention-2 为反向传播保存的、与注意力相关的中间量是：
+    options:
+      A: '完整的打分矩阵 $S$ 与概率矩阵 $P$，以 FP16 存在 HBM 中，反向时直接读取'
+      B: '只保存概率矩阵 $P$：反向求 $dV=P^\top dO$ 和 softmax 梯度都只用 $P$'
+      C: '什么都不保存：反向时把每块的 online softmax 从头重做一遍，用重算代替一切中间存储'
+      D: '输出 $O$ 与每行的 log-sum-exp $L=m+\log\ell$，反向时据此在片上恢复 $P$'
+    answer: D
+    explanation: |
+      **结论**：只需 $O(N)$ 的额外信息（每行一个 log-sum-exp），就能在反向中精确地恢复每一块的 $P$。
+
+      $P_{ij}=e^{S_{ij}}/\sum_ke^{S_{ik}}=\exp(S_{ij}-L_i)$，其中 $L_i=\log\sum_ke^{S_{ik}}=m_i+\log\ell_i$。反向时按块重算 $S_{ij}=Q_iK_j^\top$，减去 $L_i$ 再取指数即可，无需重新做一遍 online softmax。FlashAttention-1 分别保存 $m$ 与 $\ell$，FlashAttention-2 合并成一个 $L$，减少了存储与非矩阵乘运算。输出 $O$ 也会被保存，因为反向需要 $D_i=\mathrm{rowsum}(dO\circ O)$。
+
+      - A、B 错：保存 $N\times N$ 的矩阵正是要避免的，显存是 $O(N^2)$；反向确实要用到 $P$，但可以按块重算出来。
+      - C 错：若什么都不保存，反向就得先把每行的 online softmax 统计重新做一遍；只保存每行一个 $L$（$O(N)$ 的显存），就能让每块的 $P$ 一步恢复，非常划算。
+    source: 'FlashAttention-2 arXiv:2307.08691'
+
+  - id: INF-KERNEL-015
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [反向重计算]
+    question: |
+      FlashAttention 的反向要重新计算注意力矩阵，FLOPs 比保存 $P$ 的标准实现更多；但由于省去了 $N\times N$ 矩阵在 HBM 上的写入与读出，它的反向通常仍比标准实现快。
+    answer: true
+    explanation: |
+      **正确**。以只计矩阵乘为例，反向从 $8N^2d$ 增加到 $10N^2d$ FLOPs，多了 25%。但标准实现的反向需要从 HBM 读出 $P$，并写出、读回 $dP$、$dS$ 等 $N\times N$ 的中间结果，强度只有头维度的量级，远低于 GPU 的拐点；FlashAttention 让这些矩阵只存在于片上，HBM 流量大幅减少。在带宽受限的场景下，少搬数据比少算几次乘加更重要。
+
+      FlashAttention 论文报告，即使算上重算，前向加反向整体仍比标准实现快；同时显存从 $O(N^2)$ 降到 $O(N)$，长序列训练才因此可行。
+    source: 'FlashAttention 论文 arXiv:2205.14135'
+
+  - id: INF-KERNEL-016
+    type: single
+    difficulty: 3
+    frequency: 1
+    points: [反向重计算]
+    question: |
+      注意力反向中，设 $P=\mathrm{softmax}(S)$（按行），$O=PV$，上游梯度为 $dO$，$dP=dO\,V^\top$。softmax 的反向为 $dS_{ij}=P_{ij}(dP_{ij}-D_i)$，其中 $D_i=\sum_jP_{ij}\,dP_{ij}$。FlashAttention 不保存 $P$，它得到 $D_i$ 的方式是：
+    options:
+      A: '反向开始前先按块重算完整的 $P$ 并写回 HBM，再逐行按定义 $\sum_jP_{ij}\,dP_{ij}$ 求和'
+      B: '利用 $D_i=\sum_k dO_{ik}O_{ik}$，由 $dO$ 与 $O$ 按行点积得到'
+      C: '$D_i$ 恒等于 1，因为 $P$ 的每行之和为 1，加权求和后只剩权重之和'
+      D: '$D_i$ 恒等于 0，因为 softmax 对输入平移不变，$dS$ 的每行之和为 0'
+    answer: B
+    explanation: |
+      **推导**：
+      $$D_i=\sum_jP_{ij}\,dP_{ij}=\sum_jP_{ij}\,(dO_i\cdot v_j)=dO_i\cdot\Big(\sum_jP_{ij}v_j\Big)=dO_i\cdot O_i$$
+      所以 $D_i$ 只需要输出 $O$ 与上游梯度 $dO$（$O(Nd)$ 的数据），在反向开始前用一个很小的预处理 kernel 算好即可，与 $N\times N$ 的矩阵无关。
+
+      - A 错：写回完整的 $P$ 违背了不物化 $N\times N$ 矩阵的初衷。
+      - C 错：每行和为 1 的是 $P$，而 $D_i$ 是 $P$ 与 $dP$ 的加权和，一般不为 1。
+      - D 错：确实有 $\sum_jdS_{ij}=0$（softmax 的输入平移不变），但这说明的是 $dS$ 的行和，并不意味着 $D_i=0$；把 $D_i$ 当成 0 会得到错误的梯度。
+
+      这也是 FlashAttention 前向要保存输出 $O$ 的原因之一。
+    source: 'FlashAttention-2 arXiv:2307.08691'
+
+  - id: INF-KERNEL-017
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [FlashAttention-2与3]
+    tags: [FlashAttention-2]
+    question: |
+      关于 FlashAttention-2 相对第一代的改进，下列说法正确的有：
+    options:
+      A: '反向同样沿序列长度并行：各线程块负责一段 K、V，dQ 用原子加汇总'
+      B: '前向还沿序列长度并行：不同的 Q 块交给不同的线程块，小 batch 也能占满 GPU'
+      C: '减少非矩阵乘运算：输出不在每次迭代都按 $\ell$ 重新缩放，只在最后除一次'
+      D: '前向把 Q 切给不同的 warp、K 与 V 由各 warp 共享，省去 warp 间经共享内存的归约'
+      E: '改进 online softmax 的递推，把计算量从 $O(N^2d)$ 降到 $O(Nd^2)$'
+    answer: [A, B, C, D]
+    explanation: |
+      **结论**：A、B、C、D 正确，FlashAttention-2 的改进都在「让 GPU 更多时间在做矩阵乘」，并把并行度铺满整张卡。
+
+      - A 对：反向中每个线程块负责一个 K、V 列块，内层遍历各个 Q 块，dK、dV 留在片上累加；不同线程块都要更新同一行的 dQ，论文用原子加在线程块之间汇总。这样反向也能在长序列、小 batch 时占满 GPU。
+      - B 对：除了 batch 与头，还沿序列长度方向并行。第一代主要靠 batch × 头数并行，长序列时 batch 往往很小，线程块不够分；第二代在长序列、小 batch 时也能占满 GPU。
+      - C 对：A100 的 FP16 / BF16 矩阵乘峰值为 312 TFLOPS，非矩阵乘的 FP32 运算只有 19.5 TFLOPS，每个非矩阵乘 FLOP 约贵 16 倍，所以要尽量砍掉缩放、除法这类运算；反向也只需保存每行的 log-sum-exp。
+      - D 对：第一代采用「切分 K」的方案（split-K），各 warp 算出部分结果后要写入共享内存、同步、再相加；第二代切分 Q，各 warp 独立完成自己负责的行，前向中无需 warp 间通信。
+      - E 错：计算量没有变化，仍是精确注意力（online softmax 是精确的，不是近似）。
+
+      效果：速度约为第一代的 2 倍，前向达到 A100 理论峰值的 50%～73%，端到端训练 GPT 类模型时每张 A100 可达约 225 TFLOPS。
+    source: 'FlashAttention-2 arXiv:2307.08691'
+
+  - id: INF-KERNEL-018
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [FlashAttention-2与3]
+    tags: [FlashAttention-3, Hopper]
+    question: |
+      关于 FlashAttention-3，下列说法正确的是：
+    options:
+      A: '它用近似 softmax 省去大部分指数运算，把 FLOPs 降低约一半，从而在 H100 上达到约 75% 的利用率'
+      B: '它利用 Hopper 的异步特性：warp 专门化让 TMA 搬运与矩阵乘重叠，softmax 与矩阵乘交错执行'
+      C: '它主要针对 A100 的异步拷贝与 mma 指令优化，在 H100 上沿用 FlashAttention-2 的 kernel'
+      D: '它放弃 online softmax，先用一个 kernel 求出每行的最大值与归一化因子，再算一遍得到输出'
+    answer: B
+    explanation: |
+      **结论**：FlashAttention-3（Shah 等, 2024）的核心是利用 Hopper 的异步硬件特性。
+
+      FlashAttention-2 在 H100 上只能达到约 35% 的利用率，因为它没有用上 Hopper 新增的 TMA（张量内存加速器，异步搬运）与 WGMMA（异步的线程束组矩阵乘）。FlashAttention-3：
+      1. **生产者 - 消费者式的 warp 专门化**：生产者 warp 用 TMA 把 K、V 块搬进共享内存（循环缓冲），消费者 warp 专心做矩阵乘；
+      2. **交错执行 softmax 与矩阵乘**：两组 warp 轮流（ping-pong），一组做 softmax 时另一组做矩阵乘；组内也把下一块的矩阵乘与当前块的 softmax 重叠；
+      3. **FP8**：分块量化（每块一个缩放因子），并用随机符号的 Hadamard 变换打散离群值（非相干处理），论文报告 FP8 的数值误差比基线 FP8 注意力低 2.6 倍。
+
+      效果：FP16 下比 FlashAttention-2 快 1.5～2.0 倍，最高约 740 TFLOPS（约 75% 利用率）；FP8 接近 1.2 PFLOPS。
+
+      - A、D 错：它仍是基于 online softmax 的精确算法（FP8 模式的误差来自低精度本身）。
+      - C 错：它专为 Hopper 设计；FlashAttention-2 在 H100 上利用率只有约 35%，正是它要解决的问题。
+    source: 'FlashAttention-3 arXiv:2407.08608'
+
+  - id: INF-KERNEL-019
+    type: calc
+    difficulty: 3
+    frequency: 1
+    points: [FlashAttention-2与3]
+    tags: [FlashAttention-3, 指数运算]
+    question: |
+      FlashAttention-3 论文指出：H100 SXM5 的 FP16 矩阵乘峰值约 989 TFLOPS，而指数等特殊函数单元的峰值只有约 3.9 TFLOPS。对注意力打分矩阵中的每一个元素，需要做 $QK^\top$ 中的一次点积和「乘 V」中的一次加权（各 $2d$ FLOPs），以及一次指数运算。
+      (1) 头维度 $d=128$ 时，每做一次指数运算对应多少矩阵乘 FLOPs？指数运算的耗时约为矩阵乘耗时的多少？
+      (2) $d=64$ 时呢？
+      (3) 若矩阵乘改用 FP8（峰值约翻倍），$d=128$ 时这个比例变为多少？
+      (4) 这说明了什么？FlashAttention-3 如何应对？
+    answer: '(1) 512 FLOPs，约 50%；(2) 256 FLOPs，约 99%，与矩阵乘相当；(3) 约 99%；(4) 指数运算会成为不可忽视的瓶颈，必须与矩阵乘重叠执行；FA3 让 softmax 与矩阵乘交错流水（warp 组之间 ping-pong，组内两级流水）'
+    explanation: |
+      **(1)** 每个元素：矩阵乘 $2d+2d=4d=512$ FLOPs，对应 1 次指数运算。时间比
+      $$\frac{1/3.9}{512/989}=\frac{989}{3.9\times512}\approx0.50$$
+      指数运算约占矩阵乘耗时的 **50%**。
+
+      **(2)** $d=64$：每次指数只对应 256 FLOPs，比例约 **0.99**，两者耗时相当。
+
+      **(3)** FP8 矩阵乘的峰值约 1979 TFLOPS，矩阵乘更快、指数不变，$d=128$ 时比例约 **0.99**。
+
+      **(4)** 若矩阵乘与指数串行执行，注意力最多只能跑到矩阵乘峰值的约 2/3（$d=128$），FP8 或小头维度时更差。FlashAttention-3 把两者交错起来：两个 warp 组轮流做矩阵乘与 softmax，组内再把当前块的 softmax 与下一块的矩阵乘重叠，让特殊函数单元与 Tensor Core 同时工作。这也说明：硬件的矩阵乘越来越快，「非矩阵乘」的部分会越来越显眼，FlashAttention-2 砍掉非矩阵乘运算、FlashAttention-3 掩盖它们，都是为此。
+    source: 'FlashAttention-3 arXiv:2407.08608'
+
+  - id: INF-KERNEL-020
+    type: short
+    difficulty: 3
+    frequency: 2
+    points: [FlashAttention-2与3]
+    question: |
+      从 FlashAttention 到 FlashAttention-2、FlashAttention-3，每一代分别针对什么瓶颈、做了哪些改进？为什么 FlashAttention-2 在 H100 上只能达到较低的利用率？
+    answer: |
+      1. **FlashAttention（2022）**：瓶颈是 HBM 读写。标准注意力把 $N\times N$ 的打分与概率矩阵写回显存，强度只有约 $d/2$。做法：分块 + online softmax + 反向重计算 + 算子融合，打分矩阵只留在片上；精确，额外显存 $O(N)$。
+      2. **FlashAttention-2（2023）**：瓶颈是 GPU 利用率（第一代只有理论峰值的 25%～40% 左右）。做法：
+         - 减少非矩阵乘运算（A100 上非矩阵乘 FLOP 约贵 16 倍）：最后才除以 $\ell$，反向只存 log-sum-exp；
+         - 沿序列长度并行（外层遍历 Q 块，不同 Q 块给不同线程块）；
+         - 改进 warp 分工（切 Q 而不是切 K、V），避免 warp 间通过共享内存同步；
+         - 因果注意力跳过整块被掩码的块。
+         效果：约快 2 倍，A100 上前向达理论峰值的 50%～73%。
+      3. **FlashAttention-2 在 H100 上的问题**：只达到约 35% 利用率。它是为 Ampere 的同步编程模型写的，没有用上 Hopper 的 TMA（异步搬运）与 WGMMA（异步矩阵乘），数据搬运与计算难以重叠；矩阵乘变快后，softmax 中的指数运算（特殊函数单元的吞吐远低于 Tensor Core）也变得显眼。
+      4. **FlashAttention-3（2024）**：面向 Hopper 的异步化：
+         - warp 专门化的生产者 - 消费者流水（TMA 搬运与 Tensor Core 计算并行）；
+         - softmax 与矩阵乘交错执行（warp 组间 ping-pong 与组内两级流水），掩盖指数运算；
+         - FP8 支持：分块量化 + Hadamard 变换的非相干处理降低误差。
+         效果：FP16 约 740 TFLOPS（约 75% 利用率），FP8 接近 1.2 PFLOPS。
+      5. **共同点**：都是精确注意力，FLOPs 不变；每一代都在追随硬件变化：先解决访存，再解决并行与非矩阵乘开销，最后利用异步与低精度。
+    rubric:
+      - '说清第一代针对 HBM 读写的核心做法（2 分）'
+      - '说清第二代的三项主要改进及效果（3 分）'
+      - '解释第二代在 H100 上利用率低的原因（2 分）'
+      - '说清第三代的异步化、softmax 重叠与 FP8 改进（3 分）'
+    explanation: |
+      **常见失分点**：把三代说成都在「降低复杂度」；说不出第二代的具体改进；不知道第三代依赖 Hopper 的 TMA / WGMMA 等硬件特性；把 FP8 当成第一代就有的功能；不理解「非矩阵乘运算」为何重要。
+    source: 'FlashAttention arXiv:2205.14135；FlashAttention-2 arXiv:2307.08691；FlashAttention-3 arXiv:2407.08608'
+
+  - id: INF-KERNEL-021
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [FlashDecoding]
+    question: |
+      Decode 阶段每条序列只有 1 个 query，上下文却很长，batch 又小。直接使用 FlashAttention-2 的前向 kernel 效率很低，FlashDecoding 的做法是：
+    options:
+      A: '把 batch 内多个请求的 query 拼成一个 Q 块，交给同一个线程块计算，凑满 Tensor Core 的矩阵乘维度'
+      B: '只对最近的若干个 token 和得分最高的 KV 块计算注意力，用近似结果代替全量计算'
+      C: '把 KV 沿长度切成多段并行计算局部结果，再按各段的 log-sum-exp 精确合并'
+      D: '把整段 KV 预先复制到每个 SM 的共享内存中，各 SM 直接从片上读取，避免重复访问 HBM'
+    answer: C
+    explanation: |
+      **结论**：FlashDecoding 在 KV 长度方向上增加并行度（split-KV）。
+
+      FlashAttention-2 按 batch × 头 × Q 块分配线程块。Decode 时 Q 只有 1 行，线程块数只剩 batch × 头数，小 batch 时远少于 SM 数（H100 有 132 个），每个线程块还要串行扫完几万个 key，大量 SM 闲置。FlashDecoding（Dao 等, 2023 年的技术博客）把 KV 切成多段，各段并行计算局部结果，并额外输出每行的 log-sum-exp，再用一个小的归约 kernel 按 $e^{\mathrm{lse}_i-\mathrm{lse}}$ 加权合并，结果与标准注意力一致。
+
+      - A 错：不同请求的 query 要与各自的 KV 计算，不能共享彼此的 KV，拼接没有意义（同一请求内 GQA 的多个 query 头共享 KV，才可以这样拼）。
+      - B 错：那是滑动窗口、按分数选块一类的近似方法，FlashDecoding 是精确的。
+      - D 错：长上下文的 KV 有几 GB，共享内存只有几百 KB；而且 Decode 必须把 KV 从 HBM 读一遍，带宽才是下界。
+    source: 'Flash-Decoding 技术博客（Dao 等, 2023）'
+
+  - id: INF-KERNEL-022
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [FlashDecoding]
+    tags: [H100, GQA]
+    question: |
+      在 H100（132 个 SM）上用 Llama-3-8B（32 个 Query 头、8 个 KV 头）做 Decode，上下文 32K（32768）。假设注意力 kernel 为每个「（序列, KV 头）」分配一个线程块，由它同时处理共享这个 KV 头的 4 个 Query 头（这样每份 KV 只读一次）。
+      (1) batch = 1、不切分 KV 时有多少个线程块？约占 SM 总数的百分之几？
+      (2) 用 split-KV 把每个 KV 头的 KV 切成 $s$ 段，至少切多少段，线程块数才不少于 SM 数？每段约多长？
+      (3) batch = 64 时还需要切分吗？为什么？
+    answer: '(1) 8 个，约 6%；(2) 至少 17 段，每段约 1928 个 token；(3) 不需要，64×8=512 个线程块已远多于 132 个 SM，再切分只会增加合并开销'
+    explanation: |
+      **(1)** $1\times8=8$ 个线程块，$8\div132\approx$ **6%** 的 SM 在工作，每个线程块要串行扫完 32768 个 key，带宽远远用不满。
+
+      **(2)** $8s\ge132$，$s\ge16.5$，取 **17**；每段约 $32768\div17\approx$ **1928** 个 token。实际实现会按 SM 数、序列长度与 batch 启发式地选择切分数，也常取 2 的幂并允许多个线程块驻留在同一个 SM 上。
+
+      **(3)** $64\times8=512$ 个线程块，已经足以占满所有 SM（约 4 轮），不需要再切。切分的代价是要多写出各段的局部输出与 log-sum-exp，并多一次归约。
+
+      **结论**：split-KV 的价值集中在「小 batch + 长上下文」，这正是交互式长文档问答、Agent 单会话推理的典型情形。把共享同一 KV 头的多个 Query 头放进同一个线程块（GQA 打包）则能让每份 KV 只读一次，两者常一起使用（如 FlashInfer、FlashAttention 的 Decode 路径）。
+    source: 'Flash-Decoding 技术博客（Dao 等, 2023）'
+
+  - id: INF-KERNEL-023
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [FlashDecoding]
+    question: |
+      FlashDecoding 把 KV 切成多段分别计算、再按各段的 log-sum-exp 合并，其结果与标准注意力在数学上完全相同，只存在浮点舍入层面的差异。
+    answer: true
+    explanation: |
+      **正确**。设第 $i$ 段的分母为 $Z_i$、段内归一化输出为 $o_i$，则全局输出
+      $$o=\sum_i\frac{Z_i}{\sum_kZ_k}\,o_i=\sum_ie^{\mathrm{lse}_i-\mathrm{lse}}\,o_i$$
+      这是一个恒等式，不涉及任何近似。合并操作满足结合律，所以分几段、怎么分都不影响结果，差别只来自浮点运算顺序不同带来的舍入误差（各段内部和合并时一般用 FP32 累加）。
+
+      这与 FlashAttention 本身精确的原因相同：online softmax 中用 $e^{m-m'}$ 修正旧结果，也是同一个恒等式。真正的近似方法（滑动窗口、稀疏注意力、KV 淘汰）会改变参与计算的 token 集合，FlashDecoding 不会。
+    source: 'Flash-Decoding 技术博客（Dao 等, 2023）'
+
+  - id: INF-KERNEL-024
+    type: calc
+    difficulty: 1
+    frequency: 2
+    points: [算子融合]
+    tags: [SwiGLU]
+    question: |
+      SwiGLU 的激活部分计算 $y=\mathrm{SiLU}(g)\odot u$，其中 $g$、$u$、$y$ 的形状都是 $T\times F$（BF16）。设 $T=4096$（一次 Prefill 的 token 数），$F=14336$。
+      (1) 不融合：先用一个 kernel 计算 $s=\mathrm{SiLU}(g)$ 并写回，再用另一个 kernel 计算 $y=s\odot u$。共读写 HBM 多少字节？
+      (2) 融合成一个 kernel：读 $g$、$u$，直接写出 $y$。共读写多少字节？减少了百分之几？
+      (3) 在 H100（3.35 TB/s）上，每层能省多少时间？32 层呢？
+    answer: '(1) 约 587 MB；(2) 约 352 MB，减少 40%；(3) 每层约 0.07 ms，32 层约 2.2 ms'
+    explanation: |
+      每个张量 $4096\times14336\approx5.87\times10^7$ 个元素，BF16 约 117.4 MB。
+
+      **(1) 不融合**：kernel 1 读 $g$、写 $s$（2 份），kernel 2 读 $s$、读 $u$、写 $y$（3 份），共 5 份，约 **587 MB**。
+
+      **(2) 融合**：读 $g$、读 $u$、写 $y$，共 3 份，约 **352 MB**，减少 **40%**。
+
+      **(3)** 每层省 2 份，约 235 MB，$\div3.35$ TB/s $\approx$ **0.07 ms**；32 层约 **2.2 ms**。
+
+      逐元素运算的强度极低，耗时完全由读写字节决定，融合能直接按字节比例省时间，同时少了一次 kernel 发射。还可以更进一步：把 $g$、$u$ 的投影合并成一个矩阵乘，在矩阵乘的收尾阶段（epilogue）直接计算 $\mathrm{SiLU}(g)\odot u$，$g$、$u$ 根本不写回显存。相对 8B 模型 4096 token 的 Prefill（约 70 ms 量级），这些节省只有几个百分点；但模型里这类逐元素与归一化算子很多，积少成多，Decode 时小 kernel 的发射开销也会被一并减少。
+
+  - id: INF-KERNEL-025
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [算子融合]
+    tags: [torch.compile]
+    question: |
+      关于大模型推理中的算子融合，下列说法正确的有：
+    options:
+      A: '融合主要省的是 kernel 发射开销，融合前后各算子读写 HBM 的总字节数基本不变'
+      B: 'torch.compile 的 Inductor 后端能自动融合逐元素与归约算子，生成 Triton kernel'
+      C: '算子融合把多个算子合并计算，能减少总 FLOPs，所以对受算力限制的大矩阵乘收益也很大'
+      D: '残差加法与随后的 RMSNorm 无法融合：RMSNorm 要先对整行求平方和，必须等残差写回 HBM 后另起 kernel 读取'
+      E: '把 Q、K、V 三个投影的权重拼成一个矩阵，一次矩阵乘同时得到三者，减少 kernel 数量'
+    answer: [B, E]
+    explanation: |
+      **结论**：B、E 正确。融合减少的是 HBM 读写与 kernel 发射次数，不是 FLOPs。
+
+      - A 错：减少中间结果的 HBM 读写正是融合的主要收益。不融合时，每个算子都要把结果写回显存、下一个算子再读出来；融合后中间结果留在寄存器或共享内存里，总字节数明显下降；发射次数减少是另一项收益，在小 batch 时更明显。
+      - B 对：Inductor 会把逐元素、归约等算子融合并生成 Triton kernel；矩阵乘一般调用 cuBLAS 等库或模板化的实现。vLLM 等推理框架也借助 torch.compile 做自定义融合。
+      - C 错：FLOPs 不变；对已经受算力限制的大矩阵乘，融合收益有限。收益主要来自受带宽限制的逐元素、归一化算子，以及小 batch 时的发射开销。
+      - D 错：按行归约并不妨碍融合。一行（如 4096 维）可以整行放在一个线程块的寄存器与共享内存里，先做残差加法，再在块内归约出平方和、完成归一化，vLLM 等框架都有这样的融合 kernel；残差和仍要写回一次供后面的层使用，但不必再从显存读回来做归一化。常见的融合还有 RoPE、SwiGLU 激活、量化与反量化、矩阵乘收尾阶段（epilogue）的偏置与激活。
+      - E 对：三个投影的输入相同，拼接权重后一次读入输入、一次发射，矩阵乘也更大、更高效（横向融合）；gate 与 up 投影也常这样合并。
+  - id: INF-KERNEL-026
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [CUDA Graph]
+    question: |
+      CUDA Graph 在大模型推理中解决的主要问题及其约束是：
+    options:
+      A: '把一步的 kernel 序列录制成图、整图发射，省去 CPU 逐个发射的开销；形状与地址须固定，batch 按若干档补齐'
+      B: '把每步几百个小 kernel 合并调度，减少 GPU 上的总 FLOPs 与执行时间，而且对 batch 大小没有限制'
+      C: '把一步中的多个 kernel 自动融合成一个大 kernel，中间结果留在片上，减少 HBM 读写'
+      D: '让 Prefill 与 Decode 在同一张图、同一个 kernel 中执行，消除两阶段切换时的同步等待'
+    answer: A
+    explanation: |
+      **结论**：CUDA Graph 省的是 CPU 侧的发射开销，不改变 GPU 上执行的 kernel。
+
+      Decode 每步的计算量很小，几百个 kernel 中很多只运行几微秒，而 CPU 发射一个 kernel 也要几微秒，GPU 常常在等 CPU。CUDA Graph 先录制一遍完整的 kernel 序列（连同参数与指针），之后用一次调用重放整张图。约束：
+      - 形状与显存地址固定：输入要拷进录制时使用的固定缓冲区，batch 大小只能取若干档，不足的补齐（vLLM 预先为一组常用 batch 大小录制）；
+      - 图中不能有依赖 CPU 的动态控制流或同步（如 `.item()`）；
+      - 录制需要时间与额外显存，拉长冷启动。vLLM 可以用 `--enforce-eager` 关闭它，便于调试。
+
+      - B 错：kernel 本身不变，FLOPs 不变；而且图中张量的形状固定，batch 大小要按档位分别录制。
+      - C 错：图里仍是原来的多个 kernel，只是发射方式变了；融合需要算子融合技术。
+      - D 错：与 Prefill、Decode 的划分无关。
+
+  - id: INF-KERNEL-027
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [CUDA Graph]
+    tags: [kernel 发射开销]
+    question: |
+      某小模型 Decode 一步需要依次发射 300 个 kernel，CPU 发射每个 kernel 约需 4 µs；这些 kernel 在 GPU 上的执行时间合计 0.6 ms，大多数单个只有 1～2 µs。
+      (1) eager 模式（逐个发射）下，每步耗时约为多少？GPU 有百分之几的时间在空等？
+      (2) 用 CUDA Graph 把整步录制后一次发射（发射开销约 10 µs），每步约为多少？提速约几倍？
+      (3) 若换成一个大模型，每步的 GPU 执行时间为 15 ms，kernel 数与发射开销不变，CUDA Graph 的收益还明显吗？为什么？
+    answer: '(1) 约 1.2 ms，GPU 约 50% 的时间在空等；(2) 约 0.61 ms，提速约 2 倍；(3) 不明显：1.2 ms 的发射可以在 GPU 执行时异步提前完成，被 15 ms 的计算掩盖'
+    explanation: |
+      **(1)** kernel 的平均执行时间（2 µs）短于发射时间（4 µs），GPU 每执行完一个就要等下一个发射过来，每步约 $300\times4\ \mu\text{s}=$ **1.2 ms**；GPU 只忙了 0.6 ms，约 **50%** 的时间空等。
+
+      **(2)** 整图一次发射：$0.6\ \text{ms}+10\ \mu\text{s}\approx$ **0.61 ms**，约快 **2 倍**。
+
+      **(3)** CPU 发射是异步的：只要单个 kernel 的执行时间长于发射时间，CPU 就能跑在 GPU 前面，发射开销被隐藏。每步 GPU 执行 15 ms，1.2 ms 的发射早已完成，CUDA Graph 只能省下少量残余开销。
+
+      **结论**：CUDA Graph 在「小模型、小 batch、多卡张量并行（每张卡每步的计算更少）、Decode」时收益最大；大 batch 的长 Prefill 中单个 kernel 运行数毫秒，几乎没有收益，而且形状多变、不便录制。这也是推理框架主要为 Decode 录制 CUDA Graph 的原因。
+
+  - id: INF-KERNEL-028
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [CUDA Graph]
+    question: |
+      CUDA Graph 对大 batch、长提示词的 Prefill 同样能带来与小 batch Decode 相当的加速，因此推理框架通常也会为任意长度的 Prefill 录制 CUDA Graph。
+    answer: false
+    explanation: |
+      **错误**。CUDA Graph 省的是 CPU 发射开销。长提示词的 Prefill 中，每个矩阵乘、注意力 kernel 都要运行很久，发射开销早已被 GPU 计算掩盖，录制图几乎没有收益。另外，Prefill 的 token 数千变万化，而图要求形状与地址固定，为任意长度录制既不现实，也会占用大量显存。
+
+      所以推理框架主要为 Decode（或每步 token 数较少的批次）按若干档 batch 大小录制，超出范围的就以 eager 模式运行。vLLM 的 V1 引擎还采用「分段」的 CUDA Graph：把注意力这类依赖每步元数据的部分留在图外，其余部分录制成图，从而在混合了 Prefill 与 Decode 的批次上也能使用。
+
+  - id: INF-KERNEL-029
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [Triton]
+    question: |
+      关于 Triton，下列说法正确的是：
+    options:
+      A: 'OpenAI Triton 是 NVIDIA Triton 推理服务器的前身，主要用于部署和管理模型服务'
+      B: 'Triton 是生成 CUDA C++ 源码的模板工具，程序员仍要以单个线程为单位编写下标与同步'
+      C: '编译器能做全局优化，Triton kernel 在 Hopper 上普遍快于手写 CUTLASS，FlashAttention-3 也因此用 Triton 实现'
+      D: 'OpenAI 的 Triton 是用 Python 写 GPU kernel 的语言与编译器，以「块」为单位编程，块内线程映射由编译器完成'
+    answer: D
+    explanation: |
+      **结论**：Triton（Tillet 等, 2019；由 OpenAI 开源维护）是「块级」的 GPU 编程语言。
+
+      CUDA 以线程为单位编程，程序员要自己管理线程下标、共享内存、访存合并与同步；Triton 以程序实例（program）处理一个数据块为单位，块内的细节交给编译器，写一个融合 kernel 或 FlashAttention 类的 kernel 只需几十行 Python。torch.compile 的 Inductor 后端会生成 Triton kernel，vLLM、SGLang 中也有不少 Triton 实现的算子（如部分注意力、MoE、量化 kernel）。
+
+      - A 错：这是同名的另一个产品 NVIDIA Triton Inference Server，与 OpenAI Triton 无关，面试中要分清。
+      - B 错：Triton 以块为单位编程，线程下标、访存合并与同步由编译器处理；它经 MLIR / LLVM 直接编译成 GPU 代码（NVIDIA、AMD 等），不是 CUDA C++ 的模板库。
+      - C 错：追求极致性能、使用最新硬件特性（如 Hopper 的 TMA、WGMMA）时，手写 CUDA / CUTLASS 往往仍更快，FlashAttention-3 就基于 CUTLASS；Triton 的优势是开发效率与可移植性。
+    source: 'Triton（Tillet 等, MAPL 2019）'
+
+  - id: INF-KERNEL-030
+    type: multiple
+    difficulty: 2
+    frequency: 1
+    points: [Triton]
+    question: |
+      阅读下面的 Triton kernel 与启动代码（把向量的每个元素乘以 `alpha`）。下列说法正确的有：
+
+      ```python
+      import triton
+      import triton.language as tl
+
+      @triton.jit
+      def scale_kernel(x_ptr, y_ptr, n, alpha, BLOCK: tl.constexpr):
+          pid = tl.program_id(0)
+          offs = pid * BLOCK + tl.arange(0, BLOCK)
+          mask = offs < n
+          x = tl.load(x_ptr + offs, mask=mask)
+          tl.store(y_ptr + offs, x * alpha, mask=mask)
+
+      grid = (triton.cdiv(n, 1024),)
+      scale_kernel[grid](x, y, n, 2.0, BLOCK=1024)
+      ```
+    options:
+      A: '`BLOCK` 是编译期常量，不同取值会编译出不同的 kernel，可配合 autotune 选最优值'
+      B: '每个元素只读一次、写一次，没有中间结果，所以这个 kernel 已是算力瓶颈，再融合也没有收益'
+      C: '每个程序实例处理 1024 个连续元素，`tl.program_id(0)` 决定它处理哪一段'
+      D: '块内每个线程的下标仍需程序员手动计算，访存合并也要自己保证，`tl.arange` 只是语法糖'
+      E: '`mask` 处理 n 不是 1024 整数倍时最后一块的越界：越界位置不读也不写'
+    answer: [A, C, E]
+    explanation: |
+      **结论**：A、C、E 正确。
+
+      - A 对：`BLOCK` 被声明为 `tl.constexpr`，编译期常量决定了块的形状，编译器据此做向量化等优化；`tl.arange` 的长度还要求是 2 的幂。`@triton.autotune` 可以在若干组配置中自动选出最快的。
+      - B 错：每个元素读 4 字节左右、写 4 字节左右，只做 1 次乘法，强度远低于 1 FLOP/B，是典型的带宽瓶颈；这类算子的优化方向是与相邻算子融合，减少读写。
+      - C 对：网格大小为 $\lceil n/1024\rceil$，第 `pid` 个程序实例处理 `[pid*1024, pid*1024+1024)` 这一段。
+      - D 错：`tl.arange` 一次描述整块的下标，块如何映射到线程、如何合并访存由编译器决定，这正是 Triton 相对 CUDA 的便利之处。
+      - E 对：最后一块可能超出 $n$，`mask` 为假的位置既不读也不写，避免越界访问。
+    source: 'Triton 官方教程'
+
+  - id: INF-KERNEL-031
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [FlashDecoding, CUDA Graph, 算子融合]
+    tags: [Nsight Systems, 性能剖析]
+    question: |
+      团队用 Nsight Systems 分析一个 7B 模型（32 层、32 个 Query 头、8 个 KV 头）在 H100 上的 Decode（batch = 4，上下文 32K，eager 模式）：
+      ① 时间线上 kernel 之间有大量空隙，CPU 侧有一个线程持续繁忙；
+      ② 注意力 kernel 约占每步 GPU 时间的 60%，执行期间只有约四分之一的 SM 在工作；
+      ③ RMSNorm、残差加法、SiLU、逐元素乘法、RoPE 等小 kernel 数量很多，单个只有几微秒。
+      请分析每个现象的原因，给出优化方案与预期收益，并说明如何验证。
+    answer: |
+      **1. 现象 ①：发射开销**
+      - 原因：每步几百个 kernel 逐个从 Python / CPU 发射，很多 kernel 的执行时间比发射时间还短，GPU 在等 CPU。
+      - 方案：为 Decode 按若干档 batch 大小录制 CUDA Graph，整步一次发射；减少每步的 Python 开销（调度与 GPU 执行重叠、输入准备放到独立进程或异步进行）。
+      - 预期：空隙基本消失，小模型、小 batch 时单步耗时可下降数十个百分点。
+
+      **2. 现象 ②：注意力并行度不足**
+      - 原因：注意力 kernel 只按（序列, 头）分配线程块，batch = 4、8 个 KV 头时只有 32 个左右的线程块，远少于 132 个 SM；每个线程块还要串行扫完 32K 个 key。
+      - 方案：使用 split-KV 的 Decode kernel（FlashDecoding，或 FlashInfer 等库的 Decode 路径），沿 KV 长度切成多段并行、再按 log-sum-exp 合并；同时把共享同一 KV 头的 4 个 Query 头放进同一个线程块，让每份 KV 只读一次；考虑 FP8 KV，把读取量减半。
+      - 预期：注意力从「SM 闲置」变为接近带宽上限，这部分耗时可降到原来的几分之一。
+
+      **3. 现象 ③：小算子过多**
+      - 原因：逐元素与归一化算子各自读写一遍 HBM，强度极低，还各自带一次发射。
+      - 方案：融合残差加法与 RMSNorm、SiLU 与乘法（SwiGLU）、把 RoPE 融入 QKV 投影之后的 kernel、合并 QKV 与 gate / up 投影；可用 torch.compile 自动融合，或用 Triton 手写。
+      - 预期：kernel 数显著减少，HBM 读写下降，并进一步减轻发射压力。
+
+      **4. 验证**：
+      - 再次用 Nsight Systems 观察空隙与 kernel 数；用 Nsight Compute 查看注意力 kernel 达到的带宽与 SM 占用率；
+      - 计算每步的理论下界（权重 + 4 条序列 32K 的 KV 读取量 ÷ 带宽）与 MBU，确认离上限还有多远；
+      - 端到端测 TPOT 与吞吐；对比优化前后的输出（误差在容许范围内），确保融合与新 kernel 没有引入数值问题。
+    rubric:
+      - '识别 kernel 发射开销并给出 CUDA Graph 等方案（3 分）'
+      - '识别 Decode 注意力并行度不足，给出 split-KV 与 GQA 打包等方案（3 分）'
+      - '识别小算子的读写与发射开销，给出具体的融合方案（2 分）'
+      - '给出预期收益与基于剖析工具、理论下界和正确性对比的验证方法（2 分）'
+    explanation: |
+      **常见失分点**：看到注意力占比高就说「换 FlashAttention」（Prefill 的 kernel 解决不了 Decode 的并行度问题）；只说「用 CUDA Graph」而解释不了空隙从何而来；以为融合能减少 FLOPs；没有用理论下界与 MBU 判断优化空间；不做数值正确性验证。
+
+  - id: INF-KERNEL-032
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [GPU执行模型]
+    tags: [SIMT, warp, 分支分歧]
+    question: |
+      某 kernel 中有分支 `if (threadIdx.x % 2 == 0) { A(); } else { B(); }`，A、B 的耗时相同。与所有线程都只执行 A 相比，下列说法正确的是：
+    options:
+      A: 'GPU 会把奇数号线程自动重新编组到另一个 warp 中执行，两条分支并行推进，因此不会产生额外开销'
+      B: '同一 warp 内奇偶线程分歧，两条路径要先后执行、各屏蔽一半线程，耗时约为原来的 2 倍'
+      C: '分支分歧只发生在不同 warp 之间；同一 warp 内的 32 个线程可以在同一时刻各自执行不同的指令'
+      D: '从 Volta 起每个线程有独立的程序计数器，分歧的两条路径可以同时执行，不再有性能代价'
+    answer: B
+    explanation: |
+      **结论**：warp 一次执行一条公共指令，warp 内的分支分歧会让各条路径串行执行。
+
+      CUDA 编程指南：warp 内的线程因数据相关的条件分支而分歧时，warp 依次执行每条被走到的路径，并屏蔽不在当前路径上的线程；分支分歧只发生在 warp 内部，不同 warp 之间相互独立。本例每个 warp 都有 16 个线程走 A、16 个走 B，所以每个 warp 都要先后执行 A 和 B，耗时约翻倍。
+
+      改法：让分支条件在 warp 内保持一致，例如改成 `if ((threadIdx.x / 32) % 2 == 0)`，整个 warp 走同一条路径，就没有分歧开销；或者重排数据，让同类工作落在同一个 warp。
+
+      - A 错：硬件不会把线程跨 warp 重新编组。线程块划分 warp 的方式是固定的：线程号连续的 32 个线程为一个 warp。
+      - C 错：说反了，分歧恰恰发生在 warp 内部；不同 warp 走不同路径互不影响。
+      - D 错：独立线程调度让线程可以在子 warp 粒度上分歧与重新汇合，提高了灵活性（例如避免某些锁导致的死锁），但分歧的路径仍要分开执行，性能代价依然存在。
+    source: 'CUDA C++ Programming Guide v12.4，4.1 SIMT Architecture'
+
+  - id: INF-KERNEL-033
+    type: calc
+    difficulty: 2
+    frequency: 1
+    points: [GPU执行模型]
+    tags: [occupancy, 寄存器, 共享内存, A100]
+    question: |
+      A100（计算能力 8.0）每个 SM 的资源上限为：最多 64 个活跃 warp（2048 个线程）、32 个线程块、65536 个 32 位寄存器、164 KB 共享内存。某 kernel 每个线程块 256 个线程，每个线程用 96 个寄存器，每个线程块用 40 KB 共享内存（不考虑寄存器的分配粒度和系统保留的共享内存）。
+
+      (1) 每个 SM 最多同时驻留几个线程块？占用率（活跃 warp 数 ÷ 64）是多少？瓶颈是哪种资源？
+      (2) 把每个线程的寄存器降到 64 个，结果如何？此时的瓶颈是什么？
+      (3) 只考虑寄存器，每个线程最多用多少个寄存器，才能达到 100% 的占用率？
+    answer: '(1) 2 个线程块、16 个 warp，占用率 25%，瓶颈是寄存器；(2) 4 个线程块、32 个 warp，占用率 50%，寄存器与共享内存同时成为瓶颈；(3) 32 个'
+    explanation: |
+      **(1)** 分别按各项资源算可驻留的线程块数，再取最小值：
+      - 线程数：$2048/256=8$ 块；
+      - 寄存器：$65536/(96\times256)=65536/24576\approx2.67$，即 2 块；
+      - 共享内存：$164/40=4.1$，即 4 块；
+      - 线程块上限：32 块。
+
+      取最小值 2 块，即 $2\times8=16$ 个 warp，占用率 $16/64=25\%$，瓶颈是寄存器。
+
+      **(2)** 寄存器：$65536/(64\times256)=4$ 块；共享内存仍为 4 块。结果是 4 块、32 个 warp、占用率 50%。要再提高，必须同时减少共享内存的用量。
+
+      **(3)** 2048 个线程分 65536 个寄存器：$65536/2048=32$ 个 / 线程。
+
+      **占用率的意义与局限**：
+      - 活跃 warp 越多，某个 warp 等待访存时越有别的 warp 可以发射指令，越容易掩盖延迟；访存密集、每个线程计算量小的 kernel 对占用率更敏感。
+      - 占用率并不是越高越好：矩阵乘、FlashAttention 这类 kernel 常用大量寄存器和共享内存存放分块数据，以较低的占用率换取更多的数据复用和指令级并行。
+      - 用 `__launch_bounds__`、`-maxrregcount` 强行压低寄存器用量，可能导致寄存器溢出到本地内存（实际位于显存），反而变慢。应以实测为准，Nsight Compute 会给出理论占用率及其限制因素。
+    source: 'CUDA C++ Programming Guide：Hardware Multithreading；Compute Capabilities 技术规格表（计算能力 8.0）'
+
+  - id: INF-KERNEL-034
+    type: code_output
+    difficulty: 2
+    frequency: 1
+    points: [GPU执行模型, GPU内存层次]
+    tags: [共享内存, bank conflict]
+    question: |
+      共享内存有 32 个 bank，连续的 32 位字依次落在连续的 bank 上。一个 warp 的访问中，若多个线程访问同一 bank 中的**不同**字，就要拆成多次串行访问（n 路 bank 冲突）；访问同一个字则通过广播完成，不算冲突。下面的代码模拟一个 warp 读 float 数组时的冲突路数。输出是什么？
+    code: |
+      def conflict_ways(addrs, banks=32):
+          # addrs：一个 warp 中 32 个线程各自访问的 32 位字地址（以「字」为单位）
+          per_bank = {}
+          for a in set(addrs):                 # 同一个字只取一次，广播给请求它的所有线程
+              per_bank[a % banks] = per_bank.get(a % banks, 0) + 1
+          return max(per_bank.values())
+
+      row  = [t for t in range(32)]            # 读 tile[0][t]：按行读，每行 32 个 float
+      col  = [t * 32 + 5 for t in range(32)]   # 读 tile[t][5]：按列读
+      pad  = [t * 33 + 5 for t in range(32)]   # 每行末尾补 1 个 float 后再按列读
+      same = [7] * 32                          # 所有线程读同一个元素
+      two  = [t * 2 for t in range(32)]        # 跨步为 2
+      three = [t * 3 for t in range(32)]       # 跨步为 3
+      print(conflict_ways(row), conflict_ways(col), conflict_ways(pad))
+      print(conflict_ways(same), conflict_ways(two), conflict_ways(three))
+    answer: |
+      1 32 1
+      1 2 1
+    explanation: |
+      - `row`：32 个线程读连续的 32 个字，各落一个 bank，无冲突，为 1；
+      - `col`：按列读 32 × 32 的分块，地址 $32t+5$ 全部落在 5 号 bank，是 32 个不同的字，32 路冲突，要串行 32 次；
+      - `pad`：每行补 1 个 float，行宽变为 33，地址 $33t+5$ 所在的 bank 为 $(t+5)\bmod32$，互不相同，冲突消除。这就是矩阵转置等 kernel 里常见的 `__shared__ float tile[32][33]` 写法；
+      - `same`：全部读同一个字，走广播，为 1；
+      - `two`：跨步为 2，每个偶数号 bank 被两个不同的字命中，2 路冲突；
+      - `three`：跨步为奇数，与 32 互素，32 个地址落在 32 个不同的 bank，无冲突。
+
+      规律：对 4 字节元素、跨步 $s\ge1$ 的访问，冲突路数为 $\gcd(s,32)$。除了补齐，还可以对地址做异或重排（swizzle）来避免冲突，CUDA 编程指南在 TMA 一节也提到了这种用法。
+    source: 'CUDA C++ Programming Guide v12.4：Shared Memory（计算能力 5.x 及以后）'
+
+  - id: INF-KERNEL-035
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [GPU执行模型]
+    tags: [SIMT, warp, 访存合并, occupancy]
+    question: |
+      关于 GPU 的 SIMT 执行模型，下列说法**正确**的有：
+    options:
+      A: '同一 warp 的线程访问连续、对齐的全局内存地址时，访问可以合并成少量内存事务；跨步很大的访问会被拆成更多事务，浪费带宽'
+      B: 'SM 以 32 个线程组成的 warp 为单位调度和执行指令；线程块被划分成若干 warp，线程号连续的 32 个线程属于同一个 warp'
+      C: '每个线程使用的寄存器越多越好，因为寄存器是最快的存储，而且寄存器用量不影响 SM 上能同时驻留的 warp 数'
+      D: '一个 warp 等待显存数据时，调度器可以发射另一个就绪 warp 的指令；各 warp 的执行上下文常驻片上，切换几乎没有代价，这是 GPU 靠大量线程掩盖访存延迟的基础'
+      E: '线程块的线程数最好取 32 的倍数：例如每块 100 个线程会被分成 4 个 warp，最后一个 warp 只有 4 个线程处于活跃状态，其余的执行槽位被浪费'
+    answer: [A, B, D, E]
+    explanation: |
+      **结论**：A、B、D、E 正确，只有 C 错。
+
+      - A 对：这就是访存合并（coalescing）。按列遍历行主序矩阵、结构体数组（AoS）中只读一个字段，都会造成大跨步访问。
+      - B 对：CUDA 编程指南：SM 以 32 个并行线程组成的 warp 为单位创建、管理、调度和执行线程；线程块划分 warp 的方式固定，第一个 warp 包含 0 号线程，每个 warp 由线程号连续递增的线程组成。
+      - C 错：寄存器按线程分配，每个线程用得越多，SM 上能同时驻留的 warp 就越少；超过上限还会溢出到本地内存（位于显存）。
+      - D 对：指南指出每个 warp 的执行上下文（程序计数器、寄存器等）在整个生命周期内都保存在片上，从一个上下文切换到另一个没有开销，每次发射指令时调度器从有就绪线程的 warp 中挑选。GPU 不靠大缓存和乱序执行，而是靠在大量 warp 之间切换来掩盖访存延迟。
+      - E 对：一个线程块的 warp 数为 $\lceil T/32\rceil$。100 个线程占 4 个 warp，最后一个 warp 只有 $100-96=4$ 个活跃线程；指南把「线程块的线程数不是 warp 大小的整数倍时，最后几个线程」列为非活跃线程的原因之一。资源按 warp 调度，这个 warp 的另外 28 个执行槽位被白白占用。
+
+      延伸：占用率高有助于掩盖延迟，但并非越高越好。矩阵乘、FlashAttention 等 kernel 常以较低的占用率换取更大的分块和更多的寄存器复用，优化应以实测耗时为准。
+    source: 'CUDA C++ Programming Guide v12.4：4.1 SIMT Architecture、4.2 Hardware Multithreading'
+
+  - id: INF-KERNEL-036
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [算子融合, GPU执行模型]
+    question: |
+      把多个算子融合进同一个 kernel 后，每个线程要保存的中间变量变多、寄存器用量上升，但这不影响性能：一个 SM 上能同时驻留多少个 warp，取决于线程块的大小，与每个线程用了多少寄存器无关。
+    answer: false
+    explanation: |
+      **错误**。一个 SM 上能同时驻留多少个线程块和 warp，同时受线程块大小、每个线程的寄存器用量和每个线程块的共享内存用量限制。SM 的寄存器文件大小是固定的：以 H100 为例，每个 SM 有 64K 个 32 位寄存器，最多驻留 64 个 warp；若每个线程用 128 个寄存器，一个 warp 就要占 4096 个，一个 SM 最多只能驻留 16 个 warp，只有上限的四分之一。驻留的 warp 越少（占用率越低），越难用其他 warp 的计算掩盖访存延迟；寄存器用量超过上限还会溢出到本地内存（位于显存），反而增加访存。
+
+      所以算子融合通常有益，但融合后不一定更快。除了寄存器压力，常见的反例还有：
+      1. **失去高度优化的实现**：把逐元素运算硬塞进矩阵乘，如果自己写的融合 kernel 达不到 cuBLAS、CUTLASS 中矩阵乘的效率，省下的那点访存远抵不上矩阵乘变慢的损失。更稳妥的做法是利用这些库的 epilogue 融合：在矩阵乘写回结果之前顺带完成加偏置、激活等运算。
+      2. **分块与并行度受限**：融合了需要整行归约的算子（如 softmax、LayerNorm）后，分块方式受到约束，可能需要额外的同步或减少可用的并行度。
+      3. **通用性下降**：针对特定形状调优的融合 kernel，在其他形状（如变长 batch）上可能表现很差。
+
+      融合前后要用 profiler（如 Nsight Compute）对比实际耗时、寄存器用量与占用率，以实测为准。
+    source: 'CUDA C++ Programming Guide：Hardware Multithreading（寄存器与共享内存用量决定可驻留的线程块与 warp 数）；Compute Capabilities（计算能力 9.0：每个 SM 64K 个 32 位寄存器，最多驻留 64 个 warp）'

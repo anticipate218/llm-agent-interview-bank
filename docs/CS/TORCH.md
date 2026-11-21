@@ -1,0 +1,2111 @@
+# CS-TORCH · PyTorch
+
+> 所属大类：编程与计算机基础　｜　题量：45
+
+张量操作、自动求导、模块与训练循环。
+
+**考点覆盖**：Tensor与设备（4） · 广播（4） · view与reshape与contiguous（4） · autograd与计算图（4） · requires_grad与no_grad（4） · 叶子节点与梯度累积（4） · nn.Module（3） · train与eval（3） · 损失函数（4） · 优化器与zero_grad（5） · 混合精度AMP（3） · DataLoader（3） · 分布式DDP（4） · 常见bug（4） · 显存排查（4）
+
+**题型**：[单选题（11）](#单选题) · [多选题（5）](#多选题) · [判断题（6）](#判断题) · [填空题（1）](#填空题) · [代码输出题（8）](#代码输出题) · [代码填空题（2）](#代码填空题) · [代码改错题（6）](#代码改错题) · [编程题（2）](#编程题) · [简答题（2）](#简答题) · [场景分析题（2）](#场景分析题)
+
+---
+
+## 单选题
+
+<a name="CS-TORCH-002"></a>
+
+### CS-TORCH-002　基础 · 考频 ★★
+
+下面的代码在有 GPU 的机器上运行时，在最后一行报错 `Expected all tensors to be on the same device`：
+
+```python
+device = torch.device("cuda")
+model = MyNet()
+model.to(device)
+x = torch.randn(8, 16)
+x.to(device)
+out = model(x)
+```
+
+最可能的原因是：
+
+- **A.** `model.to(device)` 返回的是一个新模型，原来的 model 仍在 CPU 上，应写成 `model = model.to(device)`
+- **B.** 张量的 `.to()` 不是原地操作，而是返回一个新张量，x 仍在 CPU 上，应写成 `x = x.to(device)`
+- **C.** 使用 GPU 前必须先调用 `torch.cuda.init()` 初始化，否则 `.to(device)` 不会生效
+- **D.** `nn.Module` 不能整体搬到 GPU，需要对每个参数分别调用 `.cuda()`
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：`nn.Module.to()` 与 `Tensor.to()` 的语义不同。
+
+- `Module.to(device)` **原地**修改模块：把所有参数和 buffer 搬到目标设备，并返回模块自身，所以 `model.to(device)` 不赋值也没问题。
+- `Tensor.to(device)` **返回一个新张量**（已经在目标设备、dtype 也相同时返回自身），原来的 x 不变。只写 `x.to(device)` 而不赋值，x 仍在 CPU 上，与 GPU 上的参数做运算就报设备不一致。
+
+- A 错：对模块来说 `.to()` 是原地的，写成 `model = model.to(device)` 只是习惯写法。
+- C 错：CUDA 在第一次使用时自动初始化。
+- D 错：一次 `model.to(device)` 就会递归地搬运所有子模块的参数和 buffer。
+
+**实践**：张量可以直接在目标设备上创建（`torch.randn(8, 16, device=device)`）；DataLoader 输出的每个 batch 都要显式搬运，配合 `pin_memory=True` 时可以用 `x.to(device, non_blocking=True)`。
+
+<sub>考点：Tensor与设备　｜　出处：PyTorch 文档：torch.nn.Module.to、torch.Tensor.to</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-003"></a>
+
+### CS-TORCH-003　进阶 · 考频 ★★
+
+有人用下面的代码测量 GPU 上一次大矩阵乘的耗时，结果只有几十微秒，远低于按算力估计的毫秒量级：
+
+```python
+x = torch.randn(8192, 8192, device="cuda")
+t0 = time.time()
+y = x @ x
+t1 = time.time()
+print(t1 - t0)
+```
+
+最主要的原因是：
+
+- **A.** GPU 上的矩阵乘本来就是微秒级完成的，几十微秒的测量结果是准确的，无需修改
+- **B.** `time.time()` 的精度不够，换成精度更高的 `time.perf_counter()` 就能得到准确的耗时
+- **C.** PyTorch 会缓存相同输入的计算结果，矩阵乘实际上没有执行，换一个新的随机输入再测一次即可
+- **D.** CUDA 算子异步执行，`x @ x` 只是提交核函数就返回；计时前后要 `torch.cuda.synchronize()`
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**结论**：CPU 端的 Python 代码只负责把 CUDA 核函数**提交**到 GPU 的流（stream）中，提交后立即返回，GPU 在后台执行。上面量到的只是「提交」所花的时间。
+
+正确的计时方法：
+```python
+for _ in range(3):                # 预热：首次调用含 cuBLAS 初始化、显存分配等开销
+    x @ x
+torch.cuda.synchronize()
+t0 = time.perf_counter()
+y = x @ x
+torch.cuda.synchronize()          # 等 GPU 真正算完
+print(time.perf_counter() - t0)
+```
+也可以用 `torch.cuda.Event(enable_timing=True)` 记录前后两个事件，或者直接用 `torch.utils.benchmark`。
+
+- A 错：8192 阶矩阵乘约 1.1 TFLOP，即使在最快的 GPU 上也要毫秒量级。
+- B 错：问题不在计时器精度，而在于没有等待 GPU 完成。
+- C 错：PyTorch 不会缓存运算结果。
+
+**延伸**：`.item()`、`.cpu()`、`print(tensor)` 等需要读取 GPU 数据的操作都会隐式同步。训练循环中每一步都 `loss.item()` 会让 CPU 等待 GPU，打断流水线；一般每隔若干步才取一次标量。
+
+<sub>考点：Tensor与设备　｜　出处：PyTorch 文档：CUDA semantics（Asynchronous execution）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-012"></a>
+
+### CS-TORCH-012　基础 · 考频 ★★
+
+执行下面的代码，结果是：
+
+```python
+x = torch.ones(3, requires_grad=True)
+y = x * 2
+y.backward()
+```
+
+- **A.** 报错：只能对标量输出隐式创建梯度，需先求和成标量，或通过 gradient 参数传入权重
+- **B.** 正常运行，默认按全 1 的向量做反向，x.grad 为 tensor([2., 2., 2.])
+- **C.** 正常运行，但 x.grad 为 None，因为非标量输出不会把梯度传回叶子节点
+- **D.** 报错：x 是叶子节点，叶子节点不能出现在需要求导的计算中
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：报错 `RuntimeError: grad can be implicitly created only for scalar outputs`。
+
+反向模式自动微分计算的是「向量-雅可比积」$v^\top J$。对标量输出，PyTorch 默认取 $v=1$；对非标量输出，它不知道该用哪个 $v$，必须由你通过 `gradient` 参数给出（形状与 y 相同）。`y.backward(gradient=torch.ones_like(y))` 与 `y.sum().backward()` 等价，x.grad 都是 `[2., 2., 2.]`。
+
+- B 错：没有指定 gradient 时不会自动按全 1 处理。
+- C 错：不会静默返回 None，而是直接报错。
+- D 错：叶子节点正是 `.grad` 被累加的地方。
+
+实际训练中 loss 通常先做 mean 或 sum 归约成标量再 backward；对多个 loss 求加权和后统一 backward，比分别 backward 更高效。
+
+<sub>考点：autograd与计算图　｜　出处：PyTorch 文档：torch.Tensor.backward</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-015"></a>
+
+### CS-TORCH-015　进阶 · 考频 ★★
+
+微调一个预训练模型时，只想训练新加的分类头 `model.head`，冻结骨干网络 `model.backbone`。下列做法中**既正确、又能节省计算与显存**的是：
+
+- **A.** 对骨干调用 `model.backbone.eval()`，eval 模式会关闭这部分参数的梯度计算
+- **B.** 骨干参数的 requires_grad 保持为 True，只把 head 的参数交给优化器，并在每次 step 后把骨干的 `.grad` 清零
+- **C.** 对骨干的参数调用 `requires_grad_(False)`，只把仍需要梯度的参数交给优化器
+- **D.** 把整个前向计算（骨干和分类头）都包在 `torch.no_grad()` 中，这样骨干不会算梯度，分类头的梯度仍会正常计算
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：`requires_grad_(False)` 才是「冻结」：autograd 不再为这些参数计算梯度。输入本身也不需要梯度时，骨干部分根本不会被记录进计算图，不保存反向用的激活值，显存和计算都省下来。
+
+- A 错：`eval()` 只切换 Dropout、BN 等层的行为，不影响梯度计算。不过冻结骨干时，通常也希望 BN 使用预训练的统计量，所以 eval 往往要和 requires_grad_(False) 配合使用。
+- B 错：结果上参数确实不会被更新，但骨干的梯度照算不误，反向用的激活值也照存，浪费计算和显存。
+- D 错：分类头的输出也在 no_grad 下产生，不需要梯度，`loss.backward()` 会报错 `element 0 of tensors does not require grad and does not have a grad_fn`。只把**骨干**的前向包在 no_grad 中（`with torch.no_grad(): feats = model.backbone(x)`，再在外面算 `model.head(feats)`）是可行的。
+
+**常见写法**：`opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=...)`。LoRA 等参数高效微调也是同样的思路：冻结原权重，只训练新增的小矩阵。
+
+<sub>考点：requires_grad与no_grad　｜　出处：PyTorch 文档：Autograd mechanics（Locally disabling gradient computation）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-018"></a>
+
+### CS-TORCH-018　基础 · 考频 ★★
+
+PyTorch 中，叶子张量的 `.grad` 在每次 `backward()` 时是**累加**而不是覆盖的。下列关于这一设计的说法，正确的是：
+
+- **A.** 累加是为了节省显存：覆盖梯度需要每次额外分配一块新的梯度张量，累加则可以原地完成
+- **B.** 参数被多处使用时各路径的梯度本就要相加，累加也让梯度累积很自然，代价是每步都要清零
+- **C.** 只有传入 retain_graph=True 时才会累加，默认情况下每次 backward 都会覆盖上一次的梯度
+- **D.** 累加相当于对多次 backward 的梯度取平均，能降低梯度方差，所以通常不需要手动清零
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：「累加」是链式法则本身的要求，也是一种有用的设计。
+
+- 一次 backward 内部：一个参数通过多条路径影响 loss 时（权重共享、RNN 各时间步共用权重、输入嵌入与输出层共享权重），总梯度等于各路径梯度之和，autograd 在汇合处把梯度相加。
+- 跨多次 backward：`.grad` 继续累加，于是「连续做 k 次前向、反向，再更新一次」的梯度累积不需要任何额外代码；多个 loss 分别 backward 也会自然相加。
+- 代价：每次参数更新后都要 `optimizer.zero_grad()`。忘了清零，本步梯度会叠加上一步的梯度，相当于学习率越来越大、方向越来越乱。
+
+- A 错：节省显存不是这样设计的原因。
+- C 错：累加与 retain_graph 无关，retain_graph 只决定计算图是否保留。
+- D 错：是求和而不是平均；不清零会让梯度越积越大，而不是降低方差。
+
+<sub>考点：叶子节点与梯度累积</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-026"></a>
+
+### CS-TORCH-026　基础 · 考频 ★★★
+
+对一个 C 类分类任务使用 `nn.CrossEntropyLoss()`，模型最后一层输出形状为 `(N, C)`。下列用法中正确的是：
+
+- **A.** 先对输出做 softmax 得到概率，再把概率与形状为 (N,) 的类别下标一起传入损失函数
+- **B.** 把输出直接传入，标签使用 one-hot 编码、dtype 为 long、形状为 (N, C) 的张量
+- **C.** 标签直接使用 1～C 的类别编号即可，损失函数内部会自动减 1，对齐到 0～C-1 的下标
+- **D.** 直接传入未归一化的 logits，标签为形状 (N,)、取值在 [0, C) 的 long 类型类别下标
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**结论**：`CrossEntropyLoss` 内部已经包含 LogSoftmax 与 NLLLoss，并做了数值稳定处理，输入必须是**未归一化的 logits**。
+
+- A 错：先 softmax 再传入，相当于做了两次 softmax，loss 和梯度都被扭曲。例如 logits `[2.0, 0.5, -1.0]`、标签 0 时，正确的 loss 约 0.241，而「双重 softmax」得到约 0.702；梯度也变得很小，训练缓慢甚至学不动。不会报错，所以很隐蔽。
+- B 错：类别下标要求 long 类型、形状 (N,)。CrossEntropyLoss 也支持**浮点**的类别概率作为目标（形状与输入相同，可用于标签平滑、蒸馏），但 long 类型的 one-hot 会报错「Expected floating point type for target with class probabilities」。
+- C 错：不会自动减 1。标签取到 C 会报 `Target C is out of bounds`；在 GPU 上往往表现为难以定位的 device-side assert 错误。
+- D 对：维度约定是「类别维在第 1 维」：`(N, C)` 对应目标 `(N,)`，`(N, C, d1, ...)` 对应目标 `(N, d1, ...)`。语言模型的 logits 是 `(B, T, V)`，直接传入会被当成 C=T，报目标尺寸不匹配，要 `logits.view(-1, V)` 配合 `labels.view(-1)`，或 `logits.transpose(1, 2)`。
+
+<sub>考点：损失函数　｜　出处：PyTorch 文档：torch.nn.CrossEntropyLoss</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-027"></a>
+
+### CS-TORCH-027　基础 · 考频 ★★
+
+一个文本审核模型要同时判断一段文本是否涉及「暴力」「色情」「广告」等 10 个标签，一段文本可以同时命中多个标签。模型最后一层输出 10 个 logits。最合适的损失函数与标签格式是：
+
+- **A.** `nn.BCEWithLogitsLoss()`，标签为 (N, 10) 的 0/1 浮点张量，不需要先做 sigmoid
+- **B.** `nn.CrossEntropyLoss()`，标签为形状 (N,) 的类别下标，每段文本只保留它命中的第一个标签作为类别
+- **C.** 先对 logits 做 softmax，再用 `nn.BCELoss()`，标签为形状 (N, 10) 的 0/1 浮点张量
+- **D.** `nn.MSELoss()`，让 10 个 logits 直接回归 0/1 标签，效果与交叉熵相同，而且实现更简单
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：多标签分类中各标签互不排斥，应把每个标签看成一个独立的二分类，用 sigmoid 加二元交叉熵。`BCEWithLogitsLoss` 把 sigmoid 和 BCE 合在一起，用 log-sum-exp 技巧保证数值稳定，所以要传入 logits。
+
+- B 错：softmax 交叉熵假设类别**互斥**（概率之和为 1），只取第一个标签还会丢掉其余标签的信息。
+- C 错：softmax 让 10 个标签的概率此消彼长，一个标签概率高必然压低其他标签，与「可以同时命中」矛盾；先单独做 sigmoid 再用 BCELoss 在数学上可行，但数值稳定性不如 BCEWithLogitsLoss。
+- D 错：MSE 不是概率意义上的损失，对 logits 做回归时梯度性质差，效果一般不如交叉熵。
+
+**实践**：正负样本悬殊时用 `pos_weight` 参数提高正样本的权重；推理时对每个标签单独设阈值（不一定是 0.5），在验证集上按业务需要的精确率或召回率来调。
+
+<sub>考点：损失函数　｜　出处：PyTorch 文档：torch.nn.BCEWithLogitsLoss</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-029"></a>
+
+### CS-TORCH-029　挑战 · 考频 ★
+
+关于 PyTorch 2.x 中的 `optimizer.zero_grad()`，下列说法正确的是：
+
+- **A.** 它把每个参数的 `.grad` 原地填充为 0，所以之后再访问 `p.grad` 一定会得到一个与参数同形状的全 0 张量
+- **B.** 它会把参数本身清零，所以必须在 `optimizer.step()` 之后、下一次前向之前调用
+- **C.** 默认 `set_to_none=True`：把 `.grad` 设为 None 而不是填 0，优化器会跳过 grad 为 None 的参数
+- **D.** 它只清空优化器内部的动量等状态，参数的 `.grad` 需要另外调用 `model.zero_grad()` 才能清空
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：PyTorch 2.0 起 `zero_grad` 默认 `set_to_none=True`。官方文档说明了它带来的行为差异：
+1. 显存占用更低，性能略好；
+2. 手动读写 `p.grad` 的代码要处理 None（例如逐参数打印梯度范数、自定义的梯度处理）；
+3. 对 `torch.optim` 的优化器来说，梯度为 0 时照常执行更新，梯度为 None 时**跳过**该参数。
+
+第 3 点有实际影响：对于本步没有参与前向的参数（如 MoE 中没被选中的专家），梯度为 None，AdamW 不会对它执行更新，权重衰减和动量都不会作用于它；而若梯度被填成 0，AdamW 仍会按动量继续推动它，并施加权重衰减。
+
+- A 错：这是 `set_to_none=False`（1.x 时代的默认行为）。
+- B 错：zero_grad 只处理梯度，不碰参数。
+- D 错：`optimizer.zero_grad()` 清的正是它所管理参数的 `.grad`，不会清空动量等优化器状态；`model.zero_grad()` 清的是模型所有参数的梯度，两者都不影响优化器状态。
+
+<sub>考点：优化器与zero_grad　｜　出处：PyTorch 文档：torch.optim.Optimizer.zero_grad</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-037"></a>
+
+### CS-TORCH-037　进阶 · 考频 ★★
+
+用 DDP（`model = DDP(model, device_ids=[local_rank])`）训练时保存 checkpoint，下列做法最合理的是：
+
+- **A.** 每个 rank 都把 `model.state_dict()` 保存到同一个文件路径，这样即使某个进程写失败，文件也一定能写成功
+- **B.** 只在 rank 0 上保存 `model.module.state_dict()` 等状态，其他进程用 barrier 等待保存完成
+- **C.** 直接保存 `model.state_dict()` 即可，它的键名与未包装的模型完全相同，推理时可以直接加载使用
+- **D.** 保存前先用 all_reduce 把各卡的参数求平均，因为 DDP 训练之后各卡上的参数通常已经出现偏差
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：DDP 下各卡的模型副本始终一致，只需要一个进程保存一次。
+
+- DDP 在构造时把 rank 0 的参数广播给其他进程；之后每一步各卡得到相同的平均梯度、执行相同的更新，参数始终一致。
+- 保存 `model.module.state_dict()` 得到不带 `module.` 前缀的键名，推理时可以直接加载到未包装的模型中。
+- 官方教程的做法：rank 0 保存，然后 `dist.barrier()`，确保其他进程在文件写完之后才加载；加载时用 `map_location` 把 rank 0 设备上的张量映射到本进程的设备，否则所有进程可能把数据加载到同一张卡上。
+
+- A 错：多个进程同时写同一个文件会相互覆盖，甚至写出损坏的文件。
+- C 错：直接保存 `model.state_dict()` 得到的键名带有 `module.` 前缀，加载到未包装的模型时要先去掉前缀。
+- D 错：各卡参数始终一致，保存前再用 all_reduce 求平均多此一举。
+
+**续训需要的完整内容**：模型、优化器、学习率调度器、GradScaler（如果用了）的状态，当前的 epoch、step，以及随机数状态。注意 `barrier` 必须由**所有**进程调用，不能写在 `if rank == 0:` 里面，否则会卡住。
+
+<sub>考点：分布式DDP　｜　出处：PyTorch 教程：Getting Started with Distributed Data Parallel</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-040"></a>
+
+### CS-TORCH-040　基础 · 考频 ★★
+
+下面的代码报错 `RuntimeError: mat1 and mat2 must have the same dtype, but got Double and Float`：
+
+```python
+import numpy as np
+import torch
+from torch import nn
+
+features = np.random.rand(4, 8)          # 从特征文件读出的 NumPy 数组
+model = nn.Linear(8, 2)
+out = model(torch.from_numpy(features))
+```
+
+原因和修复方法是：
+
+- **A.** NumPy 数组默认是 float64，from_numpy 保留了它，与 float32 的参数不一致；应先转成 float32
+- **B.** from_numpy 得到的张量与 NumPy 数组共享内存，不能直接参与计算，应改用 torch.tensor 复制一份
+- **C.** nn.Linear 只接受形状为 (batch, seq, feature) 的三维输入，应先 unsqueeze 增加一维
+- **D.** NumPy 数组转成的张量必须先调用 .cuda() 搬到 GPU 上，才能与模型参数做矩阵乘
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：报错信息中的 Double 就是 float64，Float 是 float32。NumPy 的浮点数组默认 float64，`torch.from_numpy` 原样保留 dtype；而 `nn.Linear` 的参数默认是 float32，矩阵乘要求两者类型一致。
+
+修复：`torch.from_numpy(features).float()`、`torch.as_tensor(features, dtype=torch.float32)`，或在 NumPy 侧 `features.astype(np.float32)`。也可以 `model.double()` 把模型转成 float64，但速度慢、显存翻倍，一般不这样做。
+
+- B 错：共享内存不影响计算；改用 `torch.tensor(features)` 得到的仍是 float64，照样报错。
+- C 错：`nn.Linear` 接受任意前导维度 `(*, in_features)`，二维输入完全正确。
+- D 错：问题在 dtype，不在设备；模型本身也在 CPU 上。
+
+**相关的 dtype 坑**：分类标签要用 int64（long）；`torch.tensor([1, 2]) / 2` 得到浮点数，`//` 才保持整数；用 `torch.set_default_dtype` 修改全局默认类型会影响后续创建的所有浮点张量，要谨慎。
+
+<sub>考点：常见bug、Tensor与设备</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-045"></a>
+
+### CS-TORCH-045　基础 · 考频 ★★
+
+训练脚本执行 `del big_tensor`（没有其他引用指向它）之后，`torch.cuda.memory_allocated()` 下降了 4 GB，但 `nvidia-smi` 显示的进程显存占用没有变化。最合理的解释是：
+
+- **A.** `del` 并没有真正释放张量，还需要调用 `gc.collect()` 才会释放
+- **B.** 发生了显存泄漏，这 4 GB 已经无法再被本进程使用，只有重启进程才能收回
+- **C.** 缓存分配器把释放的显存留着供后续复用，没有还给驱动，nvidia-smi 显示的是保留量
+- **D.** `nvidia-smi` 的读数有几分钟的延迟，稍等一会儿就会下降到与 memory_allocated 一致
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：PyTorch 使用缓存分配器管理显存。张量释放后，它占用的显存块回到 PyTorch 的缓存池中，后续分配优先复用这些块，避免频繁调用代价高昂、还可能引起同步的 `cudaMalloc` / `cudaFree`。所以：
+- `memory_allocated()`（张量实际占用）下降了 4 GB；
+- `memory_reserved()`（分配器持有的总量）不变；
+- nvidia-smi 看到的是进程向驱动申请的显存，与 reserved 加上 CUDA 上下文的开销相当，也不变。
+
+这 4 GB 并没有丢失，本进程后续的分配会复用它。如果需要把空闲缓存还给驱动（例如同一张卡上还要运行其他进程），可以调用 `torch.cuda.empty_cache()`；但它只释放完全空闲的缓存块，不能整理碎片，频繁调用还会拖慢训练。
+
+- A 错：没有循环引用时，引用计数归零的张量会被立即释放，不需要 gc。
+- B 错：这是正常的缓存行为，不是泄漏；判断泄漏要看 allocated 是否持续上涨。
+- D 错：与读数延迟无关。
+
+<sub>考点：显存排查　｜　出处：PyTorch 文档：CUDA semantics（Memory management）</sub>
+
+</details>
+
+---
+
+## 多选题
+
+<a name="CS-TORCH-009"></a>
+
+### CS-TORCH-009　进阶 · 考频 ★★
+
+关于 PyTorch 中的 view、reshape、transpose 与 contiguous，下列说法**正确**的有：
+
+- **A.** 对已经连续的张量调用 `contiguous()` 会直接返回它本身，不会复制
+- **B.** `transpose`、`permute`、`expand` 和基本切片返回的都是共享底层存储的视图，不复制数据
+- **C.** `view` 总会复制一份数据并按新形状重新排列，所以修改 view 的结果不会影响原张量
+- **D.** 对二维张量 x，`x.T.view(-1)` 能正常运行：转置前后元素总数不变，view 会自动按新的步长重排元素
+- **E.** `reshape` 能以视图实现时返回视图，否则返回副本，结果不一定与原张量共享内存
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ABE**
+
+**解析：**
+
+**结论**：A、B、E 正确。
+
+- A 对：`x.contiguous() is x` 在 x 已连续时为 True，这让「保险起见先 contiguous」的写法在多数情况下没有额外开销。
+- B 对：这些操作只修改形状、步长和偏移等元信息。修改视图会改到原张量，例如 `x[:, 0] = 0` 会把 x 的第一列清零。
+- C 错：恰好相反。`view` 从不复制，结果与原张量共享内存；做不到时直接报错。
+- D 错：转置后的张量不连续，`view(-1)` 无法用现有步长表达，会报错「view size is not compatible with input tensor's size and stride」。元素总数相同只是必要条件。
+- E 对：例如 `torch.arange(6).view(2, 3).reshape(3, 2)` 是视图，而 `x.t().reshape(6)` 是副本。所以不要依赖 reshape 结果是否共享内存：需要共享内存时用 view（做不到会报错提醒你），需要独立副本时显式 `clone()`。
+
+<sub>考点：view与reshape与contiguous　｜　出处：PyTorch 文档：Tensor Views</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-021"></a>
+
+### CS-TORCH-021　挑战 · 考频 ★★
+
+关于 `nn.Module`，下列说法**正确**的有：
+
+- **A.** weight tying 时，`parameters()` 会对共享的 Parameter 去重，而 `state_dict()` 中两个名字都会出现
+- **B.** `model.to(device)` 返回一个搬到新设备上的模型副本，原来的 model 仍留在原设备上，必须重新赋值才能生效
+- **C.** DDP 包装后直接调用 `state_dict()`，键名会带 `module.` 前缀，加载到未包装的模型时需要处理
+- **D.** `load_state_dict(sd, strict=False)` 遇到键名不匹配时不报错，而是在返回值中列出缺失和多余的键
+- **E.** 应通过 `model(x)` 而不是 `model.forward(x)` 调用模型，前者还会执行已注册的 hook
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ACDE**
+
+**解析：**
+
+**结论**：A、C、D、E 正确。
+
+- A 对：例如 `head.weight = emb.weight` 之后，`parameters()` 只返回一个 Parameter（统计参数量时不会重复计数），优化器也只更新一次；`state_dict()` 则按名字列出，`emb.weight` 和 `head.weight` 两个键都在，指向同一个张量。`torch.save` 会识别共享的存储、只写一份数据；但 safetensors 等格式不允许张量共享内存，导出时要先去重，加载后再重新绑定共享关系。
+- B 错：模块的 `.to()` 是原地操作，返回的是模块自身，不重新赋值也会生效（张量的 `.to()` 则相反，返回新张量）。
+- C 对：DDP 把原模型保存在 `.module` 属性中，键名形如 `module.fc.weight`。通常保存 `model.module.state_dict()`；拿到的是带前缀的文件时，加载前去掉前缀。
+- D 对：默认是 `strict=True`，有缺失或多余的键会报错并列出它们；`strict=False` 时不报错，返回值中带有 `missing_keys` 和 `unexpected_keys`，应当检查，否则可能「加载成功」却有一半参数仍是随机初始化。
+- E 对：`model(x)` 经过 `__call__`，会依次执行 forward pre-hook、forward、forward hook，并处理反向 hook。直接调用 `forward` 会绕过这些逻辑，依赖 hook 的功能（如特征提取、某些量化和分布式包装）就会失效。
+
+<sub>考点：nn.Module　｜　出处：PyTorch 文档：torch.nn.Module</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-030"></a>
+
+### CS-TORCH-030　进阶 · 考频 ★★
+
+关于一个训练 step 中各个调用的顺序，下列说法**正确**的有：
+
+- **A.** 对 SGD、AdamW 这类优化器，`optimizer.step()` 会根据当前 loss 自动重新计算梯度，所以调用它之前不必调用 `loss.backward()`
+- **B.** 梯度裁剪 `clip_grad_norm_` 应放在 `loss.backward()` 之后、`optimizer.step()` 之前
+- **C.** `loss.backward()` 会顺便用梯度更新参数，`optimizer.step()` 只是记录本步使用的学习率
+- **D.** `optimizer.zero_grad()` 既可以放在每个 step 的开头，也可以放在 `optimizer.step()` 之后，只要保证在下一次 backward 之前清空即可
+- **E.** `scheduler.step()` 应在 `optimizer.step()` 之后调用；若先调用 scheduler，PyTorch 会给出警告，并且会跳过学习率调度序列中的第一个值
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：BDE**
+
+**解析：**
+
+**结论**：B、D、E 正确。
+
+- A 错：这类优化器只读取参数上已有的 `.grad`，自己不做前向和反向。只有 LBFGS 这类需要多次求值的优化器，才要求给 `step()` 传入一个重新计算 loss 并 backward 的闭包。
+- B 对：裁剪作用在已经算好的梯度上，必须在 backward 之后；又要影响本次更新，所以在 step 之前。使用 FP16 的 GradScaler 时，裁剪前还要先 `scaler.unscale_(optimizer)`。
+- C 错：backward 只计算梯度并累加到 `.grad`，不修改参数；参数更新完全由 `optimizer.step()` 完成。
+- D 对：两种位置等价，关键是不能夹在 backward 与 step 之间。
+- E 对：PyTorch 1.1.0 起约定调度器在优化器更新之后调用；顺序反了，会出现「Detected call of `lr_scheduler.step()` before `optimizer.step()`」的警告，并跳过调度序列的第一个值。按 step 调度（如 warmup）的调度器在每个优化步之后调用，按 epoch 调度的在每个 epoch 末调用。
+
+<sub>考点：优化器与zero_grad　｜　出处：PyTorch 文档：torch.optim（How to adjust learning rate）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-035"></a>
+
+### CS-TORCH-035　进阶 · 考频 ★★
+
+关于 `torch.utils.data.DataLoader`，下列说法**正确**的有：
+
+- **A.** `IterableDataset` 配合 `num_workers>0` 时每个 worker 都有一份数据集副本，不用 `get_worker_info()` 分片会重复读数据
+- **B.** `pin_memory=True` 把 batch 放进页锁定内存，配合 `non_blocking=True` 可加快主机到 GPU 的拷贝
+- **C.** `persistent_workers=True` 让 worker 进程在 epoch 之间保持存活，省去每个 epoch 重新创建的开销
+- **D.** `num_workers=0` 时数据在主进程中加载；大于 0 时由多个子进程并行加载，主进程负责取回结果
+- **E.** 默认的 collate 函数遇到长度不同的序列时，会自动用 padding 值把它们补齐到批内最大长度，再堆叠成一个张量
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ABCD**
+
+**解析：**
+
+**结论**：A、B、C、D 正确。
+
+- A 对：官方文档的例子中，`num_workers=2` 时每个值都出现两次。应在 `__iter__` 中用 `get_worker_info()` 取得 worker 编号和总数，各读一部分数据。map-style 的 Dataset 没有这个问题，因为下标由主进程的 sampler 分配给各个 worker。
+- B 对：页锁定内存可以用 DMA 直接拷贝到 GPU，并且能与计算异步重叠。
+- C 对：默认情况下，每个 epoch 的数据取完后 worker 进程就会退出，下个 epoch 重新创建（还要重新复制数据集对象）；数据集初始化较重时，这部分开销很明显。该选项要求 `num_workers > 0`，否则会报 ValueError。
+- D 对：worker 进程各自调用 `__getitem__` 和 collate，结果经共享内存传回主进程。数据增强很重的视觉任务尤其依赖多 worker。
+- E 错：默认 collate 只会 `stack`，形状不同直接报错；变长序列需要自定义 collate_fn 做填充。
+
+其他要点：`prefetch_factor` 控制每个 worker 预取的 batch 数。`num_workers` 并非越大越好：worker 太多会争抢 CPU、占用大量内存（每个 worker 都有数据集对象的副本，预取的 batch 也要占内存），还会增加进程间传输的开销；一般从 CPU 核数附近开始试，观察 GPU 利用率是否被数据加载拖住。
+
+<sub>考点：DataLoader　｜　出处：PyTorch 文档：torch.utils.data</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-038"></a>
+
+### CS-TORCH-038　进阶 · 考频 ★★
+
+关于用 `torchrun` 启动 PyTorch DDP 单机多卡训练，下列说法**正确**的有：
+
+- **A.** 每张卡的 batch size 为 32、共 8 张卡时，由于 DDP 会对各卡的梯度取平均，每次参数更新等效的全局 batch 仍是 32
+- **B.** 模型中有部分参数在某些 step 不参与前向计算时，DDP 会自动检测并跳过这些参数的梯度同步，按默认参数包装即可
+- **C.** torchrun 为每张 GPU 启动一个进程，并通过 LOCAL_RANK 等环境变量告诉进程自己的编号，脚本据此选择 GPU
+- **D.** 使用 DistributedSampler 时，DataLoader 仍应设置 `shuffle=True`，否则各个进程拿到的数据会完全相同
+- **E.** 每个进程都要先调用 `init_process_group`（GPU 训练通常用 nccl），再把模型放到本卡上并用 DDP 包装
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：CE**
+
+**解析：**
+
+**结论**：C、E 正确。
+
+- A 错：被平均的是 8 张卡各自在 32 条不同样本上算出的梯度，平均后相当于在 8×32 = 256 条样本上求平均损失的梯度，所以全局 batch 是 256。从单卡迁移过来时全局 batch 变大，常需要相应调整学习率（如线性缩放加 warmup），并重新验证收敛。
+- B 错：DDP 默认要求每一步所有参数都收到梯度，否则会报错，提示可能存在未参与计算的参数。确实存在这类参数（如条件分支、部分冻结的模块）时要传 `find_unused_parameters=True`，它会带来额外开销，能改写模型避免最好。
+- C 对：一个进程负责一张卡、持有一份模型副本。torchrun 设置好 RANK、LOCAL_RANK、WORLD_SIZE 等环境变量后，脚本中 `torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))` 即可。
+- D 错：`sampler` 与 `shuffle=True` 互斥，同时设置会报 `ValueError: sampler option is mutually exclusive with shuffle`。打乱由 `DistributedSampler(shuffle=True)` 负责，并需要每个 epoch 调用 `set_epoch`；各进程拿到的数据不同，是 sampler 按 rank 切分的结果。
+- E 对：在 torchrun 下 `dist.init_process_group(backend="nccl")` 会从环境变量读取 rank、world size 和通信地址；结束时调用 `dist.destroy_process_group()`。
+
+<sub>考点：分布式DDP　｜　出处：PyTorch 文档：torch.distributed、DistributedDataParallel；PyTorch DDP 教程</sub>
+
+</details>
+
+---
+
+## 判断题
+
+<a name="CS-TORCH-006"></a>
+
+### CS-TORCH-006　基础 · 考频 ★★
+
+设 `a` 的形状为 `(3, 1)`、`b` 的形状为 `(3,)`，则 `a + b` 会广播出形状为 `(3, 3)` 的结果；而原地运算 `a += b` 会报错，因为原地运算不能改变 a 自身的形状。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。原地运算把结果写回 a 的存储，要求广播后的形状与 a 的形状完全一致：只有右侧的操作数可以被广播，a 自己不能被「撑大」。
+
+```python
+a = torch.ones(3, 1)
+b = torch.ones(3)
+(a + b).shape          # torch.Size([3, 3])
+a += b                 # RuntimeError: output with shape [3, 1] doesn't match the broadcast shape [3, 3]
+```
+
+反过来，若 a 的形状为 `(3, 3)`，`a += b` 合法：b 被广播成 `(3, 3)` 后逐元素加到 a 上。
+
+这一规则也适用于 `add_`、`mul_` 等所有带下划线的原地方法，以及 `out=` 参数。好在这类错误会直接报错；真正危险的是非原地运算中意外的广播（如 `(N, 1)` 减 `(N,)`），它不会报错。
+
+<sub>考点：广播　｜　出处：PyTorch 文档：Broadcasting semantics（In-place semantics）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-013"></a>
+
+### CS-TORCH-013　进阶 · 考频 ★★
+
+对一个普通神经网络的 loss（计算图中保存了反向传播所需的中间结果）调用 `loss.backward()` 后，这些中间结果默认会被释放；对同一个 loss 再调用一次 `backward()` 会报错，除非第一次调用时传入了 `retain_graph=True`。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。为了节省显存，反向传播用完一个节点保存的张量（如激活值）就立即释放。第二次 backward 时这些张量已不存在，报错：`Trying to backward through the graph a second time (or directly access saved tensors after they have already been freed)`，并提示可以使用 `retain_graph=True`。
+
+题干限定「保存了中间结果」是因为：对于 `y = (x + 1).sum()` 这种反向时不需要任何保存张量的图，第二次 backward 其实不会报错，梯度会再累加一次；但实际网络中矩阵乘、激活函数都会保存张量，一定会报错。
+
+**retain_graph 的正确用法**：确实需要对同一张图多次求梯度时（如对两个共享子图的 loss 分别 backward）。更常见的做法是把多个 loss 加起来，只 backward 一次。
+
+**错误用法**：为了消除报错，在每个训练步都写 `retain_graph=True`。每步的图都被保留，显存持续上涨。正常训练中每次前向都会新建一张图，根本不需要它；出现这个报错，往往说明某个张量跨 step 复用了上一步的计算图（例如 RNN 的隐藏状态没有 detach）。
+
+<sub>考点：autograd与计算图　｜　出处：PyTorch 文档：torch.Tensor.backward</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-016"></a>
+
+### CS-TORCH-016　进阶 · 考频 ★★
+
+`torch.inference_mode()` 与 `torch.no_grad()` 的唯一区别是前者运行得更快一些；在这两种模式下创建的张量，之后都可以像普通张量一样参与需要求导的计算。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。两者都不记录计算图，但 inference_mode 是「更极端的 no_grad」：它还省掉了版本计数、视图跟踪等元数据的维护，所以更快；代价是在其中创建的「推理张量」之后**不能**被保存用于反向传播。
+
+```python
+w = torch.ones(2, requires_grad=True)
+with torch.no_grad():
+    a = w * 2
+with torch.inference_mode():
+    d = w * 2
+
+(a * w).sum().backward()    # 正常：no_grad 下产生的就是普通张量
+(d * w).sum().backward()    # RuntimeError: Inference tensors cannot be saved for backward
+```
+
+**怎么选**：
+- 纯推理服务、评测脚本，结果不会再参与训练：优先用 inference_mode；
+- 训练流程中的某段计算不需要梯度，但结果之后可能和需要梯度的张量一起计算（如 RL 中计算参考策略的对数概率、构造训练目标）：用 no_grad；
+- 官方文档的建议是：inference_mode 导致报错时退回 no_grad。确实需要把推理张量用于训练，可以先 `clone()` 得到普通张量。
+
+<sub>考点：requires_grad与no_grad　｜　出处：PyTorch 文档：Autograd mechanics（Inference Mode）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-022"></a>
+
+### CS-TORCH-022　基础 · 考频 ★★★
+
+评估模型时，`model.eval()` 与 `torch.no_grad()` 的作用不同、不能互相替代：前者切换 Dropout、BatchNorm 等层的行为，后者关闭计算图的构建以节省显存和计算，因此通常两者都要使用。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。官方文档明确说明：评估模式不是关闭梯度计算的机制，`module.eval()` 与 no_grad、inference_mode 完全正交。
+
+- 只写 `no_grad` 没写 `eval()`：Dropout 仍在随机丢弃，结果带随机性；BN 用当前 batch 的统计量归一化，而且还会用评估数据更新 running_mean / running_var，污染训练得到的统计量。
+- 只写 `eval()` 没写 `no_grad`：结果正确，但每次前向都会构建计算图、保存激活，显存占用大，评估时稍大的 batch 就可能 OOM。
+
+标准写法：
+```python
+model.eval()
+with torch.no_grad():        # 纯推理也可以用 torch.inference_mode()
+    ...
+model.train()                # 评估完继续训练前要切回来
+```
+
+大模型多用 LayerNorm、RMSNorm，不受模式影响，但模型中可能仍有 Dropout，评测前同样要调用 `eval()`。
+
+<sub>考点：train与eval　｜　出处：PyTorch 文档：Autograd mechanics（Evaluation Mode）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-023"></a>
+
+### CS-TORCH-023　进阶 · 考频 ★★
+
+模型处于训练模式时，只要把前向计算包在 `torch.no_grad()` 中，BatchNorm 层就不会更新它的 running_mean 和 running_var。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。BN 是否更新滑动统计量，取决于模块的 `training` 标志（以及 `track_running_stats`），与 autograd 是否开启无关。
+
+```python
+bn = torch.nn.BatchNorm1d(1)              # 新建的模块默认处于训练模式
+with torch.no_grad():
+    bn(torch.tensor([[1.0], [3.0]]))
+bn.running_mean                            # tensor([0.2000])：已经被更新
+bn.num_batches_tracked                     # tensor(1)
+```
+
+**后果**：验证循环只写了 `no_grad`、忘了 `model.eval()`，每次验证都会用验证集数据更新 BN 的统计量。这不仅让验证结果不准，还相当于把验证集的分布信息「泄露」进了模型，之后的推理结果也会跟着变化。
+
+**正确做法**：评估前 `model.eval()`，评估后 `model.train()`；想在训练中冻结 BN 的统计量，要对这些 BN 层单独调用 `eval()`，或使用 `FrozenBatchNorm2d`（torchvision 提供）。
+
+<sub>考点：train与eval、requires_grad与no_grad　｜　出处：PyTorch 文档：torch.nn.BatchNorm1d</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-033"></a>
+
+### CS-TORCH-033　进阶 · 考频 ★★
+
+使用 `torch.autocast` 做混合精度训练时，应该把 `loss.backward()` 也放进 autocast 上下文中；否则反向传播会全部以 FP32 进行，失去混合精度的加速效果。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。官方示例明确写道：不建议在 autocast 中执行反向传播。反向算子会自动使用与对应前向算子**相同**的精度：前向在 FP16 / BF16 下执行的矩阵乘，反向同样以低精度执行，加速效果不会丢失。
+
+标准写法：
+```python
+with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    logits = model(x)
+    loss = loss_fn(logits, y)       # 前向和 loss 在 autocast 中
+loss.backward()                     # 反向放在 autocast 外
+optimizer.step()
+```
+
+其他常见误区：
+- autocast 并不把模型参数变成半精度，参数（主权重）仍是 FP32，算子执行时临时转换；
+- 在 autocast 区域中产生的半精度张量，拿到区域外与 FP32 张量运算可能出现 dtype 不匹配，必要时显式 `.float()`；
+- 哪些算子用低精度、哪些保持 FP32，由 autocast 内部的算子列表决定，而且 CUDA 与 CPU 上的列表并不完全相同，不要假设某个算子的输出一定是某种精度。
+
+<sub>考点：混合精度AMP　｜　出处：PyTorch 文档：Automatic Mixed Precision examples、torch.autocast</sub>
+
+</details>
+
+---
+
+## 填空题
+
+<a name="CS-TORCH-004"></a>
+
+### CS-TORCH-004　进阶 · 考频 ★★★
+
+按 PyTorch 的广播规则推断结果形状：形状为 `(8, 1, 6, 1)` 的张量与形状为 `(7, 1, 5)` 的张量相加，结果形状为 ____；形状为 `(4, 1, 3)` 的张量与形状为 `(5, 1)` 的张量相乘，结果形状为 ____。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) (8, 7, 6, 5) / (8,7,6,5) / [8, 7, 6, 5]；(2) (4, 5, 3) / (4,5,3) / [4, 5, 3]
+
+**解析：**
+
+**规则**：把两个形状**右对齐**，从最后一维往前逐维比较：两者相等、其中一个为 1、或其中一个不存在（视为 1），就可以广播，结果取较大者；否则报错。
+
+```
+8 1 6 1          4 1 3
+  7 1 5            5 1
+-------          -----
+8 7 6 5          4 5 3
+```
+
+- 第一题：最后一维 1 与 5 → 5；倒数第二维 6 与 1 → 6；倒数第三维 1 与 7 → 7；第一维 8 与「不存在」→ 8。
+- 第二题：3 与 1 → 3；1 与 5 → 5；4 与「不存在」→ 4。
+
+反例：`(2, 3)` 与 `(3, 2)` 最后一维 3 对 2，既不相等也没有 1，报错。广播不会真的复制数据：被扩展的维度步长为 0，只是逻辑上「重复」。但广播出的**结果**是实打实分配的，`(N, 1) - (N,)` 会得到 N×N 的张量，这是许多隐蔽 bug 和显存暴涨的来源。
+
+<sub>考点：广播　｜　出处：PyTorch 文档：Broadcasting semantics</sub>
+
+</details>
+
+---
+
+## 代码输出题
+
+<a name="CS-TORCH-001"></a>
+
+### CS-TORCH-001　基础 · 考频 ★★
+
+下面的代码分别用 `torch.from_numpy` 和 `torch.tensor` 从 NumPy 数组创建张量，然后修改原数组，并查看几种默认的 dtype。输出是什么？
+
+```python
+import numpy as np
+import torch
+
+a = np.zeros(3, dtype=np.float32)
+t1 = torch.from_numpy(a)
+t2 = torch.tensor(a)
+a[0] = 7
+print(t1.tolist(), t2.tolist())
+print(torch.from_numpy(np.zeros(2)).dtype, torch.tensor([1, 2]).dtype, torch.tensor([1.0]).dtype)
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+[7.0, 0.0, 0.0] [0.0, 0.0, 0.0]
+torch.float64 torch.int64 torch.float32
+```
+
+**解析：**
+
+**第一行**：`torch.from_numpy(a)` 与数组**共享内存**，不复制数据，修改 a 后 t1 跟着变；`torch.tensor(a)` 总是**复制**一份，不受影响。`torch.as_tensor` 在 dtype 与设备都不变时也会共享内存。反过来，CPU 张量的 `.numpy()` 同样与张量共享内存（张量需要先 `.detach()`，GPU 张量需要先 `.cpu()`）。
+
+**第二行**：
+- NumPy 的浮点数组默认是 float64，`from_numpy` 原样保留 dtype，得到 `torch.float64`；
+- 由 Python 整数创建的张量默认是 `torch.int64`；
+- 由 Python 浮点数创建的张量使用 PyTorch 的默认浮点类型 `torch.float32`。
+
+**常见坑**：从 NumPy 读入的特征是 float64，直接喂给 float32 的模型会报 dtype 不匹配；需要 `.float()` 或在 NumPy 侧先转成 float32。共享内存则意味着：对 from_numpy 得到的张量做原地修改，会悄悄改掉原数组。
+
+<sub>考点：Tensor与设备　｜　出处：PyTorch 文档：torch.from_numpy、torch.tensor</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-007"></a>
+
+### CS-TORCH-007　进阶 · 考频 ★★★
+
+下面的代码查看转置、`contiguous()` 以及按行、按列切片后的步长与连续性。输出是什么？
+
+```python
+import torch
+
+x = torch.arange(12).view(3, 4)
+y = x.t()
+print(x.stride(), y.stride(), y.is_contiguous())
+z = y.contiguous()
+print(z.stride(), z.data_ptr() == x.data_ptr())
+print(x[:, 1].is_contiguous(), x[1].is_contiguous())
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+(4, 1) (1, 4) False
+(3, 1) False
+False True
+```
+
+**解析：**
+
+**步长（stride）**：第 i 维的下标加 1，在底层存储中要跳过多少个元素。
+
+1. x 形状 `(3, 4)`，按行连续存放，stride 为 `(4, 1)`。`x.t()` 不搬数据，只交换形状和步长，y 的形状为 `(4, 3)`、stride 为 `(1, 4)`：逻辑上相邻的两列元素在存储中相隔 4 个位置，不满足行优先的连续布局，`is_contiguous()` 为 False。
+2. `y.contiguous()` 按 y 的逻辑顺序**复制**出一块新的连续存储，形状 `(4, 3)` 对应 stride `(3, 1)`；数据已在新地址上，与 x 的 `data_ptr` 不同。
+3. 取一列 `x[:, 1]`：三个元素在存储中相隔 4 个位置，stride 为 `(4,)`，不连续；取一行 `x[1]`：四个元素紧挨着，stride 为 `(1,)`，是连续的（只是起始偏移为 4）。
+
+**要点**：转置、permute、按列切片得到的都是共享存储的视图，常常不连续；此时 `y.view(12)` 会报错，`y.reshape(12)` 会悄悄复制一份，`y.contiguous().view(12)` 则是显式复制。
+
+<sub>考点：view与reshape与contiguous</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-011"></a>
+
+### CS-TORCH-011　进阶 · 考频 ★★
+
+下面的计算中，一条路径经过 `detach()`，另一条没有；同时对中间结果 y 调用了 `retain_grad()`。输出是什么？
+
+```python
+import torch
+
+x = torch.tensor(3.0, requires_grad=True)
+y = x * x
+y.retain_grad()
+z = y.detach() * x + y
+z.backward()
+print(x.grad.item(), y.grad.item())
+print(x.is_leaf, y.is_leaf, y.detach().requires_grad)
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+15.0 1.0
+True False False
+```
+
+**解析：**
+
+`y.detach()` 返回一个与 y 共享数据、但**脱离计算图**的张量，梯度不会沿它回传。所以 `z = c·x + y`，其中 c = 9 被当作常数：
+
+- $\partial z/\partial x = c + \partial y/\partial x = 9 + 2x = 9 + 6 = 15$；
+- $\partial z/\partial y = 1$。y 是中间结果（非叶子），默认不保存 `.grad`，因为调用了 `retain_grad()` 才能读到 1.0。
+
+第二行：x 是用户直接创建的、`requires_grad=True` 的张量，是叶子；y 由运算产生（有 grad_fn），不是叶子；`detach()` 的结果 `requires_grad=False`。
+
+**用途**：detach 用于「截断梯度」，例如目标网络的输出、RL 中的价值目标、对比学习的动量编码器、DPO 中参考模型的对数概率。注意 detach 的结果与原张量共享存储，对它做原地修改会影响原张量，必要时用 `detach().clone()`。
+
+<sub>考点：autograd与计算图、requires_grad与no_grad　｜　出处：PyTorch 文档：Autograd mechanics</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-014"></a>
+
+### CS-TORCH-014　挑战 · 考频 ★★
+
+下面对四种计算的结果做原地修改后再反向传播。每一行输出 ok 还是 error？
+
+```python
+import torch
+
+def try_backward(fn):
+    x = torch.randn(3, requires_grad=True)
+    try:
+        fn(x).sum().backward()
+        return "ok"
+    except RuntimeError:
+        return "error"
+
+torch.manual_seed(0)
+print(try_backward(lambda x: (x + 1).mul_(2)))
+print(try_backward(lambda x: x.sigmoid().mul_(2)))
+print(try_backward(lambda x: (x * x).add_(1)))
+print(try_backward(lambda x: x.exp().add_(1)))
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+ok
+error
+ok
+error
+```
+
+**解析：**
+
+**机制**：autograd 在前向时为反向保存需要的张量，并记下它们的版本号；原地操作会让张量的版本号加 1。反向时若发现保存的张量已被修改，就报错 `one of the variables needed for gradient computation has been modified by an inplace operation`。所以关键要看：**被原地修改的张量，是否正是反向需要的那个**。
+
+1. `x + 1`：加法的反向不需要保存任何张量，原地乘 2 不影响，ok。
+2. `x.sigmoid()`：导数是 $s(1-s)$，要用到**输出** s；s 被原地修改，error。
+3. `x * x`：乘法的反向保存的是**输入** x，输出被原地加 1 不影响，ok。
+4. `x.exp()`：导数就是输出 $e^x$ 本身，保存的是输出；输出被修改，error。
+
+**要点**：
+- 没有报错就说明梯度是正确的（版本检查保证了这一点），报错时改用非原地写法，如 `s = s * 2`；
+- 优化器原地更新参数不会触发这个错误，因为它在 `torch.no_grad()` 下执行；
+- `nn.ReLU(inplace=True)` 能节省显存，但前一层的反向若需要它的输入，就会出现同样的报错。
+
+<sub>考点：常见bug、autograd与计算图　｜　出处：PyTorch 文档：Autograd mechanics（In-place operations）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-020"></a>
+
+### CS-TORCH-020　进阶 · 考频 ★★
+
+下面的模块用四种方式保存了张量或子模块。输出是什么？
+
+```python
+import torch
+from torch import nn
+
+class Net(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(2, 2)
+        self.register_buffer("steps", torch.zeros(1))
+        self.register_buffer("cache", torch.zeros(1), persistent=False)
+        self.scale = torch.ones(1)                # 普通张量属性
+        self.heads = [nn.Linear(2, 2)]            # 普通 Python 列表
+
+m = Net()
+print(sorted(m.state_dict().keys()))
+print(len(list(m.parameters())), [n for n, _ in m.named_buffers()])
+m.to(torch.float64)
+print(m.steps.dtype, m.scale.dtype, m.heads[0].weight.dtype)
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+['fc.bias', 'fc.weight', 'steps']
+2 ['steps', 'cache']
+torch.float64 torch.float32 torch.float32
+```
+
+**解析：**
+
+`nn.Module` 只「认识」以特定方式注册的成员：
+
+| 写法 | 是否参数 | 是否 buffer | 进 state_dict | 随 `.to()` 移动或转换 |
+|---|---|---|---|---|
+| `self.fc = nn.Linear(...)`（子模块） | 是（fc 的 weight、bias） | 否 | 是 | 是 |
+| `register_buffer("steps", ...)` | 否 | 是 | 是 | 是 |
+| `register_buffer(..., persistent=False)` | 否 | 是 | **否** | 是 |
+| `self.scale = torch.ones(1)` | 否 | 否 | 否 | **否** |
+| `self.heads = [nn.Linear(...)]` | **否** | 否 | 否 | **否** |
+
+所以：state_dict 只有 fc 的两个参数和持久化的 buffer steps；`parameters()` 只有 2 个；`to(torch.float64)` 转换了参数和浮点 buffer，普通张量属性和列表里的子模块原样不动。
+
+**后果**：放在普通 Python 列表里的层，参数不会交给优化器（`model.parameters()` 找不到它们，永远不会被训练），不会随模型搬到 GPU，也不会被保存。应该用 `nn.ModuleList`、`nn.ModuleDict`；不训练但需要随模型保存和移动的张量（如 BN 的统计量、RoPE 的 cos/sin 表）用 `register_buffer`，能从参数重新计算的缓存用 `persistent=False`。
+
+<sub>考点：nn.Module　｜　出处：PyTorch 文档：torch.nn.Module</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-025"></a>
+
+### CS-TORCH-025　进阶 · 考频 ★★★
+
+下面用 `nn.CrossEntropyLoss` 计算 3 个样本、4 个类别的损失，第 2 个样本的标签是 -100。输出是什么？
+
+```python
+import torch
+from torch import nn
+
+logits = torch.zeros(3, 4)                     # 每个样本 4 个类别的打分全为 0
+target = torch.tensor([1, -100, 2])
+print(round(nn.CrossEntropyLoss()(logits, target).item(), 4))
+print(round(nn.CrossEntropyLoss(reduction="sum")(logits, target).item(), 4))
+print(nn.CrossEntropyLoss()(logits, torch.tensor([-100, -100, -100])).item())
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+1.3863
+2.7726
+nan
+```
+
+**解析：**
+
+1. logits 全为 0，softmax 后每个类别的概率都是 1/4，每个有效样本的交叉熵为 $\ln 4\approx1.3863$。`ignore_index` 默认为 -100，标签为 -100 的样本既不计入分子，也不计入分母。默认的 `reduction="mean"` 除以**有效样本数** 2，结果仍是 $\ln 4$。
+2. `reduction="sum"`：两个有效样本求和，$2\ln4\approx2.7726$。
+3. 全部标签都被忽略时，mean 是 0/0，得到 **nan**。
+
+**在大模型训练中**：SFT 把提示词和 padding 位置的标签设为 -100，只对回答部分计算损失。要注意两点：一是某个 micro-batch 的标签可能全部被屏蔽（例如回答被截断），loss 变成 nan，进而污染梯度，需要在数据处理阶段过滤或做保护；二是默认按「本 batch 有效 token 数」取平均，梯度累积、数据并行时各 batch 的有效 token 数不同，按 batch 平均再平均与按全局 token 平均并不等价。
+
+<sub>考点：损失函数　｜　出处：PyTorch 文档：torch.nn.CrossEntropyLoss</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-036"></a>
+
+### CS-TORCH-036　进阶 · 考频 ★★
+
+下面不需要启动分布式环境，直接给 `DistributedSampler` 指定副本数和 rank，观察 10 条数据在 3 个进程间如何划分，以及 `set_epoch` 的作用。输出是什么？
+
+```python
+from torch.utils.data import DistributedSampler
+
+data = list(range(10))
+for rank in range(3):
+    s = DistributedSampler(data, num_replicas=3, rank=rank, shuffle=False)
+    print(rank, list(s))
+
+s = DistributedSampler(data, num_replicas=2, rank=0, shuffle=True, seed=0)
+e0, e1 = list(s), list(s)
+s.set_epoch(1)
+print(e0 == e1, e0 == list(s))
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+0 [0, 3, 6, 9]
+1 [1, 4, 7, 0]
+2 [2, 5, 8, 1]
+True False
+```
+
+**解析：**
+
+**划分方式**：默认 `drop_last=False`。10 条数据无法被 3 整除，sampler 先把下标补齐到 $\lceil10/3\rceil\times3=12$ 个，补的是从头开始重复的下标 0、1，得到 `[0, 1, ..., 9, 0, 1]`；然后 rank r 取第 r、r+3、r+6、…… 个，即交错切分。所以每个进程都拿到 4 条，样本 0 和 1 被用了两次。
+
+**影响**：训练时多用几条重复样本影响不大；但**分布式评估**时，汇总各卡的结果会重复计算这些样本，指标会有偏差。评估时可以设 `drop_last=True`（会丢弃尾部数据）、在汇总后按样本 ID 去重，或者只在一个进程上评估完整数据集。
+
+**set_epoch**：打乱的随机种子是 `seed + epoch`。不调用 `set_epoch`，每个 epoch 的顺序完全相同（e0 == e1 为 True）；调用之后顺序改变。官方文档要求在每个 epoch 开始、创建 DataLoader 迭代器之前调用 `sampler.set_epoch(epoch)`。
+
+<sub>考点：分布式DDP、DataLoader　｜　出处：PyTorch 文档：torch.utils.data.distributed.DistributedSampler</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-043"></a>
+
+### CS-TORCH-043　挑战 · 考频 ★★
+
+下面的代码从一个较大的张量中只取出最后一行保存。输出是什么？
+
+```python
+import torch
+
+logits = torch.zeros(1000, 1000)          # 假设这是一次前向得到的大张量
+last = logits[-1]                         # 只想保留最后一行
+print(last.numel() * last.element_size())
+print(last.untyped_storage().nbytes())
+kept = logits[-1].clone()
+print(kept.untyped_storage().nbytes())
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+4000
+4000000
+4000
+```
+
+**解析：**
+
+1. `last` 只有 1000 个 float32 元素，按元素计算是 4000 字节。
+2. 但索引、切片得到的是**视图**，与 logits 共享同一块底层存储。`last.untyped_storage()` 就是那整块 1000×1000×4 = 4,000,000 字节的存储。只要 `last` 还活着，即使 `del logits`，这 4 MB 也不会被释放。
+3. `clone()` 复制出一块只属于自己的新存储，只有 4000 字节，原来的大存储可以随 logits 一起释放。
+
+**真实场景**：自回归生成时，每一步把 `outputs.logits[:, -1, :]` 追加到列表里，想留着做分析，结果每一步完整的 `(B, T, V)` logits 都被保留下来，词表一大，显存迅速耗尽。应该写成 `logits[:, -1, :].detach().clone()`，或者直接 `.cpu()` 拷到内存（跨设备拷贝本身就会复制）。
+
+注意：`.detach()` 只是切断计算图，**不会**复制存储，仍然会留住整块内存。
+
+<sub>考点：显存排查　｜　出处：PyTorch 文档：Tensor Views、torch.Tensor.untyped_storage</sub>
+
+</details>
+
+---
+
+## 代码填空题
+
+<a name="CS-TORCH-019"></a>
+
+### CS-TORCH-019　进阶 · 考频 ★★★
+
+补全梯度累积的训练循环：每处理 `accum` 个 micro-batch 更新一次参数，使更新结果与「把这 accum 个 micro-batch 拼成一个大 batch、按平均损失更新一次」完全等价（各 micro-batch 大小相同，模型中没有 BatchNorm，损失函数按样本取平均）。
+
+```python
+import torch
+
+def train_accum(model, opt, loss_fn, batches, accum):
+    opt.zero_grad()
+    for i, (x, y) in enumerate(batches):
+        loss = loss_fn(model(x), y) / ____
+        loss.backward()
+        if (i + 1) % ____ == 0:
+            opt.____()
+            opt.____()
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) `accum`；(2) `accum`；(3) `step`；(4) `zero_grad`
+
+**解析：**
+
+**四个空**：
+1. `accum`：每个 micro-batch 的 loss 除以累积步数。梯度在 `.grad` 中按 micro-batch **求和**，除以 k 之后，k 个 micro-batch 梯度之和恰好等于大 batch 的平均梯度。
+2. `accum`：每累积 k 个 micro-batch 更新一次。
+3. `step`：用累积好的梯度更新参数。
+4. `zero_grad`：更新后清零，开始下一轮累积。注意顺序不能颠倒：先 zero_grad 再 step，梯度已被清空，参数不会更新。
+
+**注意事项**：
+- 等价性的前提是 micro-batch 之间互不影响。有 BatchNorm 时统计量只来自小 batch，不严格等价；各 micro-batch 的有效 token 数不同（如 SFT 只对回答部分计算 loss）时，按 micro-batch 取平均再除以 k 与「按全部 token 平均」不等价，需要按全局 token 数归一化；
+- 学习率调度、日志、梯度裁剪都应按「优化步」而不是 micro-batch 计数，裁剪放在 step 之前；
+- 样本数不能被 k 整除时，最后剩下的几个 micro-batch 要么单独更新一次，要么丢弃；
+- DDP 下，前 k-1 个 micro-batch 用 `model.no_sync()` 跳过梯度同步，可以减少通信。
+
+<sub>考点：叶子节点与梯度累积、优化器与zero_grad</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-032"></a>
+
+### CS-TORCH-032　进阶 · 考频 ★★
+
+补全一个使用 FP16 混合精度并带梯度裁剪的训练 step。为了能在 CPU 上运行，这里的 autocast 与 GradScaler 使用 `"cpu"` 设备；在 GPU 上把设备换成 `"cuda"` 即可，调用顺序完全相同。
+
+```python
+import torch
+
+def amp_step(model, opt, scaler, x, y, max_norm=1.0):
+    opt.zero_grad()
+    with torch.autocast(device_type="cpu", dtype=torch.float16):
+        loss = torch.nn.functional.mse_loss(model(x), y)
+    scaler.____(loss).backward()
+    scaler.____(opt)
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+    scaler.____(opt)
+    scaler.____()
+    return loss.item()
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) `scale`；(2) `unscale_`；(3) `step`；(4) `update`
+
+**解析：**
+
+**四个空**：
+1. `scale`：把 loss 乘以当前的缩放因子再反向，让 FP16 中很小的梯度不至于下溢成 0；
+2. `unscale_`：裁剪之前，先把梯度除回缩放因子，恢复真实大小。否则 `clip_grad_norm_` 看到的是放大了上千倍的梯度，阈值 1.0 会把梯度裁得几乎为 0；
+3. `step`：代替 `opt.step()`。它先检查梯度中是否有 inf 或 NaN：没有就执行更新（已经 unscale 过的不会重复处理），有就**跳过**本次更新；
+4. `update`：根据本步是否溢出调整缩放因子：溢出就减小，连续若干步没有溢出就增大。
+
+**要点**：
+- autocast 只包住前向和 loss 的计算，backward 放在外面（反向会自动沿用前向选择的精度）；
+- `unscale_` 每个优化器在每次 step 之前最多调用一次；梯度累积时，要等所有 micro-batch 都反向完成后才 unscale、裁剪、step、update；
+- BF16 的指数范围与 FP32 相同，一般不需要 GradScaler，只用 autocast 即可；
+- 测试中「更新量范数恰好为 0.1」验证了裁剪发生在真实尺度的梯度上；若漏掉 `unscale_`，更新量会小约 1024 倍。
+
+<sub>考点：混合精度AMP　｜　出处：PyTorch 文档：Automatic Mixed Precision examples</sub>
+
+</details>
+
+---
+
+## 代码改错题
+
+<a name="CS-TORCH-005"></a>
+
+### CS-TORCH-005　进阶 · 考频 ★★★
+
+下面的回归训练中，模型输出形状为 `(N, 1)`，标签 y 的形状为 `(N,)`。训练能跑、也不报错，但 loss 降不下去，学到的权重与真实值相差很远。请找出 bug 并修正。
+
+```python
+import torch
+from torch import nn
+
+def mse(pred, target):
+    return ((pred - target) ** 2).mean()
+
+def train(X, y, steps=300, lr=0.1):
+    torch.manual_seed(0)
+    model = nn.Linear(X.shape[1], 1)
+    opt = torch.optim.SGD(model.parameters(), lr=lr)
+    for _ in range(steps):
+        pred = model(X)                  # (N, 1)
+        loss = mse(pred, y)              # y: (N,)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    return model, loss.item()
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：`pred - target` 中 pred 为 `(N, 1)`、target 为 `(N,)`，按广播规则得到 `(N, N)` 的矩阵：第 i 行是第 i 个预测与**所有** N 个标签的差。loss 变成「每个预测与每个标签之差的平方」的平均，最优解是对所有样本都预测 y 的均值，模型自然学不到真实的权重。整个过程没有任何报错。
+
+**修正**：让两者形状一致，例如 `pred = model(X).squeeze(-1)`，或把标签改成 `y.unsqueeze(-1)`；并在损失函数里断言形状相等，让这类错误尽早暴露。
+
+**修正后的代码：**
+
+```python
+import torch
+from torch import nn
+
+def mse(pred, target):
+    assert pred.shape == target.shape, (pred.shape, target.shape)
+    return ((pred - target) ** 2).mean()
+
+def train(X, y, steps=300, lr=0.1):
+    torch.manual_seed(0)
+    model = nn.Linear(X.shape[1], 1)
+    opt = torch.optim.SGD(model.parameters(), lr=lr)
+    for _ in range(steps):
+        pred = model(X).squeeze(-1)      # (N, 1) -> (N,)
+        loss = mse(pred, y)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    return model, loss.item()
+```
+
+**解析：**
+
+这是 PyTorch 中最经典的「静默 bug」之一：广播让形状不同的张量也能运算，代码不报错，只是结果错了。
+
+防御办法：
+- 在计算 loss 前写 `assert pred.shape == target.shape`；
+- 使用 `nn.functional.mse_loss` 时，遇到形状不一致会给出 UserWarning（提示目标尺寸与输入尺寸不同、可能因广播得到错误结果），不要忽略这类警告；
+- 回归、二分类模型的输出常带一个大小为 1 的尾维，读数据、写 loss 时要明确约定形状。
+
+类似的坑还有：`(N,)` 的预测与 `(N, 1)` 的标签做 `==` 比较算准确率，同样得到 `(N, N)`，算出的准确率完全错误。
+
+<sub>考点：广播、损失函数</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-008"></a>
+
+### CS-TORCH-008　进阶 · 考频 ★★★
+
+多头注意力中，`split_heads` 把 `(B, T, H*d)` 拆成 `(B, H, T, d)`，`merge_heads` 负责把注意力输出还原成 `(B, T, H*d)`。下面的 `merge_heads` 输出形状正确、运行也不报错，但「先拆再合」得不到原张量。请找出 bug 并修正。
+
+```python
+import torch
+
+def split_heads(x, n_heads):
+    B, T, D = x.shape
+    return x.view(B, T, n_heads, D // n_heads).transpose(1, 2)
+
+def merge_heads(x):
+    B, H, T, d = x.shape
+    return x.reshape(B, T, H * d)
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：`merge_heads` 直接把 `(B, H, T, d)` reshape 成 `(B, T, H*d)`。reshape 按**逻辑顺序**（最后一维变化最快）读取元素：它会先读完头 0 在所有时间步上的数据，再读头 1……然后按 `(B, T, H*d)` 的方式重新切分，于是「时间步」和「头」被搅混了。形状虽然对，数据却是错的。
+
+**修正**：先把头这一维换回到 d 的旁边，再展平：
+
+```python
+return x.transpose(1, 2).reshape(B, T, H * d)
+# 或 x.transpose(1, 2).contiguous().view(B, T, H * d)
+```
+
+**修正后的代码：**
+
+```python
+import torch
+
+def split_heads(x, n_heads):
+    B, T, D = x.shape
+    return x.view(B, T, n_heads, D // n_heads).transpose(1, 2)
+
+def merge_heads(x):
+    B, H, T, d = x.shape
+    return x.transpose(1, 2).reshape(B, T, H * d)
+```
+
+**解析：**
+
+拆头与合头必须严格互逆：拆的时候是 `view(B, T, H, d)` 再 `transpose(1, 2)`，合的时候就要先 `transpose(1, 2)` 回到 `(B, T, H, d)`，再把最后两维合并。
+
+为什么修正后用 view 必须先 `contiguous()`：`transpose` 之后的张量不连续，`view` 无法用现有步长表达新形状，会直接报错；`reshape` 则会在需要时自动复制。原代码的 reshape 能「成功」，正是它危险的地方：形状检查发现不了这类错误。测试时一定要做「拆分再合并等于原张量」这样的数值对拍。
+
+<sub>考点：view与reshape与contiguous</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-017"></a>
+
+### CS-TORCH-017　进阶 · 考频 ★★★
+
+下面用手写参数训练线性回归，运行时在更新参数的那一行报错 `TypeError: unsupported operand type(s) for *: 'float' and 'NoneType'`，即 `w.grad` 为 None。请找出原因并修正。
+
+```python
+import torch
+
+def fit(X, y, steps=200, lr=0.1):
+    torch.manual_seed(0)
+    w = torch.randn(X.shape[1], 1, requires_grad=True) * 0.01
+    b = torch.zeros(1, requires_grad=True)
+    for _ in range(steps):
+        loss = ((X @ w + b - y) ** 2).mean()
+        loss.backward()
+        with torch.no_grad():
+            w -= lr * w.grad
+            b -= lr * b.grad
+        w.grad = None
+        b.grad = None
+    return w, b, loss.item()
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：第 5 行 `torch.randn(..., requires_grad=True) * 0.01`。真正的叶子张量是 `torch.randn(...)` 创建的那个匿名张量；乘以 0.01 之后得到的 w 是一次运算的**结果**（带有 `grad_fn=MulBackward0`），不是叶子。反向传播只把梯度累加到叶子的 `.grad` 上，所以 `w.grad` 为 None（PyTorch 还会给出访问非叶子张量 `.grad` 的警告）。
+
+**修正**：先完成缩放，再把结果设为需要梯度：
+
+```python
+w = (torch.randn(X.shape[1], 1) * 0.01).requires_grad_()
+```
+也可以写成 `w = torch.nn.Parameter(torch.randn(X.shape[1], 1) * 0.01)`，或先创建叶子，再在 `torch.no_grad()` 下原地 `w.mul_(0.01)`。
+
+**修正后的代码：**
+
+```python
+import torch
+
+def fit(X, y, steps=200, lr=0.1):
+    torch.manual_seed(0)
+    w = (torch.randn(X.shape[1], 1) * 0.01).requires_grad_()   # 先缩放，再设为需要梯度
+    b = torch.zeros(1, requires_grad=True)
+    for _ in range(steps):
+        loss = ((X @ w + b - y) ** 2).mean()
+        loss.backward()
+        with torch.no_grad():
+            w -= lr * w.grad
+            b -= lr * b.grad
+        w.grad = None
+        b.grad = None
+    return w, b, loss.item()
+```
+
+**解析：**
+
+**叶子张量**：由用户直接创建（没有 grad_fn）、`requires_grad=True` 的张量，如模型参数。只有它们的 `.grad` 会在 backward 时被填充；中间结果的梯度用完即弃，需要时调用 `retain_grad()`。
+
+判断方法：`w.is_leaf`、`w.grad_fn`。`nn.Module` 中的参数是 `nn.Parameter`，天然是叶子；`nn.init.normal_` 等初始化函数在 no_grad 下原地修改参数，也不会破坏叶子属性。
+
+同类坑：`w = torch.zeros(3, requires_grad=True).cuda()` 得到的也是非叶子（`.cuda()` 是一次运算），应写 `torch.zeros(3, device="cuda", requires_grad=True)`。另外，更新参数时必须在 `torch.no_grad()` 下原地修改，否则对需要梯度的叶子做原地运算会报错，或者把更新本身记录进计算图。
+
+<sub>考点：叶子节点与梯度累积　｜　出处：PyTorch 文档：Autograd mechanics</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-024"></a>
+
+### CS-TORCH-024　挑战 · 考频 ★★
+
+微调时想冻结骨干网络中的 BatchNorm 统计量，让 BN 一直使用预训练得到的 running_mean / running_var。下面的代码在训练开始前对骨干调用了 `eval()`，参数也设成了不需要梯度，但训练结束后发现骨干中 BN 的 running_mean 还是被改变了。请找出原因并修正。
+
+```python
+import torch
+from torch import nn
+
+def build():
+    torch.manual_seed(0)
+    backbone = nn.Sequential(nn.Linear(4, 8), nn.BatchNorm1d(8), nn.ReLU())
+    head = nn.Linear(8, 1)
+    return nn.ModuleDict({"backbone": backbone, "head": head})
+
+def train(model, data, epochs=2):
+    for p in model["backbone"].parameters():
+        p.requires_grad_(False)
+    model["backbone"].eval()                  # 冻结 BN 统计量
+    opt = torch.optim.SGD(model["head"].parameters(), lr=0.1)
+    for _ in range(epochs):
+        model.train()                         # 每个 epoch 开始时切回训练模式
+        for x, y in data:
+            out = model["head"](model["backbone"](x))
+            loss = ((out - y) ** 2).mean()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：`model.train()` 会**递归地**把所有子模块的 `training` 标志设为 True，把训练开始前对骨干调用的 `eval()` 覆盖掉了。于是骨干中的 BN 又回到训练模式，前向时用每个 batch 的统计量做归一化，并不断更新 running_mean / running_var。
+
+`requires_grad_(False)` 只冻结了 BN 的仿射参数 $\gamma$、$\beta$，而滑动统计量是 buffer，在训练模式的前向中被直接更新，与梯度无关。
+
+**修正**：每次调用 `model.train()` 之后，再把骨干设回 eval：
+
+```python
+model.train()
+model["backbone"].eval()
+```
+
+**修正后的代码：**
+
+```python
+import torch
+from torch import nn
+
+def build():
+    torch.manual_seed(0)
+    backbone = nn.Sequential(nn.Linear(4, 8), nn.BatchNorm1d(8), nn.ReLU())
+    head = nn.Linear(8, 1)
+    return nn.ModuleDict({"backbone": backbone, "head": head})
+
+def train(model, data, epochs=2):
+    for p in model["backbone"].parameters():
+        p.requires_grad_(False)
+    opt = torch.optim.SGD(model["head"].parameters(), lr=0.1)
+    for _ in range(epochs):
+        model.train()                         # 会递归地把所有子模块设为训练模式
+        model["backbone"].eval()              # 所以要在它之后再把骨干设回 eval
+        for x, y in data:
+            out = model["head"](model["backbone"](x))
+            loss = ((out - y) ** 2).mean()
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+```
+
+**解析：**
+
+更稳妥的写法是在自定义模块中重写 `train()`，让「冻结的部分永远处于 eval」成为模块自身的性质，不依赖调用方记得这件事：
+
+```python
+class Detector(nn.Module):
+    def train(self, mode=True):
+        super().train(mode)
+        self.backbone.eval()          # 无论外部如何切换，骨干的 BN 都保持冻结
+        return self
+```
+
+也可以把骨干中的 BN 替换成 `torchvision.ops.FrozenBatchNorm2d` 这类统计量和仿射参数都固定的实现，检测、分割任务中小 batch 微调时很常见。
+
+**排查技巧**：训练前后对比 `running_mean` 是否变化，或者在训练循环中断言 `not bn.training`。
+
+<sub>考点：train与eval、nn.Module　｜　出处：PyTorch 文档：torch.nn.Module.train</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-028"></a>
+
+### CS-TORCH-028　基础 · 考频 ★★★
+
+下面的训练循环能跑通、不报错，但参数从不更新，loss 纹丝不动。请找出原因并修正。
+
+```python
+import torch
+from torch import nn
+
+def train(X, y, steps=200):
+    torch.manual_seed(0)
+    model = nn.Linear(X.shape[1], 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.1)
+    loss_fn = nn.MSELoss()
+    for _ in range(steps):
+        loss = loss_fn(model(X), y)
+        loss.backward()
+        opt.zero_grad()
+        opt.step()
+    return model, loss.item()
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：`opt.zero_grad()` 放在了 `loss.backward()` 与 `opt.step()` 之间。刚算出的梯度在更新前就被清空（PyTorch 2.x 默认把 `.grad` 设为 None），`step()` 找不到梯度，直接跳过这些参数，参数永远不变。
+
+**修正**：标准顺序是「清零 → 前向 → 计算 loss → 反向 → 更新」：
+
+```python
+for _ in range(steps):
+    opt.zero_grad()
+    loss = loss_fn(model(X), y)
+    loss.backward()
+    opt.step()
+```
+
+**修正后的代码：**
+
+```python
+import torch
+from torch import nn
+
+def train(X, y, steps=200):
+    torch.manual_seed(0)
+    model = nn.Linear(X.shape[1], 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.1)
+    loss_fn = nn.MSELoss()
+    for _ in range(steps):
+        opt.zero_grad()
+        loss = loss_fn(model(X), y)
+        loss.backward()
+        opt.step()
+    return model, loss.item()
+```
+
+**解析：**
+
+zero_grad 的位置只有一个要求：在**本次** backward 之前清掉**上一次**的梯度，并且不能夹在 backward 与 step 之间。放在循环开头，或放在 step 之后，都是正确的。
+
+在 PyTorch 2.x 中，`zero_grad()` 默认 `set_to_none=True`，梯度被设为 None，优化器跳过没有梯度的参数；若设置 `set_to_none=False`，梯度被填成 0，普通 SGD 同样不会改变参数（带动量或权重衰减时参数仍会被动量、衰减项推动，问题更难发现）。
+
+完整的一步训练通常还包括：在 backward 之后、step 之前做梯度裁剪；在 step 之后调用 `scheduler.step()`。
+
+<sub>考点：优化器与zero_grad</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-042"></a>
+
+### CS-TORCH-042　进阶 · 考频 ★★★
+
+下面的验证函数在每个 epoch 结束时计算验证集的平均 loss。在 GPU 上运行时，验证阶段的显存随 batch 数持续上涨，验证集稍大就 OOM；返回值也是一个带 grad_fn 的张量。请找出问题并修正：函数应返回 Python float，并让 Dropout、BN 等层使用推理行为。
+
+```python
+import torch
+from torch import nn
+
+def evaluate(model, batches):
+    loss_fn = nn.MSELoss()
+    total = 0
+    for x, y in batches:
+        total += loss_fn(model(x), y)
+    return total / len(batches)
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：
+1. 没有 `torch.no_grad()`：每个 batch 的前向都构建计算图，并保存反向所需的激活值。
+2. `total += loss` 累加的是**带计算图的张量**：total 通过 grad_fn 引用着每一个 batch 的 loss，进而引用着每个 batch 的整张计算图和其中的激活，它们一个都释放不了，显存随 batch 数线性增长。
+3. 没有 `model.eval()`：Dropout 仍在随机丢弃，BN 还会用验证数据更新统计量。
+
+**修正**：加 `@torch.no_grad()`（或在函数体内用 with 语句），调用 `model.eval()`，累加时用 `.item()` 取出 Python 数值：
+
+```python
+@torch.no_grad()
+def evaluate(model, batches):
+    model.eval()
+    total = 0.0
+    for x, y in batches:
+        total += loss_fn(model(x), y).item()
+    return total / len(batches)
+```
+
+**修正后的代码：**
+
+```python
+import torch
+from torch import nn
+
+@torch.no_grad()
+def evaluate(model, batches):
+    model.eval()
+    loss_fn = nn.MSELoss()
+    total = 0.0
+    for x, y in batches:
+        total += loss_fn(model(x), y).item()
+    return total / len(batches)
+```
+
+**解析：**
+
+**训练循环中的同类问题**：`total_loss += loss` 写在训练循环里，每步的计算图在 backward 之后虽然释放了保存的激活，但图的节点和每一步的 loss 张量仍被 total_loss 串起来留在内存中，显存缓慢上涨；如果又用了 `retain_graph=True`，就会快速上涨。PyTorch 官方 FAQ 在「显存不足」的排查建议中把「不要在训练循环中累积计算历史」列在第一条，给出的改法是 `total_loss += float(loss)`。统计用的数值一律用 `.item()`、`float()` 或 `.detach()`。
+
+**关于 `.item()` 的开销**：在 GPU 上每次 `.item()` 都会让 CPU 等待 GPU 算完（同步）。验证阶段影响不大；对性能敏感的训练循环，可以把 `loss.detach()` 累加成 GPU 上的张量，最后再调用一次 `.item()`。
+
+别忘了验证结束后切回 `model.train()`；本题的修正代码把模型留在了 eval 模式，由调用方在下个 epoch 开始时切回。
+
+<sub>考点：显存排查　｜　出处：PyTorch 文档：FAQ（My model reports cuda runtime error(2): out of memory）</sub>
+
+</details>
+
+---
+
+## 编程题
+
+<a name="CS-TORCH-034"></a>
+
+### CS-TORCH-034　进阶 · 考频 ★★★
+
+为 SFT 数据实现 DataLoader 的 `collate_fn`：
+
+```python
+def collate(batch, pad_id=0): ...
+```
+
+- `batch` 是一个列表，每个元素是 dict：`{"input_ids": list[int], "labels": list[int]}`，两个列表等长，不同样本的长度可以不同；
+- 返回 dict，包含三个形状为 `(B, L)` 的 long 张量，L 是本 batch 中最长样本的长度：`input_ids`（右侧用 pad_id 填充）、`attention_mask`（真实 token 为 1，填充位置为 0）、`labels`（填充位置为 -100）；
+- 能直接作为 `DataLoader(dataset, batch_size=..., collate_fn=collate)` 的参数使用。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考实现：**
+
+```python
+import torch
+
+def collate(batch, pad_id=0):
+    B = len(batch)
+    L = max(len(s["input_ids"]) for s in batch)
+    ids = torch.full((B, L), pad_id, dtype=torch.long)
+    labels = torch.full((B, L), -100, dtype=torch.long)
+    mask = torch.zeros((B, L), dtype=torch.long)
+    for i, s in enumerate(batch):
+        n = len(s["input_ids"])
+        ids[i, :n] = torch.tensor(s["input_ids"], dtype=torch.long)
+        labels[i, :n] = torch.tensor(s["labels"], dtype=torch.long)
+        mask[i, :n] = 1
+    return {"input_ids": ids, "attention_mask": mask, "labels": labels}
+```
+
+**测试用例：**
+
+```python
+from functools import partial
+from torch.utils.data import DataLoader
+
+data = [
+    {"input_ids": [5, 6, 7], "labels": [-100, 6, 7]},
+    {"input_ids": [8], "labels": [8]},
+    {"input_ids": [9, 10], "labels": [-100, 10]},
+]
+out = collate(data[:2])
+assert out["input_ids"].tolist() == [[5, 6, 7], [8, 0, 0]]
+assert out["attention_mask"].tolist() == [[1, 1, 1], [1, 0, 0]]
+assert out["labels"].tolist() == [[-100, 6, 7], [8, -100, -100]]
+assert all(v.dtype == torch.long for v in out.values())
+
+batches = list(DataLoader(data, batch_size=2, collate_fn=collate))
+assert len(batches) == 2
+assert batches[0]["input_ids"].shape == (2, 3)
+assert batches[1]["input_ids"].tolist() == [[9, 10]]      # 每个 batch 按自身的最长样本填充
+
+b = next(iter(DataLoader(data, batch_size=3, collate_fn=partial(collate, pad_id=99))))
+assert b["input_ids"][1].tolist() == [8, 99, 99]
+assert b["attention_mask"].sum().item() == 6
+```
+
+**解析：**
+
+**为什么需要自定义 collate_fn**：默认的 collate 会把每个字段 `torch.stack` 起来，要求同一字段在各样本中形状相同，变长序列会直接报错。
+
+**思路**：先求本 batch 的最大长度 L，用 `torch.full` 预分配好 pad 值、-100 和 0，再逐个样本把真实内容写进前 n 个位置。也可以用 `torch.nn.utils.rnn.pad_sequence(seqs, batch_first=True, padding_value=...)` 一次完成填充。
+
+**三个输出各自的作用**：
+- `input_ids` 中的填充值是什么不重要，但模型必须靠 `attention_mask` 忽略这些位置；
+- `labels` 的填充位置设为 -100，与 CrossEntropyLoss 默认的 `ignore_index` 一致，不参与损失计算；提示词部分的 -100 由上游数据处理负责；
+- 训练时一般右侧填充；批量生成时，Decoder-only 模型通常改用**左侧**填充，保证每条序列的最后一个位置都是真实 token。
+
+**工程细节**：
+- `num_workers > 0` 且使用 spawn 启动 worker 时（Windows、macOS 的默认方式），collate_fn 要能被 pickle，应定义在模块顶层，需要额外参数时用 `functools.partial`，不要用 lambda；
+- 按长度把样本分桶再组 batch，或者把多条样本拼接打包（packing），可以显著减少填充带来的无效计算。
+
+<sub>考点：DataLoader　｜　出处：PyTorch 文档：torch.utils.data</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-041"></a>
+
+### CS-TORCH-041　挑战 · 考频 ★★
+
+实现带掩码的平均池化（计算句向量时常用）：
+
+```python
+def masked_mean(h, mask): ...
+```
+
+- `h`：形状 `(B, T, H)` 的浮点张量；`mask`：形状 `(B, T)`，1（或 True）表示有效 token，0（或 False）表示 padding，dtype 可能是 bool 或整数；
+- 返回形状 `(B, H)` 的张量：每个样本只对有效位置的向量求平均；padding 位置可能是任意值（包括 inf），不能影响结果；
+- 某个样本全部是 padding 时返回全 0 向量，不能出现 NaN；
+- 结果的 dtype 与 h 相同；要求向量化实现，不对 batch 做 Python 循环。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考实现：**
+
+```python
+import torch
+
+def masked_mean(h, mask):
+    keep = mask.bool().unsqueeze(-1)                     # (B, T, 1)，可与 h 广播
+    total = h.masked_fill(~keep, 0).sum(dim=1)           # padding 位置先填 0 再求和
+    count = keep.sum(dim=1).clamp(min=1).to(h.dtype)     # (B, 1)，全是 padding 时避免除以 0
+    return total / count
+```
+
+**测试用例：**
+
+```python
+torch.manual_seed(0)
+h = torch.randn(3, 4, 5)
+mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0]])
+out = masked_mean(h, mask)
+assert out.shape == (3, 5) and out.dtype == h.dtype
+assert torch.allclose(out[0], h[0, :2].mean(0))
+assert torch.allclose(out[1], h[1].mean(0))
+assert torch.equal(out[2], torch.zeros(5))
+assert torch.allclose(masked_mean(h, mask.bool()), out)
+
+h2 = h.clone()
+h2[0, 2:] = float("inf")                       # padding 位置是 inf，不能影响结果
+assert torch.allclose(masked_mean(h2, mask), out)
+assert masked_mean(h.double(), mask).dtype == torch.float64
+```
+
+**解析：**
+
+**思路**：
+1. `mask.bool().unsqueeze(-1)` 变成 `(B, T, 1)`，才能与 `(B, T, H)` 按位置广播。直接用 `(B, T)` 的掩码与 `(B, T, H)` 运算，会把 T 与 H 对齐，形状不符时报错，碰巧相等时则悄悄算错。
+2. 用 `masked_fill` 把 padding 位置**填成 0** 再求和，而不是用 `h * mask` 相乘：padding 处若是 inf 或 NaN，乘以 0 得到的是 NaN，会污染整个求和。
+3. 有效 token 数用 `clamp(min=1)` 保护：全是 padding 的样本分子为 0、分母为 1，结果为 0，而不是 0/0 = NaN。
+4. 计数转成 h 的 dtype，保证输出与输入同类型。
+
+**常见错误**：
+- `h[mask.bool()].mean(0)` 会把整个 batch 的有效向量混在一起，丢失 batch 结构；
+- 直接 `h.mean(1)` 把 padding 也算进平均，短句的句向量被大量 padding 拉偏；
+- 整数掩码与半精度张量运算时，类型提升可能出乎意料，统一先转 bool 再处理最稳妥。
+
+<sub>考点：广播、常见bug</sub>
+
+</details>
+
+---
+
+## 简答题
+
+<a name="CS-TORCH-010"></a>
+
+### CS-TORCH-010　进阶 · 考频 ★★★
+
+PyTorch 中 `contiguous()` 是做什么的？什么样的张量是「不连续」的，它是怎么产生的？为什么 `view` 要求张量连续而 `reshape` 不要求？在推理优化和自定义算子开发中，为什么要关心张量的连续性？
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **存储与步长**：张量由一块一维的底层存储，加上形状、步长（stride）、起始偏移等元信息描述。stride[i] 表示第 i 维下标加 1 时在存储中要跳过的元素数。按行优先紧密排列（最后一维步长为 1，每一维的步长等于后一维的步长乘以后一维的大小）的张量是连续的。
+2. **不连续的来源**：`transpose`、`permute`、`.T`、在非最后一维上切片（如 `x[:, 1]`）、`expand` 等视图操作只改元信息、不搬数据，结果的逻辑顺序与存储顺序不再一致。
+3. **contiguous() 的行为**：已连续时直接返回自身；否则按当前的逻辑顺序复制出一块新的连续存储，代价是一次 O(n) 的内存拷贝和额外的显存。
+4. **view 与 reshape**：view 只改元信息，要求新形状能用现有步长表达，否则报错，所以 view 的结果一定共享内存；reshape 能 view 就 view，不能就悄悄复制。多头注意力拆头写 `view(B, T, H, d).transpose(1, 2)`，合头写 `transpose(1, 2).contiguous().view(B, T, H*d)` 或 `reshape`。
+5. **为什么推理和算子开发要关心**：
+   - 很多高性能内核（自定义 CUDA / Triton 算子、FlashAttention 等）要求输入在最后一维连续，否则直接报错，或在内部隐式复制一份，多出显存与时间开销；
+   - 访存效率：连续数据可以被相邻线程合并访问（coalesced access）、向量化读写；跨步访问会浪费显存带宽，而解码阶段恰恰受带宽限制；
+   - 隐式拷贝藏在循环里代价很大：例如每个解码步都对 KV Cache 做一次 transpose 再 contiguous，会在每一步都产生额外的分配和拷贝；
+   - NCCL 集合通信等接口要求连续的缓冲区；
+   - 因此推理框架通常一开始就按内核需要的布局预分配缓存（如按 `(B, H, T, d)` 或分页布局），避免运行时反复转置和拷贝。
+
+**评分要点（共 10 分）：**
+
+- 说明张量由存储加 stride 等元信息描述，以及「连续」的含义（2 分）
+- 说明不连续张量如何产生，以及 contiguous() 的行为（已连续不复制，否则复制）（3 分）
+- 说清 view 与 reshape 的区别（2 分）
+- 说明连续性对内核要求、访存效率、隐式拷贝开销的影响（3 分）
+
+**讲解：**
+
+**常见失分点**：只会说「contiguous 让内存连续」，讲不出 stride；以为 transpose 会复制数据；以为 reshape 一定返回副本；说不出连续性对性能的影响，只停留在「不然 view 会报错」。加分项：能举出 KV Cache 布局、自定义算子要求连续输入的例子。
+
+<sub>考点：view与reshape与contiguous</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-031"></a>
+
+### CS-TORCH-031　进阶 · 考频 ★★★
+
+面试中常要求「手写一个 PyTorch 训练循环」。请写出一个标准训练 step 的完整顺序（数据搬运、前向、损失、反向、梯度裁剪、参数更新、学习率调度、梯度清零），并说明：(1) 为什么必须清零梯度；(2) 加入梯度累积时要改哪些地方；(3) 使用 FP16 混合精度（autocast + GradScaler）时要改哪些地方；(4) 每个 epoch 前后以及评估时还要注意什么。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**标准 step**：
+```python
+model.train()
+for step, (x, y) in enumerate(loader):
+    x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+    optimizer.zero_grad(set_to_none=True)
+    loss = loss_fn(model(x), y)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    optimizer.step()
+    scheduler.step()
+    if step % 100 == 0:
+        print(step, loss.item())    # 只在需要时取标量
+```
+
+1. **清零**：`.grad` 默认累加。不清零，本步梯度会叠加之前所有步的梯度，相当于有效学习率越来越大、更新方向混乱。
+2. **梯度累积**（每 k 个 micro-batch 更新一次）：loss 除以 k；只在 `(step + 1) % k == 0` 时执行裁剪、`optimizer.step()`、`scheduler.step()` 和清零；日志与学习率调度按「优化步」计数；DDP 下前 k-1 个 micro-batch 用 `no_sync()` 跳过梯度同步；有 BN 时与真正的大 batch 不严格等价。
+3. **FP16 AMP**：前向与 loss 放进 `with torch.autocast(device_type="cuda", dtype=torch.float16):`，backward 放在 autocast 之外；用 `scaler.scale(loss).backward()`；裁剪前先 `scaler.unscale_(optimizer)`；用 `scaler.step(optimizer)` 代替 `optimizer.step()`（梯度中有 inf / NaN 时跳过本步）；随后 `scaler.update()`。BF16 一般只需要 autocast，不需要 GradScaler。
+4. **其他细节**：每个 epoch 开始时 `model.train()`；用 DistributedSampler 时每个 epoch 调用 `sampler.set_epoch(epoch)`；评估时 `model.eval()` 加 `torch.no_grad()`（或 inference_mode），评估完切回 train；统计 loss 用 `loss.item()` 或 `detach()`，不要累加带计算图的张量；checkpoint 要同时保存模型、优化器、调度器、GradScaler 的 state_dict 以及当前步数，才能无缝续训。
+
+**评分要点（共 10 分）：**
+
+- 写出正确的 step 顺序（清零、前向、loss、反向、裁剪、step、scheduler），并解释为何必须清零（4 分）
+- 说明梯度累积的改法：loss 除以 k、每 k 步更新、调度与日志按优化步计数（2 分）
+- 说明 AMP 的改法：autocast 只包前向与 loss，scale、unscale_、step、update 的顺序（2 分）
+- 提到 train / eval 切换、no_grad、set_epoch、loss.item()、checkpoint 内容等细节（2 分）
+
+**讲解：**
+
+**常见失分点**：把 zero_grad 放在 backward 与 step 之间；以为 backward 会更新参数；梯度累积忘了把 loss 除以 k，或每个 micro-batch 都调用一次 scheduler；AMP 中在 unscale 之前做梯度裁剪，或把 backward 也放进 autocast；评估时只写 eval 或只写 no_grad；checkpoint 只存模型参数，续训时优化器状态和学习率全部丢失。
+
+<sub>考点：优化器与zero_grad、混合精度AMP、叶子节点与梯度累积　｜　出处：PyTorch 文档：Automatic Mixed Precision examples</sub>
+
+</details>
+
+---
+
+## 场景分析题
+
+<a name="CS-TORCH-039"></a>
+
+### CS-TORCH-039　挑战 · 考频 ★★
+
+一个 8 卡 DDP 训练任务总是在某些步数附近卡住：GPU 利用率掉到 0、显存不变、没有任何报错，直到 NCCL 超时后才退出。检查代码发现下面三处逻辑：
+
+① 训练循环中，若一个 batch 过滤掉超长样本后变为空，就 `continue` 跳过这个 batch；
+② 每隔 1000 步只在 rank 0 上做验证（`if rank == 0: evaluate(model)`），验证函数中用 `dist.all_reduce` 汇总指标；
+③ 保存 checkpoint 前调用了 `dist.barrier()`，但这行代码写在 `if rank == 0:` 的代码块里。
+
+请分析卡住的原因，给出修复方案和排查手段。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**1. 根因：各进程执行的集合通信不一致**
+
+DDP 反向时的梯度 all-reduce、手动调用的 `dist.all_reduce`、`dist.barrier` 都是**集合通信**，要求组内所有进程以相同的顺序调用相同次数。只要有一个进程少调用或多调用一次，其他进程就会一直等待，直到超时。
+
+- ①：某个 rank 的 batch 被过滤为空而跳过，它这一步不做 backward，就少参与了一次梯度 all-reduce，另外 7 个进程在 backward 中一直等它。数据分布越不均匀，越容易触发。
+- ②：只有 rank 0 进入验证并调用 all_reduce，其他进程根本不会调用，rank 0 卡在验证里；其他进程继续训练，在下一步的梯度同步处等待 rank 0，全体卡死。
+- ③：barrier 只有 rank 0 调用，rank 0 永远等不到其他进程。
+
+**2. 修复**
+- ①：不在单个进程上做「跳过」的决定。把过滤放到数据集构建阶段，保证每个 rank 每步都有数据；或者每步先用一次 all_reduce 同步「是否有进程为空」，所有进程一致地决定跳过；也可以让空 batch 做一次 loss 乘以 0 的前向与反向，照常参与梯度同步。
+- ②：要么所有进程一起验证（各算一部分数据，再 all_reduce 汇总）；要么只在 rank 0 上用未包装的 `model.module` 验证，且验证代码中不调用任何集合通信，其他进程在验证前后通过所有进程都会调用的 barrier 同步。
+- ③：`dist.barrier()` 放在 `if` 之外，`if rank == 0:` 只包住保存文件这一个动作。
+
+**3. 排查手段**
+- 设置 `TORCH_DISTRIBUTED_DEBUG=DETAIL`：它会在每次集合通信前做一致性检查，把「各进程调用不一致」的挂起变成带说明的报错；配合 `NCCL_DEBUG=INFO` 查看通信日志；
+- 用 py-spy 等工具 dump 每个进程的调用栈，看各 rank 分别停在哪一行；
+- 每个 rank 打印带步数的日志，对比是哪个 rank 先「掉队」；调试时可以给 `init_process_group` 设置更短的 timeout，或使用 `dist.monitored_barrier()`（gloo 后端）定位没有到达的 rank。
+
+**4. 预防原则**：凡是包含集合通信的代码路径，所有进程必须一致地执行；「只在 rank 0 做的事」只能是打印日志、写文件这类纯本地操作；自定义数据切分要保证每个 rank 的步数相同（DistributedSampler 会自动补齐）。
+
+**评分要点（共 10 分）：**
+
+- 指出根因是各进程调用集合通信的次数或顺序不一致，导致相互等待（3 分）
+- 逐条分析 ①②③ 各自如何导致卡住（3 分）
+- 给出对应修复：全员一致地跳过、验证不在单个 rank 上调用集合通信、barrier 放在条件之外（2 分）
+- 给出排查手段，如 TORCH_DISTRIBUTED_DEBUG=DETAIL、NCCL_DEBUG、dump 调用栈（2 分）
+
+**讲解：**
+
+**常见失分点**：把卡死归因于「网络不稳定」「NCCL 版本问题」；只发现了 barrier 的问题，没意识到「跳过一个 batch」同样会让梯度 all-reduce 错位；修复方案是「把超时调大」。记住一句话：在分布式训练中，任何带 `if rank == ...` 或数据相关分支的代码，都要检查里面有没有集合通信。
+
+<sub>考点：分布式DDP、常见bug　｜　出处：PyTorch 文档：torch.distributed（Debugging torch.distributed applications）</sub>
+
+</details>
+
+---
+
+<a name="CS-TORCH-044"></a>
+
+### CS-TORCH-044　挑战 · 考频 ★★★
+
+在一张 80 GB 的 GPU 上用 BF16 混合精度和 AdamW 训练一个 1B 参数的模型，观察到三个现象：
+① 训练开始后显存占用随 step 缓慢上涨，几千步后 OOM；
+② `nvidia-smi` 显示进程占用 70 多 GB，而 `torch.cuda.memory_allocated()` 只有 30 多 GB；
+③ 偶尔遇到特别长的样本时，会在某一步直接 OOM。
+
+请给出系统的排查思路：如何区分「真泄漏」「缓存与碎片」「峰值过高」三类问题，各自的常见原因与修复方法分别是什么。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**1. 先读懂指标**
+- `memory_allocated`：当前被张量实际占用的显存；`max_memory_allocated`：峰值（可用 `reset_peak_memory_stats` 按阶段测量）；
+- `memory_reserved`：PyTorch 缓存分配器向驱动申请并持有的总量，包括暂时空闲、留着复用的缓存块；
+- `nvidia-smi` 看到的约等于 reserved 加上 CUDA 上下文等开销，所以它比 allocated 大是正常的；
+- 更细的工具：`torch.cuda.memory_summary()`；`torch.cuda.memory._record_memory_history()` 记录分配历史并导出快照，在可视化页面中能看到每块显存由哪段代码分配。
+
+**2. 三类问题的区分与处理**
+- **真泄漏**（allocated 随 step 单调上涨，对应 ①）：
+  - 累加带计算图的张量：`total_loss += loss`、把 logits、hidden states 存进列表做统计 → 用 `.item()` 或 `.detach()`，必要时 `.cpu()`；
+  - 切片视图留住大存储：保存 `logits[:, -1]` → `.clone()`；
+  - 每步都传 `retain_graph=True`；评估时没有 `no_grad`；
+  - 自己维护的缓存、hook 中保存的激活、全局列表不断增长；
+  - 定位：每 N 步打印 allocated，对比不同时刻的显存快照，用二分法注释代码缩小范围。
+- **缓存与碎片**（reserved 远大于 allocated，对应 ②）：缓存分配器不立刻把显存还给驱动是正常行为，不是泄漏；但样本长度变化大时容易产生碎片，表现为「空闲总量够、却分配不出一块连续的大显存」。处理：设置 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`；按长度分桶或固定长度减少形状变化；不要指望每步调用 `empty_cache()`，它不能整理碎片，还会拖慢训练。
+- **峰值过高**（个别 step 突然 OOM，对应 ③）：激活显存随序列长度增长，朴素注意力的打分矩阵还与长度的平方成正比，大词表下的 FP32 logits 也很大。处理：限制最大长度或按 token 数而不是样本数组 batch；梯度检查点；使用 FlashAttention / SDPA；分块计算 loss，避免一次性物化完整的 logits；减小 micro-batch 并配合梯度累积。
+
+**3. 本例判断**：① 是真泄漏，优先排查累加和缓存；② 主要是缓存与碎片，本身不一定有问题，但会加剧 ③；③ 是峰值问题，按长度控制和重计算来解决。
+
+**4. 验证**：修复后 allocated 在步与步之间应保持平稳；用最长的样本单独跑一次前向和反向，确认峰值在预算之内；长时间压测观察是否还会缓慢上涨。
+
+**评分要点（共 10 分）：**
+
+- 说清 allocated、reserved 与 nvidia-smi 读数的区别，并据此区分三类问题（3 分）
+- 列出真泄漏的常见原因（累加带图张量、视图留住存储、retain_graph、缓存增长）及修复（3 分）
+- 给出碎片与峰值问题的处理：expandable_segments、分桶、梯度检查点、分块 loss 等（2 分）
+- 给出定位工具与验证方法，如 memory_summary、显存快照、二分排查（2 分）
+
+**讲解：**
+
+**常见失分点**：看到 nvidia-smi 数字大就认定是泄漏；每步调用 `empty_cache()` 当作万能药；只会「减小 batch size」；不知道视图会留住整块存储；没有先用指标区分问题类型就开始改代码。
+
+<sub>考点：显存排查　｜　出处：PyTorch 文档：CUDA semantics（Memory management）</sub>
+
+</details>
+
+---

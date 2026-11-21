@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>大模型 &amp; Agent 面试题库 · 在线刷题</title>
+  <meta name="description" content="开源免费的大模型与 Agent 面试题库：2800+ 道原创题、12 种题型、每题都有讲解。覆盖 Transformer、预训练与对齐、推理部署、RAG、Agent 与工程化，支持在线刷题、错题本与模拟考试。">
+  <meta name="keywords" content="大模型面试,Agent面试,LLM面试题,RAG,Transformer,RLHF,GRPO,MCP,实习,校招,刷题">
+  <meta name="theme-color" content="#f5f6fb">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="大模型 & Agent 面试题库 · 在线刷题">
+  <meta property="og:description" content="2800+ 道原创题，每题都有讲解；选择题即时判分，模拟考试按岗位组卷。开源免费。">
+  <meta property="og:image" content="assets/icons/og.png">
+  <link rel="icon" href="assets/icons/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="assets/css/app.css">
+  <script>
+    // 在样式生效前确定主题，避免深色模式下闪白
+    (function () {
+      try {
+        var s = JSON.parse(localStorage.getItem("llm-agent-bank.v1") || "{}").settings || {};
+        var t = s.theme || "auto";
+        var dark = t === "dark" || (t === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      } catch (e) { document.documentElement.dataset.theme = "light"; }
+    })();
+  </script>
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <a class="brand" href="#/" aria-label="首页">
+        <img class="brand-logo" src="assets/icons/logo.svg" alt="" width="32" height="32">
+        <span>大模型 &amp; Agent 面试题库</span>
+        <span class="brand-sub">在线刷题</span>
+      </a>
+      <nav class="nav" aria-label="主导航">
+        <a href="#/" data-nav="/">首页</a>
+        <a href="#/bank" data-nav="/bank">题库</a>
+        <a href="#/tracks" data-nav="/tracks">备考路线</a>
+        <a href="#/exam" data-nav="/exam">模拟考试</a>
+        <a href="#/wrong" data-nav="/wrong">错题本</a>
+        <a href="#/me" data-nav="/me">我的</a>
+      </nav>
+      <div class="header-actions">
+        <a class="icon-btn" href="#/search" title="搜索" aria-label="搜索" data-icon="search"></a>
+        <button class="icon-btn" id="theme-btn" title="切换深色 / 浅色" aria-label="切换主题"></button>
+        <a class="icon-btn gh-btn" href="https://github.com/anticipate218/llm-agent-interview-bank" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub" data-icon="github"></a>
+      </div>
+    </div>
+  </header>
+
+  <main id="app" aria-live="polite">
+    <div class="container narrow"><div class="skeleton" style="height:320px;margin-top:20px"></div></div>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div>题目均为原创，考点参考了公开面经，不是任何公司的真题 · 题目与文档 CC BY-SA 4.0 · 代码 MIT</div>
+      <div><a href="#/about">关于</a> · <a href="https://github.com/anticipate218/llm-agent-interview-bank" target="_blank" rel="noopener">GitHub</a> · <a href="https://github.com/anticipate218/llm-agent-interview-bank/issues" target="_blank" rel="noopener">反馈问题</a></div>
+    </div>
+  </footer>
+
+  <nav class="tabbar" aria-label="底部导航">
+    <a href="#/" data-nav="/" data-icon="home"><span>首页</span></a>
+    <a href="#/bank" data-nav="/bank" data-icon="book"><span>题库</span></a>
+    <a href="#/tracks" data-nav="/tracks" data-icon="route"><span>路线</span></a>
+    <a href="#/exam" data-nav="/exam" data-icon="exam"><span>考试</span></a>
+    <a href="#/me" data-nav="/me" data-icon="user"><span>我的</span></a>
+  </nav>
+
+  <div class="toast-wrap" id="toasts" aria-live="polite"></div>
+  <canvas id="fx" aria-hidden="true"></canvas>
+  <noscript><div class="container" style="padding-top:90px">请启用 JavaScript 后使用在线刷题。也可以直接阅读仓库中的 docs/ 目录。</div></noscript>
+  <script type="module" src="assets/js/main.js"></script>
+</body>
+</html>

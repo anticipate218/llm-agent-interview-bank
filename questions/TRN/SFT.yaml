@@ -1,0 +1,1247 @@
+domain: TRN
+subcategory: SFT
+questions:
+
+  - id: TRN-SFT-001
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [SFT目标]
+    tags: [SFT, 交叉熵]
+    question: |
+      关于 SFT（监督微调）的训练目标与预训练的关系，下列说法正确的是：
+    options:
+      A: 'SFT 改用对比学习损失：同一指令下，让人工示范回答的得分明显高于模型自己生成的回答'
+      B: '二者都是下一个 token 的交叉熵，SFT 通常只对 assistant 回答的 token 计算损失'
+      C: 'SFT 只在每条样本回答结束处的 token 上计算一次损失，用来判断整条回答是否正确、完整'
+      D: 'SFT 用均方误差让模型最后一层的隐藏状态逼近标准答案的隐藏状态，以便学习回答的整体语义'
+    answer: B
+    explanation: |
+      **结论**：SFT 的损失形式与预训练完全相同，区别在数据和损失掩码。
+      $$\mathcal{L}_{\mathrm{SFT}}=-\frac{1}{\sum_t m_t}\sum_t m_t\log p_\theta(x_t\mid x_{<t}),\qquad m_t\in\{0,1\}$$
+      $m_t=1$ 只出现在 assistant 回答（含结束符）的位置。本质上是对示范回答做最大似然，也就是「行为克隆」。不同之处在于：数据是精心构造、按对话模板渲染的指令、对话与工具调用轨迹，规模小得多；学习率更小、要训多个 epoch；目标是学会格式与行为，而不是知识。
+
+      - A 错：让好回答得分高于坏回答是偏好学习（奖励模型、DPO）的做法，需要成对数据。
+      - C 错：SFT 对回答中的每个 token 都计算损失，不是只算最后一个。
+      - D 错：用隐藏状态做回归属于某些蒸馏方法，不是 SFT 的标准目标。
+
+  - id: TRN-SFT-002
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [SFT目标]
+    tags: [教师强制, 暴露偏差, 行为克隆]
+    question: |
+      SFT 采用教师强制（teacher forcing）：训练时每个位置都以参考回答的真实前缀为条件，而推理时模型以自己生成的前缀为条件。这种训练与推理条件的不一致（暴露偏差）意味着模型一旦在生成中偏离示范的分布，误差可能逐步累积；这也是 SFT 之后常接上基于模型自身采样的训练（如拒绝采样微调、RLHF）的原因之一。
+    answer: true
+    explanation: |
+      **正确**。SFT 本质上是对示范回答做最大似然，也就是模仿学习中的「行为克隆」：模型只在「专家走过的轨迹」上受过训练。推理时它以自己生成的内容为条件，一旦某一步偏离了示范的分布（用词、思路与参考答案不同，或犯了一个小错），后面的上下文就落在训练中较少见过的区域，错误可能越积越多，这与模仿学习中「误差随步数累积」的问题同源。
+
+      缓解思路是让模型在**自己的分布**上学习：拒绝采样微调用模型自己的采样（经验证器或奖励模型筛选）作为训练数据；RLHF、GRPO 等在线方法直接在模型生成的轨迹上优化；在线或迭代式的偏好优化也遵循同样的思路。注意它是「原因之一」而非唯一原因：对齐偏好、利用负样本信号等同样是后续阶段的重要目标。
+
+  - id: TRN-SFT-003
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [SFT目标, 数据质量与多样性]
+    source: 'LIMA: Less Is More for Alignment（Zhou 等, 2023）arXiv:2305.11206；AlpaGasus arXiv:2307.08701'
+    tags: [LIMA, 表面对齐假说]
+    question: |
+      LIMA 只用 1000 条精选样本微调 65B 的 LLaMA，就取得了很强的对话效果，并据此提出「表面对齐假说」。请说明：(1) 这个假说的内容与支撑它的主要实验结果；(2) 它对 SFT 数据建设有什么启示；(3) 它的局限或适用边界。
+    answer: |
+      1. **假说内容**：模型的知识和能力几乎都在预训练中获得，对齐（SFT）主要教模型在与用户交互时采用哪种格式和风格的「子分布」。
+         **实验**：1000 条样本来自 Stack Exchange、wikiHow 等社区问答与作者手写，强调质量和多样性；人工评测中 LIMA 的回答在 43% 的情况下与 GPT-4 打平或更好。消融显示：在同一来源上把数据量翻倍并不提升质量，而提高质量和多样性有明显作用；只加入 30 条多轮对话就显著提升了多轮能力。
+      2. **启示**：
+         - 质量胜于数量：每条示范都会被模型忠实模仿，错误和低质回答的伤害大于数量不足；
+         - 多样性要覆盖任务类型、领域、难度和长度，而不是同一类问题的大量重复；
+         - 回答风格要统一、规范；少量高质量的种子数据加严格筛选往往胜过海量噪声数据（AlpaGasus 从 Alpaca 的 52K 条中筛出约 9K 条，效果反而更好）。
+      3. **局限**：
+         - 依赖强基座：65B 的预训练底子是前提，小模型或知识不足的领域不能指望 1000 条数据；
+         - 评测以通用对话为主；数学、代码、工具调用、长推理等复杂能力仍需要大量数据甚至强化学习，近年的主流后训练（如 Llama 3）使用的是大规模 SFT 数据加多轮拒绝采样与偏好优化；
+         - 1000 条难以覆盖安全、多轮、领域规范等全部行为；
+         - 「表面」不等于「不重要」：格式、拒答边界、工具使用这些行为恰恰需要精心设计的数据。
+    rubric:
+      - '准确表述表面对齐假说（3 分）'
+      - '给出 LIMA 的关键实验事实，如 1000 条数据、质量与多样性消融（2 分）'
+      - '提炼出质量优先、多样性、风格一致等数据启示（3 分）'
+      - '指出依赖强基座、复杂能力仍需更多数据或 RL 等局限（2 分）'
+    explanation: |
+      **常见失分点**：把结论说成「SFT 数据越少越好」；忽略「强基座」这个前提；只背 1000 这个数字而说不出质量、多样性的消融；把表面对齐假说理解为 SFT 不重要。
+
+  - id: TRN-SFT-004
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [指令数据构建]
+    source: 'Magpie（Xu 等, 2024）arXiv:2406.08464；Self-Instruct arXiv:2212.10560；WizardLM（Evol-Instruct）arXiv:2304.12244；FLAN arXiv:2109.01652'
+    tags: [Magpie, Self-Instruct, Evol-Instruct, FLAN]
+    question: |
+      下面是几种常见的指令数据构建方法。「只把对话模板中 user 回合的开头（不含任何具体内容）喂给一个已经对齐的模型，让它续写出一个用户问题，再让模型回答这个问题」描述的是：
+    options:
+      A: 'Self-Instruct：从少量人工种子任务出发，让模型模仿着扩写出新的指令与输入输出'
+      B: 'Evol-Instruct：把已有的简单指令逐步改写得更复杂、约束更多'
+      C: 'Magpie：利用对齐模型的自回归特性，从模板前缀直接采样出用户指令'
+      D: 'FLAN：把现成的 NLP 数据集套上多种自然语言指令模板'
+    answer: C
+    explanation: |
+      **结论**：这是 Magpie（Xu 等, 2024）的做法。对齐模型在 SFT 中见过大量「user 头 + 问题」的序列，只给它 user 头，它就会按学到的分布「想出」一个用户问题；再把问题交给模型回答，不需要任何种子数据就能批量合成指令数据，之后再做过滤与筛选。
+
+      其余方法各有特点：
+      - A：Self-Instruct（Wang 等, 2022）从 175 个种子任务出发，用少样本提示让模型生成新任务，再按相似度去重过滤；Alpaca 的 52K 条数据就是这样生成的。缺点是多样性受种子和提示限制。
+      - B：Evol-Instruct（WizardLM）通过增加约束、加深推理步骤、具体化等方式把指令改得更难，提升数据的复杂度。
+      - D：FLAN 把已有标注数据集改写成指令形式，标签可靠，但任务形式偏传统 NLP。
+
+  - id: TRN-SFT-005
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [指令数据构建, 数据质量与多样性]
+    source: 'LIMA arXiv:2305.11206；AlpaGasus arXiv:2307.08701'
+    tags: [去重, 去污染, 安全数据]
+    question: |
+      构建 SFT 数据时，下列做法**合理**的有：
+    options:
+      A: '安全数据只收集「应当拒绝」的有害请求，拒答样本占比越高，模型上线后越安全'
+      B: '对指令做精确去重和 Embedding 近似去重，避免大量相似样本让模型过拟合某种句式'
+      C: '用强模型蒸馏回答时，先确认使用条款允许，并检查回答风格是否过于单一'
+      D: '按质量打分筛选时，先对指令做语义聚类，再在各簇内挑选高分样本，兼顾质量与多样性'
+      E: '用 n-gram 或 Embedding 相似度剔除与评测集重叠或高度相似的样本（去污染）'
+    answer: [B, C, D, E]
+    explanation: |
+      **结论**：B、C、D、E 合理，只有 A 不合理。
+
+      - A 错：只有拒答样本会导致**过度拒答**。还需要「看似敏感、其实应该回答」的样本，控制拒答数据的比例，并用过度拒答测试集回归。
+      - B 对：重复和近重复样本会让模型记住特定句式，也浪费算力；Embedding 去重能发现改写过的相似样本。
+      - C 对：部分商用模型的条款限制用其输出训练竞争模型；蒸馏数据还容易继承老师的口头禅和固定套路（如千篇一律的开场白），要做风格多样化。
+      - D 对：LIMA、AlpaGasus 等工作都表明，经过筛选的少量高质量数据可以胜过大量杂乱数据。但只按分数取前若干名，样本容易集中在少数「好打高分」的任务类型上；先聚类再在簇内选高分样本（或按簇分层抽样），能在提高质量的同时保住任务覆盖面。
+      - E 对：评测题或其改写混入训练集，会让评测结果虚高，失去参考价值。
+  - id: TRN-SFT-006
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [数据质量与多样性]
+    tags: [多样性度量, 聚类, InsTag]
+    question: |
+      团队想在不逐条人工阅读的情况下，评估一个 50 万条指令数据集的「多样性」是否足够。下列方法中最合理的是：
+    options:
+      A: '对指令做向量聚类或打意图标签，统计各簇、各标签的覆盖与分布，找出过度集中或缺失的类别'
+      B: '统计数据集的总 token 数和样本条数，总量越大，说明覆盖的任务越多、多样性越好'
+      C: '计算回答的平均长度和长度方差，回答越长、长短差异越大，说明任务类型越多样'
+      D: '先用这批数据训练一轮，训练 loss 越低、下降越平稳，说明数据覆盖越全面、多样性越好'
+    answer: A
+    explanation: |
+      **结论**：多样性要看「分布」，最直接的办法是聚类或打标签后看覆盖与均衡程度。
+
+      常见做法：用 Embedding 聚类，观察簇的数量、各簇大小是否极度不均；或像 InsTag（Lu 等, 2023）那样用模型给每条指令打细粒度的意图标签，统计标签种类数和分布；再结合任务类型、领域、难度、长度、语言等维度交叉统计。发现问题后，对过密的簇降采样，对稀疏或缺失的类别定向补充或合成数据。
+
+      - B 错：总量大可能只是同类数据重复得多，与多样性无关。
+      - C 错：回答长度反映的是任务形式，不代表覆盖面；长回答集中在少数任务上同样单一。
+      - D 错：训练 loss 低往往说明数据**更重复、更好拟合**，恰恰可能是多样性不足的信号。
+
+  - id: TRN-SFT-007
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [对话模板]
+    tags: [Chat Template, add_generation_prompt, Hugging Face]
+    question: |
+      用 Hugging Face 的 `tokenizer.apply_chat_template(messages, add_generation_prompt=True)` 渲染推理输入时，`add_generation_prompt=True` 的作用是：
+    options:
+      A: '在系统提示词前面插入一段默认的安全提示，让模型在生成时遵守基本的安全规范'
+      B: '在每条消息末尾补上结束符，并把它设为停止符，防止模型回答完后不停输出'
+      C: '删掉 messages 中最后一条 assistant 消息，让模型针对同一个问题重新生成回答'
+      D: '在渲染结果末尾追加 assistant 回合的角色头，让模型从回答的位置开始续写'
+    answer: D
+    explanation: |
+      **结论**：它补上的是「轮到 assistant 说话了」的角色头，例如 ChatML 模板中的 `<|im_start|>assistant\n`。
+
+      训练时每个 assistant 回合都是「角色头 + 回答 + 结束符」，模型学到的是在角色头之后生成回答。推理时消息列表以用户发言结尾，必须再拼上 assistant 的角色头，模型才知道该从这里开始回答；否则它可能接着续写用户的话，或自己先生成一个角色头，行为都不稳定。渲染训练样本时则不加，因为 assistant 的内容已经在消息里。
+
+      - A 错：模板是否插入默认系统提示词由模板本身决定（例如有的模板在没有 system 消息时会补一句默认提示），与这个参数无关。
+      - B 错：结束符是模板为每条已有消息渲染的，与这个参数无关。
+      - C 错：它不会删除消息；如果要让模型接着某条未完成的 assistant 消息继续写，用的是 `continue_final_message` 一类的选项。
+
+  - id: TRN-SFT-008
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [对话模板]
+    source: 'Meta Llama 3 模型卡与提示格式文档；Hugging Face meta-llama/Meta-Llama-3-8B-Instruct 的 generation_config.json（eos_token_id 为 [128001, 128009]）'
+    tags: [Llama-3, eot_id, 停止符]
+    question: |
+      Llama 3 Instruct 的对话模板中，每个回合以 `<|eot_id|>` 结束；`<|end_of_text|>` 则是预训练时使用的文本结束符。某团队自建推理服务时只把 `<|end_of_text|>` 设为停止符，最可能出现的现象是：
+    options:
+      A: '模型的输出在第一个 `<|eot_id|>` 之前就被提前截断，回答往往只有一两句话'
+      B: '回合结束符与停止符不一致，系统提示词的边界被错误解析，模型的回答与指令无关'
+      C: '回答说完后不停止，接着输出新的回合头、继续编造后续对话，直到最大生成长度'
+      D: '分词器报错：`<|eot_id|>` 不在基础词表中，需要先手动注册为特殊 token'
+    answer: C
+    explanation: |
+      **结论**：停止符必须与模板中「回合结束」的 token 一致。
+
+      模型在 SFT 中学会了在回答结束时输出 `<|eot_id|>`。推理服务不在这里停，模型就会按训练中见过的多轮格式继续往下写：输出下一个回合头，冒充用户或自己继续对话，直到最大长度或偶然生成 `<|end_of_text|>`。Llama 3 发布初期（2024 年）不少用户都遇到过这个问题，官方随后在生成配置中把两个 token 都列为结束符。Qwen 等 ChatML 模板的 `<|im_end|>` 同理。
+
+      - A 错：停止符设少了只会停不下来，不会提前截断。
+      - B 错：模板渲染与理解输入没有受影响，问题只出在何时停止。
+      - D 错：`<|eot_id|>` 本来就是 Llama 3 词表中的特殊 token，分词不会报错，也不需要手动注册。
+
+  - id: TRN-SFT-009
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [对话模板]
+    tags: [Chat Template, 训练推理一致性]
+    question: |
+      下面的代码检查「推理时的提示」是否为「训练序列」的前缀。输出是什么？
+    code: |
+      def render(msgs, add_generation_prompt=False):           # 推理侧使用的模板
+          s = "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in msgs)
+          return s + ("<|im_start|>assistant\n" if add_generation_prompt else "")
+
+      def render_train(msgs):                                   # 训练脚本里另写的一份模板
+          return "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>" for m in msgs)
+
+      chat = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+      prompt = render(chat[:1], add_generation_prompt=True)
+      print(render(chat).startswith(prompt))
+      print(render_train(chat).startswith(prompt))
+      print(len(render(chat)) - len(render_train(chat)))
+    answer: |
+      True
+      False
+      2
+    explanation: |
+      - `render(chat)` 为 `<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\nhello<|im_end|>\n`，推理提示 `prompt` 为 `<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n`，正好是前缀，输出 `True`。
+      - 训练脚本自己拼的模板在 `<|im_end|>` 后少了换行，`<|im_end|>` 后紧跟 `<|im_start|>`，与推理提示在第一个回合末尾就分叉了，输出 `False`。
+      - 两个回合各少一个 `\n`，长度差 `2`。
+
+      **教训**：只差一个换行，推理时模型看到的就是训练中从未见过的 token 序列，轻则效果下降，重则格式错乱、停不下来。正确做法是训练、评测、推理都调用同一份模板（随权重发布的 chat template），并写单测检查「每个 assistant 回合的推理提示都是训练序列的前缀」。
+
+  - id: TRN-SFT-010
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [对话模板]
+    tags: [BOS, apply_chat_template, add_special_tokens]
+    question: |
+      如果用 `apply_chat_template(..., tokenize=False)` 渲染出的字符串已经包含 BOS（如 Llama 3 模板开头的 `<|begin_of_text|>`），再用 `tokenizer(text)` 编码时应当设置 `add_special_tokens=False`，否则序列开头可能出现两个 BOS。
+    answer: true
+    explanation: |
+      **正确**。不少分词器（如 Llama 系列）默认在编码时自动加 BOS，而对话模板本身也会写入 BOS。先渲染成字符串、再用默认参数编码，就会得到两个 BOS；推理时如果直接 `apply_chat_template(..., tokenize=True)`，又只有一个 BOS，训练与推理的输入就不一致了。
+
+      避免方法：要么直接让 `apply_chat_template` 完成分词，要么对渲染好的字符串编码时关闭 `add_special_tokens`；并在数据流水线中加一个检查，解码每条样本的前几个 token，确认 BOS 只出现一次。这类问题不报错、loss 也照常下降，只能靠检查发现。
+
+  - id: TRN-SFT-011
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [对话模板, Loss Mask]
+    tags: [特殊 token, 停止符, 提示注入]
+    question: |
+      关于对话模板中的特殊 token，下列说法**正确**的有：
+    options:
+      A: '推理时的停止 token 必须与训练时每个 assistant 回合末尾计入 loss 的结束符一致'
+      B: 'assistant 的角色头（如 `<|im_start|>assistant\n`）也必须计入 loss，否则模型学不会开始回答'
+      C: '把 pad_token 直接设成 eos_token 不会有副作用，因为 padding 位置的 loss 总会被正确屏蔽'
+      D: '为模板新增 `<tool_call>` 等特殊 token 后，要让 Embedding 和输出层中这些新 token 对应的参数参与训练，否则它们只是随机初始化的向量'
+      E: '用户输入的文本里如果出现 `<|im_end|>` 这样的字符串，应当按普通文本编码，不能被解析成真正的特殊 token'
+    answer: [A, D, E]
+    explanation: |
+      **结论**：A、D、E 正确。
+
+      - A 对：模型只会在训练中学过的结束符处结束回合，停止配置不一致就会停不下来或提前截断。
+      - B 错：角色头在推理时由框架拼好（`add_generation_prompt`），模型不需要学会生成它，通常不计入 loss。
+      - C 错：如果按 token id 屏蔽 padding，真正的结束符也会被一起屏蔽，模型学不会停；应按位置屏蔽或使用独立的 PAD token。
+      - D 对：新 token 的 Embedding 行和输出层的行都是新初始化的，必须训练；用 LoRA 时要把 Embedding 和输出层设为可训练（如 PEFT 的 `modules_to_save`），用已有 token 向量的均值初始化会更稳。
+      - E 对：否则用户只要输入 `<|im_end|>\n<|im_start|>system` 就能伪造角色，构成提示注入；分词时要区分「模板生成的特殊 token」与「用户文本中恰好相同的字符串」。
+  - id: TRN-SFT-012
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [对话模板]
+    tags: [Chat Template, 版本治理, 单元测试]
+    question: |
+      为什么说对话模板（chat template）是训练与推理之间的「接口协议」？请列举模板不一致可能引发的问题，并给出一套模板版本治理与测试的做法。
+    answer: |
+      1. **为什么是接口协议**：模型学到的是「按模板渲染后的 token 序列」的分布：角色标记、分隔符、换行、结束符、系统提示词的位置、工具定义与调用的格式都是这个分布的一部分。推理时必须逐 token 复现训练时的格式，任何差异都会让输入落在训练分布之外。
+      2. **不一致的后果**：
+         - 停不下来或多生成一轮对话（结束符或停止配置不一致）；
+         - 效果明显下降、格式错乱（换行、空格、BOS 重复、默认系统提示词不同）；
+         - 工具调用解析失败（训练与推理的工具格式不同）；
+         - 安全行为变化（系统提示词的位置或内容不同）；
+         - 推理模型对历史思考内容的处理与训练不同，多轮效果变差；
+         - 分段编码再拼接与整段编码结果不同，BPE 在边界处切分有差异。
+      3. **版本治理**：
+         - 唯一来源：模板以 Jinja 形式随权重一起发布（如 `tokenizer_config.json`），训练、评测、推理都调用同一份；
+         - 版本化：记录模板的哈希与版本号，写进训练元数据和模型卡；模板一改就视为接口变更，必须重新评测；
+         - 推理服务的停止符、工具解析器随模板一起升级。
+      4. **测试**：
+         - 前缀测试：每个 assistant 回合的推理提示必须是训练序列的前缀；
+         - 编码一致性：分段编码拼接与整段编码一致，BOS 只出现一次；
+         - 特殊 token 注入测试：用户文本中的特殊字符串不会被解析成控制 token；
+         - 黄金样例：对多轮、工具调用、带思考的样例做渲染结果的快照比对；
+         - 端到端冒烟：同一批问题分别走离线评测和线上服务，比较输出。
+    rubric:
+      - '说明模板是训练分布的一部分、推理需逐 token 复现（2 分）'
+      - '列举至少三种不一致的后果（3 分）'
+      - '给出唯一来源、版本化、变更即重评等治理措施（2 分）'
+      - '给出前缀测试、编码一致性、注入测试等具体单测（3 分）'
+    explanation: |
+      **常见失分点**：只说「模板要一致」而说不出具体会出什么问题；不知道停止符、BOS、换行这些细节；没有可执行的测试方法，只停留在「人工检查」。
+
+  - id: TRN-SFT-013
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [Loss Mask]
+    tags: [ignore_index, cross_entropy]
+    question: |
+      用 PyTorch 的 `F.cross_entropy` 做 SFT 时，常把用户提问、系统提示词等位置的标签设为 −100。原因是：
+    options:
+      A: '−100 是默认的 `ignore_index`，这些位置不参与损失计算，也不计入求平均的分母'
+      B: '−100 会被当作一个特殊类别，让模型学会在这些位置输出空白或填充符，而不是复述输入'
+      C: '把标签设为负数会让这些位置的梯度方向反转，起到让模型「忘掉」用户输入、专注回答的作用'
+      D: '−100 只是约定俗成的占位符，`cross_entropy` 仍会把这些位置当作普通类别计算损失'
+    answer: A
+    explanation: |
+      **结论**：`F.cross_entropy` 的 `ignore_index` 默认就是 −100，被忽略的位置既不产生损失，也不计入 `reduction='mean'` 的分母。Hugging Face 的模型也沿用这个约定。
+
+      注意两点：
+      1. 屏蔽的只是**损失**，这些位置的 token 仍然作为输入参与注意力，为后面的回答提供上下文；
+      2. 如果一个 batch 里所有标签都是 −100（例如样本被截断得只剩提示部分），平均时分母为 0，loss 会变成 NaN，数据流水线要过滤这类样本。
+
+      - B 错：−100 不是合法的类别下标，不会被当作类别学习。
+      - C 错：被忽略的位置梯度为 0，不存在「反向梯度」。
+      - D 错：设置了 `ignore_index` 的位置不计算损失。
+
+  - id: TRN-SFT-014
+    type: code_fill
+    difficulty: 2
+    frequency: 3
+    points: [Loss Mask]
+    tags: [loss mask, 错位, ChatML]
+    question: |
+      补全 SFT 样本构造与损失计算：只有 assistant 回合的正文与结束符计入 loss，角色头、换行以及其他角色的内容全部填 −100；`sft_loss` 中 `labels` 与输入 ids 逐位对齐（尚未错位），需要在计算交叉熵时完成错位。
+    code: |
+      import torch
+      import torch.nn.functional as F
+
+      IGNORE = -100
+
+      def build_sample(messages, encode):
+          """ChatML 风格：只有 assistant 的正文和结束符计入 loss"""
+          ids, labels = [], []
+          for m in messages:
+              head = encode(f"<|im_start|>{m['role']}\n")
+              body = encode(m["content"] + "<|im_end|>")
+              tail = encode("\n")
+              ids += head + body + tail
+              labels += [IGNORE] * len(head) + (____ if m["role"] == "assistant" else ____) + [IGNORE] * len(tail)
+          return ids, labels
+
+      def sft_loss(logits, labels):
+          """logits: (B, T, V)；labels: (B, T)，与输入 ids 逐位对齐（尚未错位）"""
+          return F.cross_entropy(logits[:, ____].reshape(-1, logits.size(-1)),
+                                 labels[:, ____].reshape(-1), ignore_index=IGNORE)
+    answer: ['body', '[IGNORE] * len(body)', ':-1', '1:']
+    test: |
+      SPECIAL = ["<|im_start|>", "<|im_end|>"]
+      vocab = {}
+      def encode(text):                                  # 玩具分词器：特殊 token 占一个 id，其余按字符
+          out, i = [], 0
+          while i < len(text):
+              piece = next((s for s in SPECIAL if text.startswith(s, i)), text[i])
+              out.append(vocab.setdefault(piece, len(vocab)))
+              i += len(piece)
+          return out
+
+      chat = [{"role": "system", "content": "be nice"}, {"role": "user", "content": "hi"},
+              {"role": "assistant", "content": "ok"}, {"role": "user", "content": "bye"},
+              {"role": "assistant", "content": "see you"}]
+      ids, labels = build_sample(chat, encode)
+      assert len(ids) == len(labels)
+      kept = [t for t, l in zip(ids, labels) if l != IGNORE]
+      assert kept == encode("ok<|im_end|>") + encode("see you<|im_end|>")
+      assert all(l == IGNORE or l == t for t, l in zip(ids, labels))
+
+      torch.manual_seed(0)
+      logits = torch.randn(1, len(ids), len(vocab) + 3)
+      lab = torch.tensor([labels])
+      logp = logits.log_softmax(-1)
+      manual = torch.stack([-logp[0, t - 1, lab[0, t]] for t in range(1, len(ids))
+                            if lab[0, t] != IGNORE]).mean()
+      assert torch.allclose(sft_loss(logits, lab), manual)
+    explanation: |
+      **答案**：assistant 回合保留 `body` 的真实 id，其他角色填 `[IGNORE] * len(body)`；损失中 `logits[:, :-1]` 对齐 `labels[:, 1:]`。
+
+      - **掩码**：`body` 包含回答正文和 `<|im_end|>`，结束符必须计入 loss，否则模型学不会停；角色头 `<|im_start|>assistant\n` 推理时由框架拼好，不需要学。多轮对话中所有 assistant 回合都保留，一次前向训练多个回合。
+      - **错位**：位置 $t$ 的 logits 预测第 $t+1$ 个 token，所以 logits 去掉最后一位、labels 去掉第一位。
+      - **易错点**：Hugging Face 的 `XxxForCausalLM` 在内部已经做了错位，把 `labels=input_ids` 形式的标签直接传进去即可；如果自己先错位再传进去，就会错两位，loss 居高不下。反过来，自己写损失却忘了错位，模型能直接「看到」要预测的 token，loss 会迅速趋近 0。
+
+  - id: TRN-SFT-015
+    type: code_debug
+    difficulty: 2
+    frequency: 3
+    points: [Loss Mask]
+    tags: [PAD 与 EOS, collate, 停不下来]
+    question: |
+      下面的函数把若干条样本补齐成一个 batch（简化起见，示例中所有真实 token 都计入 loss）。用它训练出的模型回答完不会停，一直生成到最大长度。请找出 bug 并修正。
+    code: |
+      import torch
+
+      def make_batch(seqs, eos_id):
+          """seqs：每条都已以 EOS 结尾的 token 列表；没有专门的 PAD token，用 EOS 顶替"""
+          pad_id = eos_id
+          T = max(len(s) for s in seqs)
+          x = torch.tensor([s + [pad_id] * (T - len(s)) for s in seqs])
+          labels = x.clone()
+          labels[labels == pad_id] = -100          # 屏蔽 padding
+          return x, labels
+    fixed_code: |
+      import torch
+
+      def make_batch(seqs, eos_id):
+          """seqs：每条都已以 EOS 结尾的 token 列表；没有专门的 PAD token，用 EOS 顶替"""
+          pad_id = eos_id
+          T = max(len(s) for s in seqs)
+          x = torch.tensor([s + [pad_id] * (T - len(s)) for s in seqs])
+          labels = x.clone()
+          for b, s in enumerate(seqs):
+              labels[b, len(s):] = -100            # 按位置屏蔽 padding，真实的 EOS 保留
+          return x, labels
+    test: |
+      EOS = 2
+      x, y = make_batch([[5, 6, 7, EOS], [8, EOS]], EOS)
+      assert x.tolist() == [[5, 6, 7, EOS], [8, EOS, EOS, EOS]]
+      assert y.tolist() == [[5, 6, 7, EOS], [8, EOS, -100, -100]], y.tolist()
+      x, y = make_batch([[4, EOS], [9, EOS]], EOS)            # 等长：没有 padding
+      assert y.tolist() == [[4, EOS], [9, EOS]]
+    answer: |
+      **问题**：第 9 行按 **token id** 屏蔽 padding。由于 `pad_id == eos_id`，每条样本末尾真正的 EOS 也被设成了 −100，模型从没在 EOS 上受过训练，自然学不会停止。
+
+      **修正**：按**位置**屏蔽，只把每条样本真实长度之后的部分设为 −100：
+
+      ```python
+      labels = x.clone()
+      for b, s in enumerate(seqs):
+          labels[b, len(s):] = -100
+      ```
+
+      也可以用 attention mask 屏蔽（`labels[attention_mask == 0] = -100`），或者使用一个与 EOS 不同的专用 PAD token。
+    explanation: |
+      这是 SFT 中最常见的 bug 之一：很多脚本因为分词器没有 PAD token，就写 `tokenizer.pad_token = tokenizer.eos_token`，再交给按 `pad_token_id` 屏蔽标签的通用 collator（例如 Hugging Face 的 `DataCollatorForLanguageModeling` 在 `mlm=False` 时就是这样做的），结束符被悄悄屏蔽。loss 曲线看不出任何异常，只有在生成时才暴露。
+
+      排查方法：抽几条样本，把计入 loss 的 token 解码出来高亮显示，确认每个回答末尾的结束符都在其中。
+
+  - id: TRN-SFT-016
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [Loss Mask]
+    tags: [损失归一化, 回答长度]
+    question: |
+      一个 batch 有两条 SFT 样本：样本 A 的回答有 10 个 token，token 损失之和为 30；样本 B 的回答有 90 个 token，损失之和为 90。按「全部有效 token 平均」得到的 batch loss 为 ____；按「先在每条样本内平均、再对样本平均」得到的 batch loss 为 ____。
+    answer: [['1.2'], ['2', '2.0']]
+    explanation: |
+      - **按 token 平均**：$(30+90)/(10+90)=1.2$。每个 token 权重相同，长回答在梯度中占比大。
+      - **按样本平均**：$(30/10+90/90)/2=(3.0+1.0)/2=2.0$。每条样本权重相同，A 中每个 token 的权重是 $\frac{1}{2\times10}$，B 中是 $\frac{1}{2\times90}$，短回答的 token 被放大了 9 倍。
+
+      两种口径都有人用，但会影响模型行为：按样本平均更重视短回答的拟合，按 token 平均更重视长回答，进而影响生成长度与风格。要与评测目标一致地选择，并在数据并行和梯度累积时统一口径：按 token 平均时，分母应是整个优化步的全局有效 token 数，而不是每个 micro-batch 各自平均。
+
+  - id: TRN-SFT-017
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [Loss Mask, 多轮对话训练]
+    tags: [loss mask, 多轮对话, 结束符]
+    question: |
+      SFT 为什么通常只对 assistant 的回答计算 loss？在多轮对话、系统提示词、工具返回、结束符、角色头这些位置分别应如何处理？什么情况下也可以对提示部分计算 loss？
+    answer: |
+      1. **为什么只算回答**：
+         - 推理时用户的输入是给定的，模型只需要学会生成回答；学习生成用户发言既浪费容量，还可能让模型在回答后自己编出下一轮「用户」发言；
+         - 把训练信号集中在要学的行为上：RAG 等场景的提示往往比回答长很多，全部计入 loss 时梯度主要花在复述输入上。
+      2. **各位置的处理**：
+         - 多轮对话：所有 assistant 回合都计入，一次前向训练多个回合；历史回合质量差（如来自旧模型）时可以只训最后一轮；
+         - 系统提示词、用户输入：不计入；
+         - 工具返回（tool 角色）：不计入，它由环境给出，学了反而可能让模型编造工具输出；assistant 发出的工具调用要计入；
+         - 结束符：必须计入，否则模型学不会停；
+         - 角色头：不计入，推理时由框架拼好。
+      3. **实现**：按消息分段编码，非训练位置的标签设为 −100，计算损失时 logits 与 labels 错开一位。
+      4. **可以对提示计 loss 的情况**：数据量少、指令长而回答短时，对指令部分也计 loss 有时有帮助（Shi 等, 2024 的 Instruction Tuning With Loss Over Instructions）；也可以给提示部分一个很小的权重作为折中，早期 OpenAI 的微调接口就提供过 `prompt_loss_weight` 参数。
+    rubric:
+      - '说明只算回答的两个理由：推理时输入给定、训练信号集中（3 分）'
+      - '正确处理多轮、系统提示、工具返回、结束符、角色头五类位置（4 分）'
+      - '说明 −100 与错位的实现要点（1 分）'
+      - '指出对提示计 loss 的适用情形（2 分）'
+    explanation: |
+      **常见失分点**：漏掉结束符；把角色头也计入 loss；把 assistant 的工具调用和工具返回混为一谈（前者要学、后者不学）；把「只算回答」说成铁律，不知道在小数据场景下对提示计 loss 也可能有益。
+
+  - id: TRN-SFT-018
+    type: judge
+    difficulty: 3
+    frequency: 2
+    points: [多轮对话训练, Loss Mask]
+    tags: [多轮对话, 因果注意力, 训练效率]
+    question: |
+      一条 3 轮对话，若对话模板不会改写历史回合（例如不会删除历史中的思考内容），且不考虑截断与损失归一化方式的差异，那么「整段作为一条样本、3 个 assistant 回合都计入 loss」与「拆成 3 条样本、每条以一个 assistant 回合结尾且只对该回合计 loss」的梯度是等价的，而前者的计算量更小。
+    answer: true
+    explanation: |
+      **正确**。因果注意力下，位置 $t$ 的预测只依赖 $x_{<t}$。第 $k$ 个 assistant 回合中每个 token 的条件概率，在长样本里和在「以第 $k$ 回合结尾」的拆分样本里，看到的前缀完全相同，位置编号也相同，所以每个 token 的 log 概率一模一样，损失之和相同，梯度也相同。长样本把共享的前缀只算一次，3 个拆分样本则把第 1 轮重复算了 3 次、第 2 轮算了 2 次。
+
+      等价性会被以下情况打破：
+      - 模板会改写历史（如推理模型在历史回合中删掉思考内容），拆分样本中的前缀与长样本不同；
+      - 超出最大长度被截断；
+      - 损失归一化方式不同（按样本平均时，拆分后每个回合的权重不同）。
+      这也是多轮 SFT 通常整段训练的原因。
+
+  - id: TRN-SFT-019
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [多轮对话训练, 对话模板]
+    tags: [推理模型, 思考内容, 多轮]
+    question: |
+      某推理模型的对话模板在渲染多轮对话时，会自动删除**历史** assistant 回合中的 `<think>…</think>` 思考内容，只保留当前回合的思考。现在要用多轮数据（每轮都带思考过程）做 SFT，下列做法最合理的是：
+    options:
+      A: '把整段对话（每一轮都保留思考）作为一条样本，所有 assistant 回合都计入 loss'
+      B: '把整段对话按模板渲染（历史思考被删除），所有 assistant 回合都计入 loss'
+      C: '删除所有回合的思考内容，只训练最终回答，这样训练样本与模板渲染的历史格式保持一致'
+      D: '按回合拆成多条样本：第 k 条的历史按推理时渲染（去掉思考），只对第 k 回合计 loss'
+    answer: D
+    explanation: |
+      **结论**：训练时每个回合看到的上下文，必须与推理时该回合看到的一致。
+
+      推理到第 $k$ 轮时，模型看到的是「去掉思考的历史 + 当前问题」，然后生成「思考 + 回答」。按回合拆分后，第 $k$ 条样本的历史去掉了思考，与推理时完全相同，只对第 $k$ 回合的思考与回答计 loss，代价是不能共享前缀、计算量更大（可以借助 packing 提高效率）。
+
+      - A 错：第 $k$ 轮在训练中看到的历史带着思考，推理时却没有，训练与推理不一致。
+      - B 错：历史回合被渲染成「没有思考的回答」后仍计入 loss，等于教模型在这些回合不思考就直接作答，与「每轮都要思考」的目标冲突。
+      - C 错：格式虽然一致，但直接丢掉了要学习的推理过程。
+
+      这也说明上一类「整段训练与拆分等价」的结论有前提：模板不能改写历史。
+
+  - id: TRN-SFT-020
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [Packing]
+    tags: [packing, RoPE, position_ids]
+    question: |
+      对一个使用 RoPE 的模型做 SFT packing：已经用块对角因果掩码把各样本隔离开，但忘了把每条样本的 position_ids 从 0 重新编号（沿用整条打包序列的位置）。在精确计算下，各样本的输出与逐条单独计算相比：
+    options:
+      A: '会出错：RoPE 按绝对位置旋转 query 和 key，整体平移后每个位置的旋转角都变了，注意力分数随之改变'
+      B: '完全相同：RoPE 的注意力分数只依赖 query 与 key 的相对位置，样本内整体平移不改变它'
+      C: '完全相同，而且这一结论对使用可学习绝对位置编码的模型同样成立，因为掩码已经隔离了样本'
+      D: '会出错：块对角掩码与 RoPE 的位置计算不兼容，packing 时只能改用 padding 对齐各样本'
+    answer: B
+    explanation: |
+      **结论**：RoPE 下 $\langle R_mq,R_nk\rangle$ 只依赖 $m-n$，一个样本内所有位置同时加上偏移量，相对位置不变，注意力分数不变；掩码又挡住了其他样本，所以结果与单独计算一致（一个模拟实验中误差在 $10^{-7}$ 量级，来自浮点舍入）。
+
+      但工程上仍要重置 position_ids：
+      - Hugging Face 的无填充打包（`DataCollatorWithFlattening` + FlashAttention 变长接口）正是根据 position_ids 归零的位置推断 `cu_seqlens`，不重置就识别不出边界，块对角隔离也随之失效；
+      - 换成绝对位置编码或其他位置方案时，不重置就会出错。
+
+      - A 错：RoPE 虽然在每个位置上按绝对位置旋转，但内积结果只与相对位置有关。
+      - C 错：掩码只隔离样本，管不了位置。可学习绝对位置编码直接把位置向量加到输入上，平移后输入改变，输出必然不同。
+      - D 错：块对角掩码与 RoPE 完全兼容，FlashAttention 的变长接口就是这样用的。
+
+  - id: TRN-SFT-021
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [Packing]
+    tags: [packing, 块对角掩码, position_ids]
+    question: |
+      下面的代码为两条打包在一起的样本构造注意力掩码和 position ids。输出是什么？
+    code: |
+      import torch
+
+      lens = [3, 2]                                     # 两条样本打包成一条长 5 的序列
+      seg = torch.repeat_interleave(torch.arange(len(lens)), torch.tensor(lens))
+      T = seg.numel()
+      causal = torch.ones(T, T, dtype=torch.bool).tril()
+      mask = causal & (seg[:, None] == seg[None, :])     # True 表示可以看到
+      pos = torch.cat([torch.arange(n) for n in lens])
+      for row in mask.int().tolist():
+          print("".join(map(str, row)))
+      print(pos.tolist())
+    answer: |
+      10000
+      11000
+      11100
+      00010
+      00011
+      [0, 1, 2, 0, 1]
+    explanation: |
+      `seg = [0, 0, 0, 1, 1]` 标记每个位置属于哪条样本。掩码 = 因果下三角 ∧ 同一样本：
+      - 前 3 行是第一条样本，正常的因果下三角；
+      - 第 4、5 行属于第二条样本，只能看到第 4、5 列，前面属于第一条样本的位置全为 0，这就是「块对角」。
+
+      position ids 每条样本从 0 重新编号：`[0, 1, 2, 0, 1]`。
+
+      真实训练中不会构造 $T\times T$ 的掩码，而是把样本边界 `cu_seqlens = [0, 3, 5]` 传给 FlashAttention 的变长接口；同时还要把每条样本第一个 token 的标签设为 −100，避免用上一条样本的结尾去预测它。
+
+  - id: TRN-SFT-022
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [Packing]
+    tags: [packing, cu_seqlens, 损失归一化]
+    question: |
+      关于 SFT 中的 packing，下列说法**正确**的有：
+    options:
+      A: '每步有效 token 数随打包而变化，按 token 平均 loss 时分母应取整个优化步的全局有效 token 数'
+      B: '每条样本第一个 token 的标签应设为 −100，它不应由上一条样本的最后一个 token 来预测'
+      C: '用 FlashAttention 变长接口时只需传入各样本边界 cu_seqlens，不必构造 T×T 掩码'
+      D: '预训练也普遍要对文档做严格的注意力隔离，Llama 3 的实验表明不隔离会让常规预训练效果显著下降'
+      E: 'packing 不改变每个 epoch 的优化步数，学习率调度与 warmup 步数可以沿用打包前的设置'
+    answer: [A, B, C]
+    explanation: |
+      **结论**：A、B、C 正确。
+
+      - A 对：每条打包序列里样本的数量和回答长度都不同，各 micro-batch 先各自平均会给不同 token 不同的权重。
+      - B 对：否则模型在学「看到上一条样本的结尾就输出下一条样本的开头」，这是无意义的跨样本预测。
+      - C 对：变长接口按 `cu_seqlens` 把一条长序列视为多段独立序列分别做因果注意力，省去 $O(T^2)$ 的掩码显存。
+      - D 错：预训练传统上用 EOS 分隔文档直接拼接，不做隔离；Llama 3 加了文档间掩码，并报告它对常规预训练影响有限、对超长序列的继续训练更重要。SFT 样本短而多、内容相近，才必须隔离。
+      - E 错：打包后序列条数大幅减少，按「条」计的 batch 每个 epoch 的步数随之减少，每步的 token 数也变多；学习率调度、warmup 步数乃至学习率本身都要按新的步数和 batch 规模重新设定。
+  - id: TRN-SFT-023
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [Packing]
+    tags: [packing, 装箱, 填充率]
+    question: |
+      有 6 条 SFT 样本，长度分别为 900、700、600、500、300、100 个 token。若把它们放在同一个 batch 里补齐到最长，有效 token 占比约为 ____%（保留一位小数）；若用 First-Fit Decreasing 装箱、每箱最长 1024，需要 ____ 个箱子。
+    answer: [['57.4', '57.4%'], ['4']]
+    explanation: |
+      **补齐**：总长度 $900+700+600+500+300+100=3100$，补齐后 $6\times900=5400$，有效占比 $3100/5400\approx57.4\%$。
+
+      **FFD 装箱**（从长到短，放进第一个装得下的箱子）：
+      1. 900 → 箱 1；700 → 箱 2；600 → 箱 3；500 放不进前三个，→ 箱 4；
+      2. 300 → 箱 2（700 + 300 = 1000）；100 → 箱 1（900 + 100 = 1000）。
+
+      共 **4** 个箱子：[900, 100]、[700, 300]、[600]、[500]，有效占比 $3100/4096\approx75.7\%$。下界 $\lceil3100/1024\rceil=4$，这里 FFD 已经达到最优。样本越多、长度分布越分散，packing 的收益越大。
+
+  - id: TRN-SFT-024
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [Packing]
+    tags: [packing, FFD, cu_seqlens, 手撕]
+    question: |
+      实现 SFT 的 packing：
+
+      ```python
+      def pack_sft(samples: list, max_len: int) -> list[dict]: ...
+      ```
+
+      - `samples[i] = (input_ids, labels)`，二者等长且长度 ≥ 1，`labels` 中不计 loss 的位置已经是 −100；
+      - 用 First-Fit Decreasing 装箱：按长度从长到短处理（长度相同按原下标从小到大），每条样本放进第一个剩余空间足够的箱子，没有就新开一个；箱内样本按放入顺序排列；
+      - 每个箱子输出一个字典：`input_ids`（拼接）、`labels`（拼接，但每条样本第一个位置改为 −100）、`position_ids`（每条样本从 0 重新编号）、`cu_seqlens`（样本边界的前缀和，如 `[0, 5, 8]`）；
+      - 任何样本长度超过 `max_len` 时抛出 `ValueError`。
+    answer: |
+      def pack_sft(samples, max_len):
+          if any(len(ids) > max_len for ids, _ in samples):
+              raise ValueError("sample longer than max_len")
+          order = sorted(range(len(samples)), key=lambda i: (-len(samples[i][0]), i))
+          bins = []                                    # 每个箱子：[已用长度, 样本下标列表]
+          for i in order:
+              n = len(samples[i][0])
+              for b in bins:                           # First-Fit：放进第一个装得下的箱子
+                  if b[0] + n <= max_len:
+                      b[0] += n
+                      b[1].append(i)
+                      break
+              else:
+                  bins.append([n, [i]])
+          packed = []
+          for _, idx in bins:
+              ids, labels, pos, cu = [], [], [], [0]
+              for i in idx:
+                  s_ids, s_lab = samples[i]
+                  ids += list(s_ids)
+                  labels += [-100] + list(s_lab[1:])   # 样本首 token 不由上一条样本预测
+                  pos += list(range(len(s_ids)))       # 每条样本的位置从 0 重新编号
+                  cu.append(cu[-1] + len(s_ids))
+              packed.append({"input_ids": ids, "labels": labels,
+                             "position_ids": pos, "cu_seqlens": cu})
+          return packed
+    test: |
+      def S(n, start):
+          ids = list(range(start, start + n))
+          return ids, list(ids)
+
+      samples = [S(5, 1), S(3, 10), S(4, 20), S(2, 30)]
+      out = pack_sft(samples, 8)
+      # FFD：长度 5、4、3、2 依次放置 -> 箱 1 = 5 + 3，箱 2 = 4 + 2
+      assert [b["cu_seqlens"] for b in out] == [[0, 5, 8], [0, 4, 6]]
+      assert out[0]["input_ids"] == [1, 2, 3, 4, 5, 10, 11, 12]
+      assert out[0]["position_ids"] == [0, 1, 2, 3, 4, 0, 1, 2]
+      assert out[0]["labels"] == [-100, 2, 3, 4, 5, -100, 11, 12]
+      assert out[1]["input_ids"] == [20, 21, 22, 23, 30, 31]
+      assert out[1]["position_ids"] == [0, 1, 2, 3, 0, 1]
+      assert sorted(t for b in out for t in b["input_ids"]) == sorted(t for s, _ in samples for t in s)
+      assert all(len(b["input_ids"]) == len(b["labels"]) == len(b["position_ids"]) <= 8 for b in out)
+
+      out = pack_sft([([7, 8, 9], [-100, -100, 9])], 4)        # 保留原有的 -100（提示部分）
+      assert out[0]["labels"] == [-100, -100, 9] and out[0]["cu_seqlens"] == [0, 3]
+
+      out = pack_sft([S(2, 1), S(2, 5), S(2, 9)], 4)          # 等长按原下标；恰好装满
+      assert [b["input_ids"] for b in out] == [[1, 2, 5, 6], [9, 10]]
+      assert pack_sft([], 4) == []
+      try:
+          pack_sft([S(5, 1)], 4)
+          raise AssertionError("超长样本应报错")
+      except ValueError:
+          pass
+    explanation: |
+      **思路**：
+      1. 先检查超长样本；按 `(-长度, 下标)` 排序得到确定的处理顺序；
+      2. First-Fit：依次检查已有箱子的剩余空间，装得下就放入，否则新开箱子（`for ... else` 只在没有 `break` 时执行）；
+      3. 每个箱子拼接 ids 与 labels，并为每条样本生成从 0 开始的 position_ids 和累计边界 `cu_seqlens`；
+      4. 每条样本第一个位置的标签改为 −100：标签与输入逐位对齐、在模型内部错位，该位置的预测来自上一条样本的最后一个 token，必须屏蔽。
+
+      **复杂度**：排序 $O(n\log n)$，装箱最坏 $O(n\cdot k)$（$k$ 为箱子数）。
+
+      **易错点**：忘了重置 position_ids 或只在箱子开头重置；把整箱第一个位置之外的样本首 token 漏掉；修改了调用者传入的列表；装箱顺序不稳定导致结果不可复现。
+
+  - id: TRN-SFT-025
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [工具调用数据, Loss Mask]
+    tags: [工具调用, Agent, loss mask]
+    question: |
+      一条工具调用的 SFT 轨迹依次包含：system（含工具定义）→ user 提问 → assistant 发出工具调用（`<tool_call>{...}</tool_call>`）→ tool 返回结果 → assistant 给出最终回答。通常哪些部分计入 loss？
+    options:
+      A: '只有最终回答计入：工具调用的 JSON 由推理框架根据用户意图自动生成，模型不必学习'
+      B: '全部计入，包括 system 与工具返回，这样模型能记住各个 API 的定义和输出格式'
+      C: '只有 assistant 生成的工具调用（含结束符）和最终回答计入，其余部分只作为上下文'
+      D: '只有 tool 返回计入：它来自真实环境、最可靠，模型学会它才能更准确地理解工具结果'
+    answer: C
+    explanation: |
+      **结论**：凡是推理时由模型生成的内容都要学，凡是由用户或环境给出的内容都不学。
+
+      模型需要学会：什么时候调用工具、调用哪个、参数怎么填（工具调用的 JSON），以及拿到结果后怎么组织最终回答。工具返回由真实环境产生，推理时会被插入上下文，模型只需要读懂它。
+
+      - A 错：工具调用正是 Agent 要学的核心行为，推理框架只负责解析和执行，不会替模型决定调用什么。
+      - B 错：system 中的工具定义由开发者提供，推理时总在上下文里，不需要学；学习工具返回则会让模型倾向于自己「编造」工具结果，例如发出调用后不等执行就接着写出一个虚构的返回。
+      - D 错：工具返回的真实性与要不要学它无关，它不是模型的输出。
+
+  - id: TRN-SFT-026
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [工具调用数据]
+    source: 'APIGen（Liu 等, 2024）arXiv:2406.18518'
+    tags: [工具调用, 数据合成, Schema 校验]
+    question: |
+      构造 Agent 工具调用的 SFT 数据时，下列做法**合理**的有：
+    options:
+      A: '只保留一次调用就成功的轨迹，失败与重试的轨迹会教坏模型，应全部丢弃'
+      B: '用 JSON Schema 校验每条调用的格式与参数类型，最好真实执行工具，拿到可信的返回再生成后续回答'
+      C: '覆盖「不需要调用工具、直接回答」「参数缺失时先向用户追问」「工具报错后重试或换方案」「一次发起多个并行调用」等情形'
+      D: '工具定义统一只放在第一轮 user 消息的末尾，不必遵循模型原有的模板格式，这样更通用'
+      E: '所有样本中的工具列表保持固定顺序、工具描述统一一种写法，便于模型记住各个工具，调用更稳定'
+    answer: [B, C]
+    explanation: |
+      **结论**：B、C 合理。
+
+      - A 错：线上工具出错很常见，模型需要见过「出错 → 修正参数重试 / 换方案 / 向用户说明」的示范；该丢弃的是推理混乱、结果错误的轨迹，而不是所有出过错的轨迹。
+      - B 对：格式错误的调用会被模型忠实地学走；真实执行能保证返回结果与后续回答一致。APIGen 等数据合成流程就采用「格式校验 → 执行校验 → 语义校验」的多级过滤。
+      - C 对：只覆盖「一问一调用」的理想路径，模型上线后就会过度调用工具、编造缺失参数、遇错不知所措。
+      - D 错：工具定义应按模型模板规定的方式渲染（system 中或专门的 tools 字段），并与推理服务保持一致；随意放置会造成训练与推理的格式错位。
+      - E 错：如果训练数据中正确工具总在固定位置、描述总是同一种写法，模型会学到位置或措辞上的捷径（如「总是调用第一个工具」），换个工具列表就失效。应随机打乱工具列表的顺序、改写工具描述，让模型依据描述的语义而不是位置来选工具。
+  - id: TRN-SFT-027
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [工具调用数据, SFT评估]
+    tags: [工具调用, 过度调用, 参数幻觉, 客服 Agent]
+    question: |
+      团队用约 2 万条自动合成的工具调用轨迹，对一个 8B 模型做了全参 SFT，接入线上客服 Agent 后出现三个问题：
+      1. 用户只是闲聊或问常识，模型也要调用搜索工具；
+      2. 订单查询工具要求 `order_id`，用户没提供时，模型会编一个看似合理的编号去调用；
+      3. 工具返回错误后，模型直接把错误原文转述给用户。
+
+      请分析数据层面的原因，给出改进方案，并设计评估方法。
+    answer: |
+      **1. 原因分析**
+      - 过度调用：训练轨迹几乎每条都调用了工具，缺少「有工具可用但不该用」的负样本，模型学到了「只要有工具就先调用」的捷径。
+      - 编造参数：合成器为了让调用成功，常常替用户「补全」了参数，训练数据里充满了上下文中并不存在的 `order_id`，模型被直接教会了编造；同时缺少「参数缺失 → 先追问」的示范。
+      - 转述错误：合成时只保留了成功的轨迹，或者错误场景的示范质量差，模型没见过如何处理错误。
+
+      **2. 改进方案**
+      - **补齐场景分布**：按意图统计数据，补充不需要工具的闲聊、常识与政策问答（工具列表仍然在上下文中），比例可占两到三成；补充参数缺失时先追问、拿到信息后再调用的多轮轨迹；
+      - **参数可溯源校验**：检查每个参数值能否在对话上下文中找到依据或由其推出，找不到的轨迹直接剔除或改写成追问；
+      - **错误恢复轨迹**：在沙箱里注入超时、参数非法、查无结果等错误，示范修正参数重试、换方案、用友好的语言说明并给出下一步建议或转人工；
+      - **多级校验**：JSON Schema 校验格式与类型 → 沙箱真实执行 → 用规则或 LLM 裁判检查调用是否必要、回答是否忠实于工具结果；
+      - **训练细节**：工具返回不计 loss；打乱工具顺序、改写描述；混入通用指令数据保持对话能力；训练、推理使用同一模板。
+
+      **3. 评估方法**
+      - 离线测试集按「应调用 / 不应调用 / 应追问 / 会出错」分桶，指标包括：调用决策的精确率与召回率、工具选择准确率、参数正确率、无依据参数率、错误恢复成功率、最终回答质量；
+      - 借鉴 BFCL 的无关检测（不该调用时是否克制）和 τ-bench 一类的模拟用户多轮评测；
+      - 上线后监控调用率、调用失败率、转人工率与用户满意度，灰度发布、做 A/B 对比。
+    rubric:
+      - '准确分析三个问题的数据成因：缺负样本、合成时编造参数、缺错误轨迹（3 分）'
+      - '给出补充场景、参数可溯源校验、错误恢复轨迹等数据改进（3 分）'
+      - '给出格式校验、执行校验、语义校验的多级质量控制（2 分）'
+      - '给出分桶的离线指标与线上监控方案（2 分）'
+    explanation: |
+      **常见失分点**：把问题归因于模型太小或推理参数，忽略数据分布；只说「加更多数据」而不说加什么；没有发现合成器本身在制造参数幻觉；评估只看最终回答，不看「该不该调用」这一决策。
+
+  - id: TRN-SFT-028
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [灾难性遗忘, SFT超参数]
+    tags: [灾难性遗忘, 数据回放]
+    question: |
+      某团队只用 5 万条法律问答数据，对一个通用 Chat 模型做了 5 个 epoch 的全参 SFT，学习率 $1\times10^{-4}$。法律评测提升明显，但数学、代码和日常对话能力大幅下降。下列调整中，**最优先**尝试的是：
+    options:
+      A: '在训练数据中混入一定比例的通用指令数据，同时降低学习率、减少 epoch'
+      B: '进一步提高学习率、增加 epoch，让模型把法律知识学扎实后，通用能力会自然恢复'
+      C: '去掉所有系统提示词，让模型更专注于法律问答'
+      D: '把法律数据复制两遍，增加训练信号'
+    answer: A
+    explanation: |
+      **结论**：这是典型的灾难性遗忘：数据分布单一、学习率偏大、轮数偏多，参数被推离了对通用分布有利的区域，而训练数据里没有任何信号把它拉回来。
+
+      优先手段：
+      - **回放**：混入通用指令数据（数学、代码、对话、安全等），新旧分布差异越大，比例越高；
+      - **降低训练强度**：全参 SFT 的学习率通常在 $10^{-5}$ 量级，$10^{-4}$ 偏大；轮数减到 2～3 轮，并用通用回归集做早停或选检查点。
+      其次还可以考虑 LoRA（学得少、忘得也少）或把微调后的权重与原权重插值。
+
+      - B 错：继续加大训练强度只会遗忘得更多，通用能力不会自己恢复。
+      - C 错：系统提示词与遗忘无关。
+      - D 错：重复法律数据等于加大单一分布的权重，遗忘更严重。
+
+  - id: TRN-SFT-029
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [灾难性遗忘, SFT评估]
+    tags: [灾难性遗忘, 评测口径, MMLU]
+    question: |
+      一个模型做完领域 SFT 后，在 MMLU 这类多选基准上的分数比 SFT 前低了 5 个点。这足以说明模型在 SFT 中丢失了相应的知识，应当直接加大通用数据的回放比例重新训练。
+    answer: false
+    explanation: |
+      **错误**。分数下降不一定是知识丢失，先要排除**评测口径**带来的假象：
+      - **输出格式变了**：SFT 后模型习惯先解释再作答、换了答案的写法，或者在多选题前先寒暄，按固定规则抽取选项时就会大量判错；
+      - **提示方式不一致**：SFT 前用续写式的 few-shot 提示评测 Base 模型，SFT 后仍沿用同一提示而没有套对话模板，或者反过来，模型面对的输入分布已经不同；
+      - **行为变化**：模型对部分题目选择拒答或表示不确定，被计为错误。
+
+      排查方法：抽查答案抽取失败的比例；改用「比较各选项的对数似然」这类不依赖生成格式的打分方式；对 SFT 前后的模型统一评测协议后再比较。确认是真实的能力下降后，再采取通用数据回放、降低学习率、减少轮数、LoRA 或权重插值等措施。用错误的度量去指导「治遗忘」，可能白白牺牲领域效果。
+
+  - id: TRN-SFT-030
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [灾难性遗忘, SFT超参数]
+    tags: [灾难性遗忘, 数据回放, 模型合并]
+    question: |
+      在领域 SFT 中，如何在提升领域能力的同时尽量减少通用能力的遗忘？请从数据、超参数、训练方法和评估四个方面回答。
+    answer: |
+      1. **数据**：
+         - 回放：混入通用指令数据（对话、数学、代码、安全与拒答等），领域与通用分布差异越大，比例越高；
+         - 领域数据本身要多样，避免大量同一模板的问答；
+         - 降低分布差：例如用模型自己改写领域数据的回答（自蒸馏，如 SDFT），让训练目标更接近模型原有的输出分布。
+      2. **超参数**：全参学习率取 $10^{-5}$ 量级并配 warmup；训 1～3 个 epoch；同时监控领域与通用验证集，选两者兼顾的检查点或早停。
+      3. **训练方法**：
+         - 参数高效微调（LoRA 等），学得少、忘得也少；或只训练部分层；
+         - 正则约束：限制参数偏离原权重，或约束输出分布不要偏离原模型太远；
+         - 模型合并：把微调后的权重与原权重插值（如 WiSE-FT 的思路），在新旧能力之间选取折中点；
+         - 多任务混合训练，而不是串行地只训领域数据。
+      4. **评估**：领域评测 + 通用回归集（知识、数学、代码、指令遵循、安全与过度拒答）；训练过程中定期评测，画出「领域提升 — 通用下降」的折中曲线，在帕累托前沿上选检查点。
+    rubric:
+      - '数据：通用数据回放及比例原则、数据多样性或自蒸馏（3 分）'
+      - '超参数：较小学习率、较少轮数、基于双验证集早停（2 分）'
+      - '方法：PEFT、正则、权重插值或模型合并中至少两种（3 分）'
+      - '评估：领域与通用回归集同时监控并据此选检查点（2 分）'
+    explanation: |
+      **常见失分点**：只说「降低学习率」；认为 LoRA 能彻底避免遗忘；没有通用回归集，只看领域指标；不知道权重插值这类几乎零成本的折中手段。
+
+  - id: TRN-SFT-031
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [SFT超参数]
+    tags: [学习率, 全参微调]
+    question: |
+      对 7B 规模的模型做**全参数** SFT，下列学习率设置中最常见、最合理的量级是：
+    options:
+      A: '$3\times10^{-4}$，与预训练的峰值学习率保持一致，保证 SFT 的更新幅度足够'
+      B: '$1\times10^{-3}$，SFT 数据少、训练步数少，需要更大的步长才能在几个 epoch 内学会'
+      C: '$1\times10^{-7}$，学习率越小越不容易遗忘，配合多训几个 epoch 即可学会格式'
+      D: '$1\times10^{-5}$～$2\times10^{-5}$，配合少量 warmup 与衰减'
+    answer: D
+    explanation: |
+      **结论**：全参 SFT 的学习率通常比预训练峰值低一个数量级以上。例如 Llama 2 的 SFT 使用 $2\times10^{-5}$ 的初始学习率、余弦衰减、权重衰减 0.1、训练 2 个 epoch；Alpaca 也使用 $2\times10^{-5}$、训练 3 个 epoch。
+
+      - A 错：预训练峰值学习率用于从随机初始化开始的长时间训练，直接用于 SFT 会剧烈破坏已有能力，loss 也容易不稳定。
+      - B 错：步长过大，几乎必然导致发散或严重遗忘。
+      - C 错：太小则几乎学不动，几个 epoch 后格式和行为都还没学会。
+
+      对比：LoRA 只训练少量新参数，学习率通常要大约一个数量级，常见 $1\times10^{-4}$～$2\times10^{-4}$。
+
+  - id: TRN-SFT-032
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [SFT超参数]
+    tags: [训练步数, warmup]
+    question: |
+      一份 SFT 数据有 51200 条样本，全局 batch 为 128 条，训练 3 个 epoch（不使用 packing）。总优化步数为 ____；若 warmup 占总步数的 3%，warmup 步数为 ____。
+    answer: [['1200'], ['36']]
+    explanation: |
+      每个 epoch：$51200/128=400$ 步；3 个 epoch：$400\times3=1200$ 步；warmup：$1200\times3\%=36$ 步。
+
+      注意：
+      - 「步」指优化器更新的次数。用梯度累积时，全局 batch = 每卡 micro-batch × 累积步数 × 数据并行卡数，micro-batch 的前向次数不等于优化步数；
+      - 开启 packing 后序列条数减少，每个 epoch 的步数随之变化，学习率调度要按新的总步数重新计算；
+      - 很多框架按 warmup 比例自动换算步数，换数据或换 batch 后要确认实际的 warmup 步数仍然合理。
+
+  - id: TRN-SFT-033
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [SFT超参数, SFT评估]
+    tags: [早停, 验证集 loss, InstructGPT]
+    question: |
+      SFT 过程中，只要验证集 loss 开始上升，就说明模型的生成质量在变差，应当立即停止训练。
+    answer: false
+    explanation: |
+      **错误**。验证集 loss 衡量的是模型对「参考答案逐字措辞」的拟合程度，不等于生成质量。InstructGPT 报告：SFT 模型在 1 个 epoch 后验证集 loss 就开始过拟合，但继续训练更多 epoch 反而提升了奖励模型得分和人类偏好评分（最终训了 16 个 epoch）。LIMA 也观察到困惑度与生成质量不相关，最终是在第 5～10 个 epoch 之间通过人工评估挑选检查点。
+
+      原因之一：多训几轮后模型的输出分布变得更「尖锐」，对参考答案中个别措辞的概率变低，交叉熵上升，但自己生成的回答更连贯、更符合格式。
+
+      正确做法：用基于生成的评测（任务指标、LLM 裁判、人工评估）选检查点；验证集 loss 仍然有用，主要用来发现 bug 和严重过拟合。
+
+  - id: TRN-SFT-034
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [SFT评估]
+    source: 'Instruction-Following Evaluation for Large Language Models（IFEval，Zhou 等, 2023）arXiv:2311.07911'
+    tags: [IFEval, 指令遵循]
+    question: |
+      想评估 SFT 后的模型能否严格遵守「回答不超过 50 个词」「全部使用小写」「必须包含 3 个要点」这类可以用程序自动核验的指令，最合适的评测是：
+    options:
+      A: 'MMLU：覆盖 57 个学科的知识选择题，答案客观、可以自动判分，结果稳定可复现'
+      B: 'IFEval：由字数、大小写、格式等可自动核验的约束类指令组成，用程序判断是否遵守'
+      C: 'MT-Bench：多轮开放式问题，由强模型按 1～10 分打分，能综合反映指令遵循的质量'
+      D: 'HumanEval：根据函数签名和文档字符串生成代码，运行单元测试自动判断是否通过'
+    answer: B
+    explanation: |
+      **结论**：IFEval（Zhou 等, 2023）专门评测「可验证的指令遵循」：约 500 条提示，覆盖字数限制、大小写、关键词、段落数、输出格式等 25 类可以用程序判断的约束，按严格 / 宽松两种口径统计在提示级和指令级的遵循率，结果客观、可复现。
+
+      - A 错：MMLU 测的是知识与推理，不关心格式约束。
+      - C 错：MT-Bench 用强模型打分，适合评估开放对话质量，但对「是否恰好不超过 50 个词」这类硬约束不够精确，还存在裁判偏差。
+      - D 错：HumanEval 评测代码生成。
+
+      实践中通常把这几类评测组合起来：知识与能力基准、指令遵循、LLM 裁判的对话质量、业务集和回归集。
+
+  - id: TRN-SFT-035
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [SFT评估]
+    source: 'Rethinking Benchmark and Contamination for Language Models with Rephrased Samples（Yang 等, 2023）arXiv:2311.04850；Length-Controlled AlpacaEval arXiv:2404.04475'
+    tags: [LLM 裁判, 去污染, 显著性]
+    question: |
+      关于 SFT 模型的评估，下列做法**正确**的有：
+    options:
+      A: '只要 MT-Bench 分数上升，就可以直接发布新版本'
+      B: '去污染只需把训练数据与评测集做精确字符串匹配；改写过的题目与原题文字不同，不会让分数虚高'
+      C: '单次实验中 0.3 分的提升就足以下结论，不必用多个随机种子重复'
+      D: '用 LLM 裁判做两两比较时，要控制长度偏差（如使用长度控制胜率），并交换两个答案的顺序以抵消位置偏差'
+      E: '训练 loss 持续下降不能说明生成质量在提高，要用基于生成结果的评测来选检查点'
+    answer: [D, E]
+    explanation: |
+      **结论**：D、E 正确。
+
+      - A 错：单一基准只覆盖部分能力，发布前还要看回归集（包括安全拒答与过度拒答）、业务集和必要的人工评测。
+      - B 错：评测题被换说法、换数字格式或翻译后混入训练集，同样会让分数虚高，而精确匹配和 n-gram 重叠都查不出来。Yang 等（2023）的实验显示，在改写过的基准题上训练的 13B 模型能在 MMLU、HumanEval 等基准上取得接近 GPT-4 的分数。去污染要结合 n-gram 重叠、Embedding 相似度乃至 LLM 判断，并用新发布的题目作对照。
+      - C 错：SFT 结果受随机种子、数据顺序影响，波动可能比 0.3 分还大；应多种子重复并报告均值与波动，小于波动的提升不算数。
+      - D 对：LLM 裁判普遍偏爱更长的回答，也会偏向某个位置的答案；AlpacaEval 2.0 引入了长度控制胜率，两两比较时应交换顺序各评一次。
+      - E 对：训练 loss 只反映对训练集的拟合；SFT 多训几轮常常 loss 更低、生成质量反而下降。
+  - id: TRN-SFT-036
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [SFT评估, 对话模板, Loss Mask]
+    tags: [故障排查, 停不下来, 模板不一致]
+    question: |
+      你接手一个 SFT 项目，训练出来的模型有以下问题。请逐一给出最可能的原因和排查方法：
+      1. 训练 loss 很快降到接近 0，但离线评测很差；
+      2. 回答完不停止，一直生成到最大长度；
+      3. 回答后自己编出下一轮「用户」的发言；
+      4. 离线评测正常，接入线上服务后效果明显变差；
+      5. 训练 loss 几乎不下降。
+    answer: |
+      1. **loss 很快趋近 0**：
+         - 自己写损失时忘了错位，位置 $t$ 用自己的输入去「预测」自己，模型可以直接抄；
+         - 训练集与验证集重叠、数据大量重复，或 packing 没有隔离，相似样本互相「抄答案」；
+         - 排查：检查 logits 与 labels 的对齐方式；对训练 / 验证集做去重比对；检查 packing 掩码。
+      2. **停不下来**：
+         - 结束符没有计入 loss（PAD 与 EOS 共用并按 id 屏蔽）；超长样本被截断后结尾的结束符丢失；推理服务的停止符与模板的回合结束符不一致；
+         - 排查：解码几条样本，高亮计入 loss 的 token，确认每个回答末尾都有结束符；核对推理的停止配置。
+      3. **编造下一轮用户发言**：
+         - 用户回合也计入了 loss；模板缺少回合结束符；停止符没有配置；
+         - 排查：检查 loss mask 是否只覆盖 assistant 回合，检查模板和停止符。
+      4. **离线好、线上差**：
+         - 推理模板与训练模板不一致（系统提示词、换行、BOS、工具格式）；解码参数不同（温度、重复惩罚）；线上做了量化或上下文截断；线上问题分布与评测集不同；
+         - 排查：对同一批输入比较离线与线上的完整 token 序列；用训练模板做前缀单测；固定解码参数做对照。
+      5. **loss 不下降**：
+         - 学习率过小或调度出错（如 warmup 过长）；标签几乎全是 −100（掩码写反）；参数没有放进优化器或被冻结（LoRA 没挂上）；梯度累积写错（每个 micro-batch 都清零）；
+         - 排查：先在几十条样本上验证能否过拟合；打印可训练参数数量和梯度范数；检查有效标签的比例。
+    rubric:
+      - '问题 1：指出未错位或数据泄漏 / 重复，并给出排查方法（2 分）'
+      - '问题 2：指出结束符未计入 loss、截断或停止符不一致（2 分）'
+      - '问题 3：指出用户回合计入 loss 或模板缺结束符（2 分）'
+      - '问题 4：指出模板或解码参数不一致等原因及对比方法（2 分）'
+      - '问题 5：指出学习率、掩码、参数未训练等原因及过拟合小数据的检查方法（2 分）'
+    explanation: |
+      **常见失分点**：把所有问题都归结为「数据质量不好」或「需要调参」；不知道忘记错位会让 loss 异常地低；忽略截断导致结束符丢失；没有「在小数据上先过拟合」这个最基本的自检步骤。
+
+  - id: TRN-SFT-037
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [拒绝采样微调]
+    source: 'Llama 2 技术报告 arXiv:2307.09288；The Llama 3 Herd of Models arXiv:2407.21783；Scaling Relationship on Learning Mathematical Reasoning with LLMs（Yuan 等, 2023）arXiv:2308.01825'
+    tags: [RFT, 拒绝采样, Llama-2]
+    question: |
+      关于拒绝采样微调（Rejection Sampling Fine-Tuning，RFT），下列描述正确的是：
+    options:
+      A: '用奖励模型给人工撰写的示范回答打分，拒绝低分样本，只保留高分的人工回答做 SFT'
+      B: '对模型采样的回答打分，训练时对低奖励的回答施加负梯度，主动降低它们的生成概率'
+      C: '让模型对每个提示采样多个回答，用验证器或奖励模型筛出最好的，再用它们做 SFT'
+      D: '在解码时由奖励模型实时拒绝不合格的 token 并重新采样，因此不必额外训练模型'
+    answer: C
+    explanation: |
+      **结论**：RFT 的三步是「采样 → 筛选 → SFT」，可以多轮迭代。
+
+      筛选可以用规则验证器（数学答案比对、代码单元测试），也可以用奖励模型挑 Best-of-K。Llama 2 的后训练用奖励模型做拒绝采样微调（与 PPO 结合）；Llama 3 每一轮后训练都用拒绝采样产生 SFT 数据；Yuan 等（2023）在 GSM8K 上用 RFT 收集多样的正确推理路径，明显提升了数学推理。
+
+      - A 错：只筛选现成的人工数据，没有「让模型自己采样」这一步，属于数据过滤。
+      - B 错：对坏样本施加负梯度是强化学习或偏好优化的做法；RFT 只在被选中的好样本上做最大似然，没有负样本信号。
+      - D 错：这描述的是约束解码一类的推理时技术，RFT 是训练方法。
+
+  - id: TRN-SFT-038
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [拒绝采样微调]
+    tags: [RFT, 难度不均衡]
+    question: |
+      在数学题上做拒绝采样微调时，每道题采样相同的次数，再把采到的全部正确解直接加入训练集即可：简单题和难题提供的正确解数量相当，筛出来的数据天然覆盖各个难度，不需要额外处理。
+    answer: false
+    explanation: |
+      **错误**。设每题采样 $K$ 次，简单题的正确率高，几乎每次都能贡献很多条正确解；难题正确率接近 0，往往一条都没有。直接把所有正确解拿来训练，数据量与难度成反比，训练数据严重偏向简单题，模型主要在「复习」已经会的题，在难题上的提升有限。
+
+      常用对策：
+      - 每题保留的正确解设上限，并按推理路径去重（Yuan 等的 RFT 发现，不同推理路径的数量比正确解的总数更重要）；
+      - 对难题加大采样次数，或提高采样温度；
+      - 给难题提供答案提示，让模型反推出推理过程（STaR 的 rationalization）；或用更强的模型为难题生成示范；
+      - 也可以转向强化学习类方法，它们能利用错误样本的负信号，并通过动态采样等手段处理全对、全错的题目。
+
+  - id: TRN-SFT-039
+    type: short
+    difficulty: 3
+    frequency: 2
+    points: [拒绝采样微调]
+    tags: [RFT, STaR, ReST-EM, GRPO]
+    question: |
+      请设计一个用于提升数学推理能力的拒绝采样微调（RFT）流程，并说明：(1) 每一步的关键设计；(2) 常见的坑与对策；(3) 它与基于强化学习（如 GRPO）的方法有什么异同。
+    answer: |
+      1. **流程与关键设计**：
+         - 题目池：答案可自动验证的题目，去重并与评测集去污染，按难度分层；
+         - 采样：用当前模型每题采样 $K$ 个解（如 16～64），温度 0.7～1.0 保证多样性；
+         - 验证：规则比对最终答案（数值或符号等价判断），必要时加过程检查；
+         - 筛选：保留正确解，按推理路径去重，每题设上限，平衡难度分布，过滤格式异常或过长的解；
+         - 训练：在筛选数据上做 SFT。STaR、ReST-EM 等方法每一轮都从初始模型重新微调，以减少误差累积和过拟合；
+         - 迭代：用新模型重新采样，进行多轮，每轮在留出集上评测。
+      2. **常见的坑**：
+         - 假阳性：答案对但过程错、靠猜（选择题尤甚）→ 换成开放答案、加过程校验或裁判模型；
+         - 难度偏斜：简单题样本过多、难题没有样本 → 每题设上限、难题多采样、提供答案提示反推过程；
+         - 多样性塌缩：多轮自训练后解法越来越单一 → 去重、保持采样温度、混入外部数据；
+         - 钻验证器的空子：格式技巧骗过规则判定 → 加强答案解析与格式约束；
+         - 评测污染：题目池与评测集重叠。
+      3. **与 RL（如 GRPO）的异同**：
+         - 相同：都用可验证奖励、都从模型自己的采样中学习；RFT 可以看作只对奖励为 1 的样本做最大似然的「过滤式行为克隆」，ReST-EM 把它解释为 EM 算法；
+         - 不同：RFT 只用正样本，没有对错误解的负信号，也不利用同一题内样本间的相对优劣；通常离线分批进行，稳定、易实现；GRPO 用组内相对优势同时提升好解、压低坏解，在线更新，样本效率和能力上限通常更高，但训练更不稳定、工程更复杂；
+         - 实践中二者常组合：用 RFT 产生冷启动或每轮的 SFT 数据，再接强化学习。
+    rubric:
+      - '给出采样、验证、筛选、训练、迭代的完整流程及关键设计（4 分）'
+      - '指出假阳性、难度偏斜、多样性塌缩等至少三个坑及对策（3 分）'
+      - '准确比较 RFT 与 GRPO：只用正样本 vs 正负信号、离线 vs 在线、稳定性与上限（3 分）'
+    explanation: |
+      **常见失分点**：把 RFT 说成「用奖励模型给数据打分过滤」而没有自采样；忽视假阳性与难度偏斜；认为 RFT 与 RL 等价或完全无关；说不出 RFT 缺少负样本信号这一本质差别。
+
+  - id: TRN-SFT-040
+    type: design
+    difficulty: 3
+    frequency: 3
+    points: [指令数据构建, 数据质量与多样性, 工具调用数据, SFT评估]
+    tags: [SFT 流水线, 客服助手, 数据治理]
+    question: |
+      你要为一家电商公司从零搭建「客服助手」的 SFT 数据与训练流水线。基座是开源的 8B Instruct 模型；助手要能回答商品与售后政策问题、调用订单查询 / 退换货等 6 个内部工具，在超出范围时礼貌拒答或转人工。可用资源：约 200 万轮历史客服对话日志（含大量噪声与用户隐私信息）、政策文档、少量标注人员。请给出数据构建、质量控制、训练与评估的整体方案。
+    answer: |
+      **1. 需求与指标**：把意图分为政策问答、商品问答、工具类任务（查单、退换货等）、闲聊、超范围、转人工、安全风险几类；核心指标为任务完成率、工具调用正确率、政策回答的准确与忠实度、拒答与转人工的准确率、语气规范。
+
+      **2. 数据构建**
+      - **日志清洗**：先做隐私脱敏（手机号、地址、姓名、订单号替换为格式一致的占位符，并保证同一对话内替换一致）；按解决结果、满意度过滤低质对话；用 Embedding 聚类意图，按簇分层抽样保证多样性。
+      - **改写与对齐**：人工客服的回答口径不一、政策可能已过时，用强模型结合最新政策文档按统一风格改写，再抽检；把客服后台操作记录转换成 6 个工具的标准调用格式。
+      - **合成补充**：用模拟用户 + 工具沙箱生成工具轨迹，覆盖参数缺失先追问、工具报错恢复、多工具串联、不需要工具的问题；补充超范围拒答与转人工样本，同时加入「看似超范围其实可以回答」的样本，防止过度拒答。
+      - **人工金标**：标注人员撰写或审核 1000～3000 条难例与关键场景，作为高权重数据和评测参考。
+
+      **3. 质量控制**：JSON Schema 校验与沙箱执行；参数可溯源检查；LLM 裁判按评分细则打分并人工抽检；精确与近似去重；与评测集去污染；按意图与难度配比；渲染格式与线上推理模板、工具解析器完全一致；数据版本化管理。
+
+      **4. 训练**：从 Instruct 模型出发；混入 10%～30% 的通用指令数据防止遗忘；8B 全参（8 卡 ZeRO-3）学习率约 $1\times10^{-5}$，或 LoRA 学习率约 $1\times10^{-4}$；训练 2～3 个 epoch；loss 只算 assistant 回合（含工具调用），工具返回不计；packing 时隔离样本。后续可以用人工偏好或任务成功率做 DPO / 拒绝采样微调。
+
+      **5. 评估与上线**：冻结的离线测试集按意图分桶，评测工具决策精确率与召回率、参数正确率、政策回答准确率、拒答与转人工的准确率；通用能力与安全回归（含隐私泄露测试）；LLM 裁判加人工评估；模拟用户的多轮端到端测试；线上灰度与 A/B，监控转人工率、解决率、满意度与投诉，异常时可快速回滚。
+
+      **6. 风险**：隐私记忆与泄露（严格脱敏、输出侧再过滤）；政策更新快，具体条款更适合放进 RAG 而不是写死在 SFT 数据里；工具参数幻觉；过度拒答；用线上反馈持续补充难例，形成数据闭环。
+    rubric:
+      - '明确意图划分与核心指标（2 分）'
+      - '数据构建：日志脱敏与筛选、改写对齐、工具轨迹合成、拒答与转人工样本（3 分）'
+      - '质量控制：校验、去重、去污染、模板一致性（2 分）'
+      - '训练配置合理：通用数据混合、学习率、loss mask（1 分）'
+      - '评估与上线：分桶离线指标、回归、灰度监控（2 分）'
+    explanation: |
+      **常见失分点**：直接用原始日志训练，不做隐私脱敏和口径统一；只关心问答，不设计工具与转人工数据；没有不需要工具、看似超范围等负样本；把易变的政策条款硬编码进 SFT 数据；评估只看整体分数、不分意图分桶。
+
+  - id: TRN-SFT-041
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [SFT目标, SFT评估]
+    tags: [SFT 与 RL, 泛化, pass@k]
+    question: |
+      面试官问：「你的任务已经做了好几轮 SFT，什么时候该停下来改用强化学习？」请回答：
+      (1) 哪些信号说明 SFT 已经接近上限、值得上 RL；
+      (2) 哪些情况下 SFT 就够了，上 RL 不划算；
+      (3) 有人说「SFT 偏记忆、RL 偏泛化」，你怎么看。
+    answer: |
+      1. **值得上 RL 的信号**
+         - 加数据的收益递减：SFT 数据翻倍，验证指标几乎不涨。
+         - pass@k 明显高于 pass@1：模型「会做但不稳」，多次采样中常有正确答案。RL 擅长把已有的正确行为的概率提上来。
+         - 错误来自模型自己的生成过程：长链推理、多轮 Agent 中，一步偏离之后越错越远（暴露偏差）。SFT 只见过示范的前缀，学不到「偏离之后怎么纠正」。
+         - 有可靠的自动奖励：答案可验证（数学、代码单测、格式约束、工具执行结果），或者有可靠的奖励模型。
+         - 目标难以示范但容易评判：好坏容易比较，却很难写出最优示范（风格、取舍、复杂约束）。
+         - 需要定向压低某些错误：SFT 没有负样本，难以专门抑制幻觉、违规等行为。
+      2. **SFT 就够、上 RL 不划算的情况**
+         - 目标主要是格式、风格、固定流程或领域知识，高质量示范容易获得；
+         - 输出几乎唯一的任务（抽取、分类、模板化回复）；
+         - 模型的 pass@k 也很低：RL 采不到正样本，应先补 SFT 或蒸馏；
+         - 没有可靠的奖励：奖励模型不可靠时，RL 容易出现奖励黑客；
+         - 资源有限：RL 需要 rollout、奖励服务和更复杂的工程。
+         - 很多场景的答案是「SFT 打底 + RL 精修」，而不是二选一。
+      3. **「SFT 偏记忆、RL 偏泛化」**
+         - 有实证支持：Chu 等（2025）在算术卡牌游戏 GeneralPoints 和导航环境 V-IRL 上发现，用结果奖励训练的 RL 能泛化到没见过的规则变体和视觉变体，SFT 则倾向于记住训练数据，在分布外表现差。Shenfeld 等（2025）发现，在新任务上效果相当时，在线 RL 比 SFT 遗忘得更少，遗忘程度可以用「微调后模型与原模型在新任务上的 KL」来预测，他们把原因归结为同策略更新倾向于选择离原模型最近的解。
+         - 但有边界：同一研究也指出 SFT 对后续 RL 仍然必要，它先把输出格式稳定下来；结论来自特定的任务和设置；RL 也受基座能力的限制，有研究发现 RLVR 主要提高 pass@1，大 $k$ 下的 pass@k 甚至不如基座。
+         - 更准确的说法是：差别主要来自「数据是不是模型自己采的」「有没有负向信号」「是否约束了与原模型的距离」，而不是名字叫 SFT 还是 RL。
+    rubric:
+      - '给出至少 4 个可操作的「该上 RL」信号，包括 pass@k 与 pass@1 的差距、可验证奖励（4 分）'
+      - '说明 SFT 已经足够或上 RL 不划算的情形（2 分）'
+      - '对「SFT 偏记忆、RL 偏泛化」给出有依据的分析，并指出它的边界（4 分）'
+    explanation: |
+      **常见失分点**：只说「效果不好就上 RL」，给不出可观测的信号；不知道 pass@k 与 pass@1 的差距是判断「RL 有没有空间」的关键指标；把「SFT 偏记忆、RL 偏泛化」当作定理，或者完全否定；忽略 RL 对可靠奖励的依赖，以及 SFT 为 RL 打底的作用。
+    source: 'Chu 等 SFT Memorizes, RL Generalizes arXiv:2501.17161；Shenfeld 等 RL''s Razor arXiv:2509.04259；Yue 等 arXiv:2504.13837'
+
+  - id: TRN-SFT-042
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [SFT评估, 拒绝采样微调]
+    tags: [SFT 与 RL, 对照实验, 代码生成]
+    question: |
+      你要提升一个 7B 指令模型在「带单元测试的 Python 编程题」上的能力。现有资源：2 万道带测试的题目；一个能写出高质量解答的更大模型（只能通过 API 调用）；64 张 GPU，两周时间。团队在争论：是「用大模型的解答做 SFT」，还是「直接用 GRPO 做强化学习」。
+
+      请设计一个在同等预算下公平比较 SFT 与 RL 的实验方案，包括对照组的设置、预算的口径、评测集与指标，以及如何根据结果决定最终路线。
+    answer: |
+      **1. 对照组（同一个起点模型，同一批训练题）**
+      - A，蒸馏 SFT：大模型为每道题生成若干解答，用单元测试过滤后做 SFT；
+      - B，拒绝采样微调：起点模型自己采样，把通过测试的解答拿来做 SFT；
+      - C，RL：GRPO，以单元测试的通过情况为奖励（可加少量格式项）；
+      - D，SFT 再接 RL：在 A 的检查点上继续做 C，这是实践中最常见的组合；
+      - 起点模型本身作为基线。
+
+      **2. 预算口径**
+      - 总成本 = 数据生成（API 费用，或折算的 GPU 时间）+ 训练；RL 的 rollout 往往是大头，必须算进去。
+      - 在相同的 GPU 时间或相同的成本下比较；最好画「效果—算力」曲线，而不是只比一个点。
+      - 每组给相同的调参预算（学习率、轮数、组大小、温度等）；固定训练题与评测题的划分；用多个随机种子，报告方差。
+
+      **3. 评测**
+      - 分布内：留出的同分布题目，pass@1 与 pass@k（如 k = 1、8、64）；
+      - 分布外：其他来源或更难的编程题；把题面改写后的同一道题，用来检验是否只是记住了答案；
+      - 遗忘：通用基准（数学、指令遵循、对话、安全）上的回归；
+      - 行为：输出长度、格式错误率、超时率；抽检代码，排查硬编码输出、修改测试等钻空子行为；
+      - 去污染：检查评测题与训练题、以及与大模型可能见过的公开题之间的重叠。
+
+      **4. 解读与决策**
+      - A 在分布内提升大，但分布外弱、遗忘明显，而 C、D 在分布外更好：选「SFT 打底 + RL」；
+      - 起点模型的 pass@k 本来就很低，RL 零方差组多、学不动：先做 SFT 或蒸馏，RL 的收益有限；
+      - RL 只提高 pass@1、不提高 pass@k：说明主要是把已有能力变稳，要看业务是否在乎单次成功率；
+      - 各组差异在种子方差之内：选成本更低、工程更简单的方案；
+      - 最终按「效果 × 成本」两个维度决策，并保留完整的消融记录。
+    rubric:
+      - '设计同起点、同题目的多组对照，包含 SFT、拒绝采样微调或 RL、SFT 接 RL 的组合（3 分）'
+      - '明确预算口径（含 rollout 与数据生成成本），保证调参公平并使用多个种子（2 分）'
+      - '评测覆盖分布内、分布外、pass@k、遗忘与去污染（3 分）'
+      - '给出依据结果做决策的规则（2 分）'
+    explanation: |
+      **常见失分点**：只比较训练步数或样本数，不把 rollout 和数据生成的成本算进预算；给 RL 组和 SFT 组不同的题目或不同的调参力度；只看分布内的 pass@1；忽略遗忘与去污染；只跑一个种子就下结论。
+    source: 'Chu 等 SFT Memorizes, RL Generalizes arXiv:2501.17161'
+
+  - id: TRN-SFT-043
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [数据质量与多样性, Loss Mask]
+    tags: [复读, 数据清洗, EOS]
+    question: |
+      SFT 后的模型在长回答中频繁复读：同一句话或同一段内容反复出现，有时一直生成到长度上限才停。从**数据侧**看，下列原因中**可能**导致这一现象的有：
+    options:
+      A: '同一模板批量生成、只替换几个词的高度相似样本被大量训练，相当于对少数句式训练了很多轮'
+      B: '大量样本因超长被截断，截断处没有结束符，模型很少见到长回答写完后正常结束的例子'
+      C: '数据中有较多一问一答的简短样本，回答都以结束符正常结尾，模型习惯了短回答的节奏'
+      D: '训练时使用了 packing，并且按样本重置了位置编号、用块对角掩码把不同样本隔离开'
+      E: '爬取或合成的回答本身含有重复内容，如重复的列表项、复制粘贴的段落、车轱辘话式的套话'
+    answer: [A, B, E]
+    explanation: |
+      **结论**：A、B、E 正确。复读往往是「模型学会了重复」与「模型没学会停下来」共同造成的。
+
+      - A 对：近重复的样本相当于对同样的句式训练很多轮，模型对这些套话过度自信，生成时容易陷入循环。要做近似去重（如 MinHash），并让模板与表述保持多样。
+      - B 对：被截断的样本在 loss 中只有「继续写」的信号，没有「在这里结束」的信号；这类样本多了，模型在长回答上停不下来。应该过滤超长样本、在自然边界处切分，并确保保留下来的每条样本都以结束符收尾（截断处不要硬加结束符，否则模型会学会话说一半就停）。
+      - C 错：短回答正常结束，反而在教模型及时停下来。
+      - D 错：正确的 packing 不会造成复读；只有掩码或位置编号处理错误、样本之间互相「看见」时，才会出现串扰。
+      - E 对：示范本身有重复，模型就会照着学。可以借鉴预训练数据的重复度过滤：统计重复行、重复 n-gram 的比例，超过阈值的样本丢弃或修复。
+
+      **配套检查**：确认结束符在 labels 中计入了 loss（没有被误设为 −100）；评测时统计重复 n-gram 比例和「达到长度上限」的比例。解码端的重复惩罚只能治标，根源要在数据上解决。
+  - id: TRN-SFT-044
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [对话模板, 多轮对话训练, 指令数据构建]
+    tags: [混合思考, Qwen3, 思考模式]
+    question: |
+      参考 Qwen3 的「思考模式融合」，为一个同时支持思考与非思考两种模式的模型构造 SFT 数据。下列做法**合理**的有：
+    options:
+      A: '思考样本用上一阶段推理 RL 得到的模型对问题做拒绝采样生成，只保留答案正确、格式合规的样本，避免这一轮 SFT 拉低推理能力'
+      B: '既然模式完全由 /think、/no_think 标记控制，每条训练样本都必须带上标记；不带标记的样本会让模型困惑，应当全部删除'
+      C: '非思考样本在 assistant 回合中保留一个空的思考块，再接最终回答，使两种模式的输出格式保持一致'
+      D: '在多轮样本中随机插入多个模式标记，让每一轮的回答遵循最近的那个标记，训练模型在对话中途切换模式'
+      E: '思考内容一律不计入 loss，只对最终回答计算 loss，以免模型学会过度思考'
+    answer: [A, C, D]
+    explanation: |
+      **结论**：A、C、D 正确。
+
+      - A 对：Qwen3 的思考数据由第二阶段的推理模型自己做拒绝采样得到，这样 SFT 数据与当前模型的分布接近，不会拉低已有的推理能力。
+      - B 错：模型需要一个默认模式，不带标记时按默认模式执行。Qwen3 默认思考，所以部分思考样本不带 /think 标记；全部删除反而会让「不带标记」时的行为没有定义。
+      - C 对：两种模式的输出都是「思考块 + 回答」，只是非思考模式的思考块为空。格式统一后，解析逻辑一致，推理时也可以通过预先填入空思考块来关闭思考。训练时要注意与推理模板逐字一致：如果推理模板会把空思考块放进生成前缀，训练样本中这部分也应属于提示而不计 loss。
+      - D 对：Qwen3 正是这样构造多轮数据的，并用 ThinkFollow 一类的评测检查多轮中的模式切换。
+      - E 错：思考内容正是推理能力的主要监督信号，不计 loss 就学不到怎么推理。过度思考应通过筛选更简洁的正确轨迹、在 RL 中控制长度等方式解决。
+
+      **评测**：除了两种模式各自的效果，还要检查模式遵循率，以及「串扰」：非思考模式下是否仍输出长推理，思考模式下难题的思考是否明显变短。
+    source: 'Qwen3 Technical Report arXiv:2505.09388'

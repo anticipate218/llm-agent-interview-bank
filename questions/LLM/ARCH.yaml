@@ -1,0 +1,1247 @@
+domain: LLM
+subcategory: ARCH
+questions:
+
+  - id: LLM-ARCH-001
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [Encoder-Decoder结构]
+    tags: [Transformer, 交叉注意力]
+    question: |
+      在原始 Transformer（Encoder-Decoder 结构，用于机器翻译）中，编码器最后一层的输出是如何被解码器使用的？
+    options:
+      A: '与目标端词向量相加，作为解码器第一层的输入，之后各层不再使用'
+      B: '送入解码器每一层的交叉注意力子层，作为其中的 K 和 V'
+      C: '送入解码器每一层的交叉注意力子层，作为其中的 Q'
+      D: '编码器第 l 层的输出只送给解码器第 l 层，逐层一一对应'
+    answer: B
+    explanation: |
+      **结论**：编码器的最终输出（memory）被**每一个**解码器层的交叉注意力（encoder-decoder attention）使用，提供 K 和 V；Q 来自解码器自身上一个子层的输出。
+
+      原始论文中解码器每层有三个子层：带因果掩码的自注意力 → 交叉注意力 → FFN，每个子层都配残差连接和 LayerNorm。交叉注意力让解码器的每个位置都能「查询」整个源句。由于编码器输出在整个解码过程中固定不变，各层交叉注意力的 K、V 在推理时只需计算一次即可反复使用。
+
+      - A 错：编码器输出不与目标端输入相加，而是通过注意力被「检索」。
+      - C 错：方向反了。Q 表示「我要找什么」，来自正在生成的解码器一侧。
+      - D 错：所有解码器层用的都是编码器**最后一层**的输出，而不是逐层配对。
+    source: 'Attention Is All You Need（Vaswani 等, 2017）arXiv:1706.03762'
+
+  - id: LLM-ARCH-002
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [Encoder-Decoder结构, 架构变体对比]
+    tags: [BERT, T5, Whisper, Prefix LM]
+    question: |
+      关于 Encoder-only、Decoder-only、Encoder-Decoder 三类 Transformer 架构，下列说法**正确**的有：
+    options:
+      A: 'Decoder-only 的每一层比 Encoder-Decoder 解码器层多一个交叉注意力子层'
+      B: 'T5、BART 和语音识别模型 Whisper 都属于 Encoder-Decoder 架构'
+      C: 'Prefix LM 让提示部分双向可见、生成部分保持因果，它与 Decoder-only 共用一个堆栈，只是注意力掩码不同'
+      D: 'Encoder-Decoder 的解码器自注意力是双向的，因为训练时目标序列是完整已知的'
+      E: 'BERT 这类 Encoder-only 模型使用双向注意力、以掩码语言模型预训练，不能直接用于自回归生成'
+    answer: [B, C, E]
+    explanation: |
+      **结论**：B、C、E 正确。三类架构的本质区别在于「注意力能看哪些位置」以及「预训练目标是什么」。
+
+      - A 错：恰好相反，Encoder-Decoder 的解码器层多一个交叉注意力子层；Decoder-only 只有自注意力和 FFN。
+      - B 对：T5（文本到文本）、BART（去噪自编码）、Whisper（音频编码器 + 文本解码器）都是 Encoder-Decoder。
+      - C 对：Prefix LM（如 UniLM）只有一个 Transformer 堆栈，通过「前缀双向、生成部分因果」的掩码实现，与 Decoder-only 的差别只在掩码。
+      - D 错：Encoder-Decoder 的解码器自注意力必须是**因果**的。训练时虽然整段目标序列已知（teacher forcing），但要模拟推理时「只能看到已生成部分」，否则模型会直接「偷看答案」。
+      - E 对：Encoder-only 每个位置看全句，适合分类、抽取、向量检索；它没有因果结构，无法逐 token 续写。
+  - id: LLM-ARCH-003
+    type: judge
+    difficulty: 3
+    frequency: 1
+    points: [Encoder-Decoder结构, 架构变体对比]
+    tags: [T5]
+    question: |
+      T5 论文指出：编码器 L 层 + 解码器 L 层的 Encoder-Decoder 模型，参数量约等于 2L 层的 Decoder-only 模型，而处理同样的输入输出时，计算量约等于 L 层的 Decoder-only 模型。
+    answer: true
+    explanation: |
+      **正确**。T5 论文在比较架构时给出了这一结论（忽略交叉注意力带来的少量额外参数与计算）。
+
+      原因在于 token 走过的层数不同：Decoder-only 要让输入和输出的**所有** token 都穿过全部层；而 Encoder-Decoder 中，输入 token 只经过编码器的 L 层，输出 token 只经过解码器的 L 层。于是 L+L 的 Encoder-Decoder 参数量相当于 2L 层，每个 token 的计算量却只相当于 L 层。
+
+      这提醒我们「参数量」与「计算量」不是一回事：同样的 FLOPs 预算下，Encoder-Decoder 可以容纳约两倍的参数。T5 论文在其设定下（预训练后再微调）也发现 Encoder-Decoder + 去噪目标效果最好；Decoder-only 成为主流，靠的是通用生成、上下文学习和推理缓存等方面的综合优势。
+    source: 'T5 论文（Raffel 等, 2020）arXiv:1910.10683'
+
+  - id: LLM-ARCH-004
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [Decoder-only为何主流]
+    source: 'Wang 等, What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization?, arXiv:2204.05832；BERT arXiv:1810.04805；Whisper arXiv:2212.04356'
+    question: |
+      当前主流大模型（GPT、Llama、Qwen、DeepSeek 等）几乎都采用 Decoder-only 架构。请从训练效率、使用方式、推理效率和工程生态等角度分析原因，并说明 Encoder-only 与 Encoder-Decoder 架构在哪些场景下仍有优势。
+    answer: |
+      1. **训练信号密**：长度为 $T$ 的样本中每个位置都预测下一个 token，提供 $T-1$ 个监督信号；BERT 式掩码语言模型只有被遮住的约 15% 的位置有损失。同样的数据和算力，Decoder-only 得到的训练信号更多。
+      2. **训练方式即使用方式**：预训练就是续写，而提示词、少样本示例、多轮对话、工具调用都能统一写成续写。零样本和上下文学习（in-context learning）能力随规模自然出现，不需要为每种任务设计专门的输出头。
+      3. **推理可以缓存**：因果注意力下，后来的 token 不会改变前面 token 的表示，历史 K、V 可以一直缓存（KV Cache），共享前缀（如系统提示词）还能跨请求复用；双向模型每多一个 token，所有位置都要重算。
+      4. **工程简单、生态集中**：只有一种 Block 反复堆叠，并行训练、推理框架和算子优化（FlashAttention、vLLM 等）都围绕它打磨，形成正反馈；缩放规律也在这种架构上被反复验证。
+      5. **实证与边界**：Wang 等（2022）发现只做无监督预训练时，因果 Decoder-only 的零样本泛化最好；但加上多任务微调后，非因果结构 + 掩码目标反而更好。Decoder-only 胜在通用性、可扩展性和推理效率的综合，而不是每个任务都最强。
+      6. **其他架构仍有优势的场景**：文本向量、检索、重排序、分类等理解类任务大量使用 Encoder 模型（双向上下文、小而高效）；输入输出界限分明的转换任务（机器翻译、语音识别如 Whisper）仍常用 Encoder-Decoder，输入只需编码一次，计算更省。
+    rubric:
+      - '说明训练信号密度：每个位置都有监督，对比 MLM 约 15%（2 分）'
+      - '说明预训练目标与使用方式统一（续写、上下文学习、对话、工具调用）（2 分）'
+      - '说明因果结构让 KV Cache 与前缀复用成为可能，推理高效（2 分）'
+      - '提到工程生态正反馈或实验证据，并指出「并非所有任务都最强」的边界（2 分）'
+      - '指出 Encoder / Encoder-Decoder 仍有优势的场景（向量检索、重排序、翻译、语音识别等）（2 分）'
+    explanation: |
+      **常见失分点**：只说「因为 GPT 成功了」；把原因说成「Decoder-only 参数更少」；断言「Decoder-only 在所有任务上都最强」或反过来说它「理解能力差、做不了分类」；把「因果注意力矩阵满秩、表达力更强」当成定论（它只是一种假说）。高分回答要把架构特性（因果掩码）与训练效率、推理成本联系起来。
+
+  - id: LLM-ARCH-005
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [Decoder-only为何主流]
+    question: |
+      Wang 等（2022）系统比较了不同架构与预训练目标的零样本泛化能力，结论是：预训练之后再做多任务微调时，「因果 Decoder-only + 语言模型目标」的效果最好。
+    answer: false
+    explanation: |
+      **错误**。该研究（What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization?）的结论分两种情形，题中把它们弄混了：
+
+      - **只做无监督预训练**时，因果 Decoder-only + 语言模型（下一个 token 预测）目标的零样本泛化最好；
+      - **预训练后再做多任务微调**时，非因果可见性的模型（Encoder-Decoder 或 Prefix LM）+ 掩码语言模型目标效果最好。
+
+      因此 Decoder-only 的主流地位并不来自「任何设定下都最强」，而是来自通用生成能力、可扩展性、KV Cache 带来的推理效率和工程生态的综合优势。面试时引用这项研究，要把两种情形都说清楚。
+    source: 'Wang 等, 2022, arXiv:2204.05832'
+
+  - id: LLM-ARCH-006
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [Decoder-only为何主流]
+    question: |
+      一条长度为 2048 个 token 的训练样本（输入与标签都只取自这 2048 个 token）：用因果语言模型（下一个 token 预测）训练时，有 ____ 个位置产生监督信号；用 BERT 式掩码语言模型（随机选 15% 的位置预测）训练时，约有 ____ 个位置产生监督信号。
+    answer: ['2047', ['307', '约 307', '307.2']]
+    explanation: |
+      - 因果语言模型：第 1～2047 个位置分别预测下一个 token，最后一个位置没有「下一个」可预测，共 $T-1=2047$ 个监督信号。（GPT 式预训练常从语料里多取 1 个 token，让 2048 个输入位置都有标签，那样就是 2048 个；题干限定了只用这 2048 个 token，所以是 2047。）
+      - 掩码语言模型：只有被选中的位置计算损失，$2048\times15\%=307.2$，约 307 个（BERT 对这 15% 的位置按 80% 换成 [MASK]、10% 换成随机词、10% 保持不变处理，但它们都参与损失）。
+
+      同样处理 2048 个 token，因果语言模型的监督信号约为 MLM 的 6.7 倍。这是「Decoder-only 训练效率高」最直观的论据之一；当然 MLM 的每个预测能利用双向上下文，两者并非简单的优劣关系。
+
+  - id: LLM-ARCH-007
+    type: multiple
+    difficulty: 2
+    frequency: 3
+    points: [Decoder-only为何主流]
+    question: |
+      下列关于「Decoder-only 成为大模型主流」的说法，**正确**的有：
+    options:
+      A: '只有一种 Block 反复堆叠，训练并行、推理框架和算子优化都围绕它打磨，形成生态正反馈'
+      B: '因果注意力下，后续 token 不会改变已有 token 的表示，历史 K、V 可以一直缓存复用'
+      C: 'Decoder-only 在文本向量检索、重排序等理解类任务上已全面取代了 Encoder 模型'
+      D: '提示词、少样本示例、多轮对话、工具调用都能统一写成续写，预训练目标与使用方式一致'
+      E: '因果注意力矩阵是下三角满秩矩阵，已有理论严格证明 Decoder-only 的表达能力优于双向模型'
+    answer: [A, B, D]
+    explanation: |
+      **结论**：A、B、D 正确。
+
+      - A 对：FlashAttention、vLLM 等都围绕 Decoder-only 优化，生态集中带来正反馈。
+      - B 对：这正是 KV Cache 成立的前提，也让共享前缀（系统提示词）可以跨请求复用；双向模型每来一个新 token，所有位置都要重算。
+      - C 错：文本向量和重排序至今仍大量使用 Encoder 模型（如 BGE 系列、Cross-Encoder）。也有基于 Decoder 的向量模型，但谈不上「全面取代」。
+      - D 对：训练方式就是使用方式，上下文学习能力随规模自然出现。
+      - E 错：「下三角矩阵满秩、双向注意力矩阵可能低秩」是一种流行的解释，但只是假说，并没有严格证明 Decoder-only 表达力更强。面试时可以提，但要说明「并非定论」。
+  - id: LLM-ARCH-008
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [残差流]
+    tags: [ResNet]
+    question: |
+      对于残差连接 $y = x + F(x)$，下列哪一项最准确地解释了它为什么能让几十上百层的网络可以训练？
+    options:
+      A: '每层只需拟合残差而非完整映射，所需参数量随之大幅减少，从而缓解了深层网络的过拟合'
+      B: '两路相加后输出方差被重新拉回到 1，激活值不会随层数增加而爆炸或消失'
+      C: '$\partial y/\partial x$ 中含单位矩阵项，梯度可绕过逐层连乘直接回传'
+      D: '残差把每层的雅可比矩阵约束为正交矩阵，梯度范数在逐层回传时保持不变'
+    answer: C
+    explanation: |
+      **结论**：残差连接的关键是梯度中的单位矩阵项。
+
+      没有残差时，梯度从输出传回第 $l$ 层要连乘几十个雅可比矩阵，范数稍小于 1 就会指数级衰减（梯度消失），稍大于 1 就会爆炸。有了残差，$\partial y/\partial x = I + \partial F/\partial x$，展开后总有一条「全是 $I$」的路径，梯度至少能原样传回去。这正是 ResNet 让深层网络可训练的原因，Transformer 的每个子层都沿用了它。
+
+      - A 错：残差只改变每层要拟合的目标，参数量不变；而且深层网络难训练是优化问题（训练误差都降不下去），不是过拟合。
+      - B 错：那是归一化层的作用；两路相加反而会让方差随层数累积变大（这也是 Pre-Norm 需要最终 Norm 的原因）。
+      - D 错：残差并不约束雅可比矩阵，$I+\partial F/\partial x$ 的范数可以大于或小于 1；它保证的只是梯度中总有一条单位矩阵通路，不会因逐层连乘而指数衰减。
+
+  - id: LLM-ARCH-009
+    type: single
+    difficulty: 3
+    frequency: 1
+    points: [残差流]
+    tags: [GPT-2, 初始化]
+    question: |
+      GPT-2 在初始化时，把每个残差分支最后一个投影矩阵（注意力的输出投影、FFN 的降维矩阵）的权重额外乘以 $1/\sqrt{N}$，$N$ 为残差层的数量。这样做的主要原因是：
+    options:
+      A: '让各注意力头的输出近似正交，减少头与头之间的冗余，从而提升多头的表达能力'
+      B: '抵消 Softmax 前除以 $\sqrt{d_k}$ 带来的数值缩小，使注意力子层输出与输入保持同一量级'
+      C: '使残差流在每一层都被归一化到单位方差，从而可以省掉最后一层的归一化'
+      D: '残差流是 N 个分支输出的累加，方差约随 N 线性增长；缩放后总方差基本与深度无关'
+    answer: D
+    explanation: |
+      **结论**：这是针对「残差流不断累加」的初始化修正。
+
+      残差流 $x_L = x_0 + \sum_{l} F_l(\cdot)$。初始化时各分支输出近似独立、方差都约为 $\sigma^2$，则 $\mathrm{Var}(x_L)\approx\mathrm{Var}(x_0)+N\sigma^2$，层数越深残差流越大。把每个分支最后一层的权重乘以 $1/\sqrt{N}$，分支输出方差变为 $\sigma^2/N$，累加后约为 $\mathrm{Var}(x_0)+\sigma^2$，与深度无关。GPT-2 论文原文：按 $1/\sqrt{N}$ 缩放残差层权重，以考虑残差路径上随深度的累积。nanoGPT 等实现中一个 Block 含注意力和 FFN 两个残差分支，所以写成 `std = 0.02 / sqrt(2 * n_layer)`。
+
+      - A 错：初始化缩放与头之间是否正交无关。
+      - B 错：$\sqrt{d_k}$ 缩放作用在注意力打分上，与残差分支输出的量级无关。
+      - C 错：缩放初始化不会让残差流被归一化，Pre-Norm 模型仍然需要最终的 Norm。
+    source: 'GPT-2 论文（Radford 等, 2019）'
+
+  - id: LLM-ARCH-010
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [残差流]
+    tags: [logit lens, 可解释性]
+    question: |
+      从「残差流（residual stream）」的视角看 Decoder-only Transformer，下列说法**正确**的有：
+    options:
+      A: 'FFN 子层负责在不同 token 之间交换信息，注意力子层负责对每个 token 单独做非线性加工'
+      B: '残差流的宽度随层数加深逐层增大，以容纳越来越多的信息'
+      C: '注意力的输出投影 $W^O$ 决定了各个头的结果写入残差流的哪些方向'
+      D: '把中间层的残差流直接接上最终 Norm 和输出层，往往已能读出有意义的预测（logit lens）'
+      E: '每个注意力和 FFN 子层都从残差流读取输入，再把自己的输出「加」回残差流，而不是覆盖它'
+    answer: [C, D, E]
+    explanation: |
+      **结论**：C、D、E 正确。残差流像一块所有层共用的白板：Embedding 写入初始内容，每个子层读取后把「增量」加回去，输出层读取最终结果。
+
+      - A 错：说反了。注意力是模型中唯一让 token 之间交换信息的地方；FFN 对每个位置独立计算。
+      - B 错：残差流在所有层的维度都是 $d_{model}$，保持不变，否则无法逐层相加。
+      - C 对：拼接后的各头输出只占各自的一段维度，$W^O$ 把它们混合并投影回 $d_{model}$ 维，决定写入残差流的方向。
+      - D 对：logit lens 等分析发现，中间层的残差流已经包含逐步成形的预测，这也印证了「增量修改」的视角。
+      - E 对：这正是 $x_{l+1}=x_l+F(\cdot)$ 的含义，各层做的是增量式修改。
+    source: 'A Mathematical Framework for Transformer Circuits（Elhage 等, 2021）'
+
+  - id: LLM-ARCH-011
+    type: judge
+    difficulty: 3
+    frequency: 1
+    points: [残差流, Post-Norm与Pre-Norm]
+    question: |
+      在 Pre-Norm 结构中，第 $L$ 层的输出可以写成 $x_L = x_0 + \sum_{l=0}^{L-1} F_l\big(\mathrm{Norm}(x_l)\big)$。因此，若把中间第 $k$ 层整层删掉，最终的残差流只是少了 $F_k$ 这一个加数，其余各层子层的输出都保持不变。
+    answer: false
+    explanation: |
+      **错误**。公式本身没错，但每个加数 $F_l(\mathrm{Norm}(x_l))$ 的输入 $x_l$ 依赖于它之前所有层的输出。删掉第 $k$ 层后，$x_{k+1}$ 少了 $F_k$，第 $k+1$ 层及之后每一层的输入都变了，它们的输出也随之改变，影响会一路传到最后。
+
+      实践中「删掉一两个中间层，模型通常只是变差一点而不是彻底失效」，这说明各层做的是增量式修改、后续层对输入的小幅扰动有一定容忍度，而不是说其余层的输出保持不变。这个区别也是层剪枝研究需要逐层评估影响、并常常配合少量续训的原因。
+
+  - id: LLM-ARCH-012
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [Post-Norm与Pre-Norm]
+    question: |
+      与 Post-Norm（$x_{l+1}=\mathrm{Norm}(x_l+F(x_l))$）相比，Pre-Norm（$x_{l+1}=x_l+F(\mathrm{Norm}(x_l))$）更容易训练深层大模型，最根本的原因是：
+    options:
+      A: 'Pre-Norm 中归一化层的参数更少，优化器需要更新的变量更少，所以训练更稳定'
+      B: 'Pre-Norm 的主干上没有归一化，每层到输出都有恒等通路，初始化时各层梯度量级更均衡，对学习率预热不敏感'
+      C: 'Pre-Norm 让每一层的输出都被归一化为单位方差，残差流的数值始终保持在固定范围内'
+      D: 'Pre-Norm 让注意力打分不再需要除以 $\sqrt{d_k}$，从而避免了 Softmax 饱和'
+    answer: B
+    explanation: |
+      **结论**：Pre-Norm 把归一化移到子层入口，主干保持 $x_L=x_0+\sum_l F_l(\cdot)$ 的纯加法形式，梯度可以经恒等通路直达每一层。
+
+      Xiong 等（2020，On Layer Normalization in the Transformer Architecture）分析指出：初始化时 Post-Norm 靠近输出层的参数梯度很大，必须用学习率预热小心起步，层数一深就难训；Pre-Norm 的梯度在各层更均衡，甚至可以去掉预热。因此 GPT-2 之后的大模型几乎都用 Pre-Norm。
+
+      - A 错：两者归一化层的数量相同，参数量差别可以忽略。
+      - C 错：恰好相反，Pre-Norm 的残差流**没有**被归一化，数值随层数累积增大，所以最后要补一个 Norm。
+      - D 错：$\sqrt{d_k}$ 缩放与 Norm 的位置无关，两种结构都需要。
+    source: 'Xiong 等, 2020, arXiv:2002.04745'
+
+  - id: LLM-ARCH-013
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [Post-Norm与Pre-Norm]
+    question: |
+      Pre-Norm 结构的模型在最后一个 Block 之后、输出层之前还需要再加一个归一化层；否则送入输出层的残差流从未被归一化，其尺度会随层数累积，导致 logits 的尺度失控。
+    answer: true
+    explanation: |
+      **正确**。Pre-Norm 只在每个子层的**入口**做归一化，主干 $x_L = x_0+\sum_l F_l(\cdot)$ 本身从未被归一化，数值随层数累加。如果直接把 $x_L$ 送进输出层，logits 的尺度会随深度和训练进程漂移，影响训练稳定性与 Softmax 的输出分布。
+
+      所以 Pre-Norm 模型都会在最后补一个 Norm：GPT-2 的 `ln_f`、Llama 的 `norm`（RMSNorm）都是它。Post-Norm 的最后一个子层输出已经过归一化，不需要额外再加。白板画 Decoder-only 结构时漏掉这个最终 Norm 是常见扣分点。
+
+  - id: LLM-ARCH-014
+    type: multiple
+    difficulty: 3
+    frequency: 1
+    points: [Post-Norm与Pre-Norm, 架构变体对比]
+    tags: [DeepNorm, Sandwich-Norm, Gemma 2]
+    question: |
+      关于 Pre-Norm 的代价以及归一化位置的改进方案，下列说法**正确**的有：
+    options:
+      A: 'DeepNorm 在 Post-Norm 中放大残差主干、缩小子层初始化，把 Post-Norm 稳定训练到了上千层'
+      B: 'Gemma 2 对每个子层的输入和输出都做归一化（常称 Sandwich-Norm），进一步约束残差流的数值'
+      C: 'Pre-Norm 在每个子层入口都做归一化，因此残差流的范数在各层保持稳定，不随层数累加而增大'
+      D: 'Pre-Norm 的每个子层输入都已归一化，所以最后一层之后不必再加 Norm，可直接接 LM Head'
+      E: 'Pre-Norm 取代 Post-Norm 的主要原因是 Post-Norm 收敛后的最终效果更差，而非训练稳定性'
+    answer: [A, B]
+    explanation: |
+      **结论**：A、B 正确。
+
+      - A 对：DeepNet（Wang 等, 2022）的 DeepNorm 采用 $\mathrm{LN}(\alpha x+F(x))$（$\alpha>1$）放大残差主干、缩小子层初始化，限制了每次更新对模型的冲击，让 Post-Norm 扩到 1000 层。
+      - B 对：Gemma 2 技术报告写明对每个子层的输入和输出都用 RMSNorm 归一化。
+      - C 错：Pre-Norm 只归一化送进子层的输入，主干上的残差流本身从不归一化，是逐层纯加法，越往后范数越大；而每个子层的输出量级大致稳定，于是后面各层写入的增量占比越来越小，深层的贡献被稀释，有人称之为「有效深度打折」。这正是 Pre-Norm 的主要代价。
+      - D 错：子层输入归一化了，主干上的残差流却从未归一化、范数逐层增大，所以 Pre-Norm 要在最后一层之后补一个 Norm 再接 LM Head。
+      - E 错：Pre-Norm 胜出靠的是训练稳定性。Post-Norm 训练成功时效果可能略好（BERT 就是 Post-Norm），问题在于深层、大规模时容易发散；DeepNorm 等方案正是为了保留它的优点。
+    source: 'DeepNet（Wang 等, 2022）arXiv:2203.00555；Gemma 2 技术报告 arXiv:2408.00118'
+
+  - id: LLM-ARCH-015
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [Post-Norm与Pre-Norm]
+    question: |
+      团队复现一篇较早的论文，用原始 Transformer 的 Post-Norm 结构从零训练一个 48 层、$d=2048$ 的 Decoder-only 模型（AdamW，峰值学习率 3e-4，只预热 100 步，FP16 混合精度）。训练开始几百步内 loss 剧烈震荡，随后变成 NaN；把层数减到 12 层后，同样的超参数可以正常训练。请分析可能的原因，并给出排查步骤和修复方案。
+    answer: |
+      **1. 定位原因**：这是深层 Post-Norm 的典型训练不稳定。
+      - Post-Norm 在每次残差相加之后都做归一化，主干上没有恒等通路。Xiong 等（2020）的分析表明，初始化时 Post-Norm 靠近输出层的参数梯度很大，必须依赖足够长的学习率预热；层数越深越严重。
+      - 现象吻合：12 层能训、48 层发散；100 步预热加 3e-4 的峰值学习率对 48 层 Post-Norm 过于激进。
+      - 发散的直接触发点通常是：少数层更新过猛 → 激活与注意力 logits 暴涨 → Softmax 饱和、损失尖峰 → FP16 下溢出成 inf / NaN。
+
+      **2. 排查**：
+      - 记录每层的梯度范数、更新量与参数范数之比，看异常是否集中在靠近输出的层；
+      - 记录各层激活和注意力 logits 的最大值，确认是否有数值暴涨；
+      - 定位 NaN 首次出现的层和步，排除脏数据、超长样本等数据问题；
+      - 检查精度设置：FP16 是否开了动态 loss scaling，Softmax 与 Norm 是否在 FP32 下计算。
+
+      **3. 修复（按推荐顺序）**：
+      - **改为 Pre-Norm，并在最后补一个 Norm**：现代大模型的标准做法，梯度经恒等通路直达，对预热不敏感。
+      - 若必须保留 Post-Norm（例如严格复现）：把预热延长到数千步、降低峰值学习率；或采用 DeepNorm 等专为深层 Post-Norm 设计的方案。
+      - 通用稳定手段：全局梯度裁剪（如范数 1.0）；残差分支输出投影按 $1/\sqrt{2L}$ 缩放初始化；用 BF16 代替 FP16；注意力 logits 过大时加 QK-Norm。
+
+      **4. 验证**：先在小规模（同样 48 层、较窄宽度、较少步数）上对比几种方案的 loss 曲线与梯度统计，确认没有尖峰后再放大到原规模。
+    rubric:
+      - '指出 Post-Norm + 深层 + 预热过短是根因，并解释梯度机制（3 分）'
+      - '给出可操作的排查指标（逐层梯度范数、激活 / logits 最大值、NaN 首次位置、精度设置）（2 分）'
+      - '给出改为 Pre-Norm 并补最终 Norm 的主方案（2 分）'
+      - '给出延长预热、降学习率、DeepNorm、梯度裁剪、BF16、QK-Norm 等备选手段中的至少两项（2 分）'
+      - '说明先小规模验证再放大（1 分）'
+    explanation: |
+      **常见失分点**：只说「调小学习率」，却解释不了为什么层数一深才发散；把原因笼统归结为「模型太大」或「数据有问题」，不分析 Post-Norm 的梯度特性；改成 Pre-Norm 却忘了最后的 Norm；只给方案、不给验证方法。
+
+  - id: LLM-ARCH-016
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [LayerNorm与RMSNorm]
+    tags: [RMSNorm, LayerNorm]
+    question: |
+      RMSNorm 与 LayerNorm 相比，下列说法正确的是：
+    options:
+      A: 'RMSNorm 去掉了减均值和偏置 β，只按均方根缩放，保留了缩放不变性，但不再具有平移不变性'
+      B: 'RMSNorm 在 batch 维度上统计均方根，因此对 batch 大小比 LayerNorm 更敏感'
+      C: 'RMSNorm 连可学习的缩放参数 γ 也去掉了，所以完全没有可学习参数'
+      D: 'RMSNorm 的输出均值为 0、方差为 1，与 LayerNorm 的输出分布完全相同'
+    answer: A
+    explanation: |
+      **结论**：$\mathrm{RMSNorm}(x)=\dfrac{x}{\sqrt{\frac1d\sum_i x_i^2+\epsilon}}\odot\gamma$，与 LayerNorm $\dfrac{x-\mu}{\sqrt{\sigma^2+\epsilon}}\odot\gamma+\beta$ 相比，少了减均值和 $\beta$。
+
+      RMSNorm 论文（Zhang 与 Sennrich, 2019）的判断是：LayerNorm 起作用主要靠「缩放不变性」，「平移不变性」可有可无。去掉后少一次求均值的规约、少一组参数，归一化又是受显存带宽限制的算子，整体更快，效果基本持平。Llama、Qwen、DeepSeek 都用 RMSNorm。
+
+      - B 错：两者都只对**每个 token 自己的特征维度**做统计，与 batch 无关（跨 batch 统计的是 BatchNorm）。
+      - C 错：RMSNorm 保留了逐维缩放参数 $\gamma$。
+      - D 错：RMSNorm 只保证输出的均方根约为 1（$\gamma=1$ 时），不保证均值为 0；输入整体平移时，它的输出会改变。
+    source: 'RMSNorm 论文 arXiv:1910.07467'
+
+  - id: LLM-ARCH-017
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [LayerNorm与RMSNorm]
+    question: |
+      下面的代码比较 LayerNorm 与 RMSNorm（都不带可学习参数）在输入整体平移、整体缩放时的表现。输出是什么？
+    code: |
+      import torch
+      import torch.nn.functional as F
+
+      x = torch.tensor([[1.0, 2.0, 3.0, 6.0]])
+      ln = lambda t: F.layer_norm(t, (4,))
+      rms = lambda t: F.rms_norm(t, (4,))
+      print(torch.allclose(ln(x + 10), ln(x)), torch.allclose(rms(x + 10), rms(x)))
+      print(torch.allclose(ln(3 * x), ln(x)), torch.allclose(rms(3 * x), rms(x)))
+    answer: |
+      True False
+      True True
+    explanation: |
+      - **LayerNorm** 计算 $(x-\mu)/\sigma$：整体加 10 只改变均值 $\mu$，减掉后结果不变（平移不变）；整体乘 3 时分子和 $\sigma$ 同时放大 3 倍，结果也不变（缩放不变，$\epsilon$ 的影响在误差范围内）。
+      - **RMSNorm** 计算 $x/\mathrm{RMS}(x)$：乘 3 时分子分母同比例放大，结果不变；但加 10 会改变向量的方向。$x$ 归一化后约为 $[0.28, 0.57, 0.85, 1.70]$，$x+10=[11,12,13,16]$ 归一化后约为 $[0.84, 0.91, 0.99, 1.22]$，两者明显不同。
+
+      这正是 RMSNorm 的设计取舍：保留起主要作用的**缩放不变性**，放弃平移不变性，换来更少的规约运算和参数。实践表明这对大模型效果基本没有影响。
+
+  - id: LLM-ARCH-018
+    type: code_debug
+    difficulty: 2
+    frequency: 2
+    points: [LayerNorm与RMSNorm]
+    tags: [FP16, 数值稳定]
+    question: |
+      下面是一个 RMSNorm 实现。它在 FP32 下测试正常，但模型用 FP16 推理时，部分 token 经过这一层后输出变成全 0，进而导致生成异常。请指出问题并修正。
+    code: |
+      import torch
+
+      def rms_norm(x, weight, eps=1e-6):
+          ms = x.pow(2).mean(dim=-1, keepdim=True)
+          return x * torch.rsqrt(ms + eps) * weight
+    fixed_code: |
+      import torch
+
+      def rms_norm(x, weight, eps=1e-6):
+          xf = x.float()
+          ms = xf.pow(2).mean(dim=-1, keepdim=True)
+          return (xf * torch.rsqrt(ms + eps)).to(x.dtype) * weight
+    test: |
+      w = torch.ones(8, dtype=torch.float16)
+      x = torch.full((2, 8), 300.0, dtype=torch.float16)
+      y = rms_norm(x, w)
+      assert y.dtype == torch.float16, "输出应保持 FP16"
+      assert torch.allclose(y.float(), torch.ones(2, 8), atol=1e-3), "数值较大的输入不应被归一化成 0"
+      torch.manual_seed(0)
+      x2 = torch.randn(4, 8) * 3
+      ref = torch.nn.functional.rms_norm(x2, (8,), eps=1e-6)
+      assert torch.allclose(rms_norm(x2.half(), w).float(), ref, atol=1e-2)
+    answer: |
+      **问题**：第 4 行直接在 FP16 下计算 `x.pow(2)`。FP16 能表示的最大值约为 65504，只要某个分量的绝对值超过约 255.9（$256^2=65536$），平方就溢出成 inf，均值也是 inf，`rsqrt(inf)` 等于 0，整行输出变成 0。大模型残差流中出现几百甚至上千的激活值很常见，所以这个问题会在真实推理中出现。
+
+      **修正**：统计量在 FP32 下计算，归一化后再转回原精度，最后乘以权重：
+
+      ```python
+      xf = x.float()
+      ms = xf.pow(2).mean(dim=-1, keepdim=True)
+      return (xf * torch.rsqrt(ms + eps)).to(x.dtype) * weight
+      ```
+    explanation: |
+      Llama 和 Hugging Face 的 RMSNorm 实现都是这样做的：先把输入转成 FP32，求平方均值、`rsqrt`，再转回原精度。
+
+      除了上溢，FP16 下还有精度问题：`eps=1e-6` 已经低于 FP16 的最小正规数（约 $6.1\times10^{-5}$），只能用低精度的次正规数表示；很小的输入求平方后也会下溢。BF16 的指数范围与 FP32 相同，不会这样上溢，但它只有约 8 位有效二进制位，对很多数求平方和时累积误差大，所以同样应在 FP32 下统计。这条规则对 LayerNorm、Softmax 等「先规约再归一化」的算子都适用。
+
+  - id: LLM-ARCH-019
+    type: multiple
+    difficulty: 1
+    frequency: 2
+    points: [LayerNorm与RMSNorm]
+    tags: [BatchNorm]
+    question: |
+      大语言模型普遍使用 LayerNorm / RMSNorm，而不用 CNN 中常见的 BatchNorm。下列理由中**正确**的有：
+    options:
+      A: 'BatchNorm 不带可学习的缩放 $\gamma$ 和平移 $\beta$，表达能力不及 LayerNorm'
+      B: '自回归推理时 batch 可能很小甚至为 1，BatchNorm 只能用训练期的滑动平均，训练与推理不一致'
+      C: 'BatchNorm 要跨样本归约，计算量比 LayerNorm 高一个数量级，大模型难以承受'
+      D: 'LayerNorm / RMSNorm 只在每个 token 自身的特征维度上归一化，不依赖其他样本'
+      E: 'BatchNorm 跨样本统计均值方差，同一 batch 内不同样本的输出会互相影响'
+    answer: [B, D, E]
+    explanation: |
+      **结论**：B、D、E 正确。核心区别是统计范围：BatchNorm 对每个特征**跨样本**统计，LayerNorm / RMSNorm 对每个 token **跨特征**统计。
+
+      - A 错：BatchNorm 同样有可学习的 $\gamma$ 和 $\beta$。
+      - B 对：训练用当前 batch 的统计量、推理用滑动平均，两者不一致；单卡 batch 小时统计噪声也大。
+      - C 错：两者都是逐元素的规约运算，计算量同一量级（跨卡同步的 SyncBN 多出的是通信开销），不是弃用的原因。
+      - D 对：每个 token 独立归一化，与 batch 大小、序列中其他 token、padding 都无关，训练和推理行为一致。
+      - E 对：样本之间互相影响，变长序列的 padding 还会污染统计量。
+  - id: LLM-ARCH-020
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [FFN与SwiGLU]
+    tags: [SwiGLU, Llama]
+    question: |
+      Llama 系列把 FFN 换成了 SwiGLU：$\mathrm{FFN}(x)=W_2\big(\mathrm{SiLU}(W_1x)\odot W_3x\big)$。若要让它的参数量与「中间维度为 $4d$ 的两矩阵 FFN」相同，中间维度应取：
+    options:
+      A: '$4d$'
+      B: '$2d$'
+      C: '$\frac{8d}{3}$'
+      D: '$\frac{16d}{3}$'
+    answer: C
+    explanation: |
+      **结论**：取 $\frac{8d}{3}$。
+
+      普通 FFN 有两个矩阵：$d\times4d$ 与 $4d\times d$，共 $8d^2$ 个参数。SwiGLU 有三个矩阵（$W_1$、$W_3$ 是 $d\times h$，$W_2$ 是 $h\times d$），共 $3dh$。令 $3dh=8d^2$，得 $h=\frac{8d}{3}$。Llama-2-7B 中 $\frac{8\times4096}{3}\approx10923$，再向上取整到 256 的倍数得到 11008。
+
+      - A 错：中间维度 $4d$ 时参数为 $12d^2$，是普通 FFN 的 1.5 倍。
+      - B 错：$2d$ 时只有 $6d^2$。
+      - D 错：$\frac{16d}{3}$ 时为 $16d^2$，是普通 FFN 的两倍。
+
+      Shazeer（2020）的实验表明，在参数与计算量对齐的条件下，GLU 类变体的困惑度更低，所以「多一个矩阵、缩小中间维度」是划算的。
+
+  - id: LLM-ARCH-021
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [FFN与SwiGLU, 参数量估算]
+    tags: [Llama-2, Llama-3]
+    question: |
+      Llama 的 SwiGLU 中间维度规则：先取 $\lfloor 8d/3\rfloor$；若设置了倍率 `ffn_dim_multiplier`，再乘以倍率并取整；最后向上取整到 `multiple_of` 的倍数。$d=4096$ 时，Llama-2-7B（无倍率，`multiple_of` = 256）的中间维度为 ____；Llama-3-8B（倍率 1.3，`multiple_of` = 1024）的中间维度为 ____。
+    answer: ['11008', '14336']
+    explanation: |
+      - Llama-2-7B：$\lfloor 8\times4096/3\rfloor=10922$，$10922/256\approx42.7$，向上取整为 $43\times256=$ **11008**。
+      - Llama-3-8B：$\lfloor 1.3\times10922\rfloor=14198$，$14198/1024\approx13.9$，向上取整为 $14\times1024=$ **14336**（恰好是 $3.5d$）。
+
+      对齐到 256、1024 的倍数是为了让矩阵乘在 GPU 上更高效、便于张量并行切分。注意 Llama-3-8B 的 FFN 每层参数为 $3\times4096\times14336\approx1.76\times10^8$，约 $10.5d^2$，比 $8d^2$ 多约 31%：这是有意加大的 FFN，同时它用 GQA 把注意力参数从 $4d^2$ 降到约 $2.5d^2$。
+
+  - id: LLM-ARCH-022
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [FFN与SwiGLU]
+    question: |
+      SwiGLU 比普通 FFN 多一个权重矩阵，因此 Llama-2-7B 每层 FFN 的参数量约为「$d=4096$、中间维度为 $4d$ 的普通两矩阵 FFN」的 1.5 倍。
+    answer: false
+    explanation: |
+      **错误**。SwiGLU 多了一个矩阵，但中间维度相应缩小到约 $\frac{8d}{3}$，正是为了让参数量与普通 FFN 持平。
+
+      - Llama-2-7B：$3\times4096\times11008=135{,}266{,}304$；
+      - 普通 FFN：$2\times4096\times(4\times4096)=134{,}217{,}728$；
+
+      两者只差约 0.8%（差在 11008 向上取整到了 256 的倍数）。「1.5 倍」只在中间维度不变（仍取 $4d$）时才成立。面试时说「SwiGLU 参数更多」是常见的不准确说法；若被追问 Llama-3-8B，可以补充它的 FFN 确实比 $8d^2$ 多约 31%，但那来自有意设置的 1.3 倍率，而不是 SwiGLU 本身。
+
+  - id: LLM-ARCH-023
+    type: code_fill
+    difficulty: 1
+    frequency: 2
+    points: [FFN与SwiGLU]
+    tags: [SwiGLU, PyTorch]
+    question: |
+      补全 SwiGLU 前馈层的 `forward`。命名与 Hugging Face 的 Llama 实现一致：`gate_proj` 的输出经过激活后作为门，`up_proj` 的输出作为值，两者逐元素相乘后由 `down_proj` 降维。
+    code: |
+      import torch
+      import torch.nn as nn
+      import torch.nn.functional as F
+
+      class SwiGLU(nn.Module):
+          def __init__(self, d, hidden):
+              super().__init__()
+              self.gate_proj = nn.Linear(d, hidden, bias=False)
+              self.up_proj = nn.Linear(d, hidden, bias=False)
+              self.down_proj = nn.Linear(hidden, d, bias=False)
+
+          def forward(self, x):
+              return self.down_proj(____(self.gate_proj(x)) * ____)
+    answer: ['F.silu', 'self.up_proj(x)']
+    test: |
+      m = SwiGLU(4, 4)
+      with torch.no_grad():
+          for lin in (m.gate_proj, m.up_proj, m.down_proj):
+              lin.weight.copy_(torch.eye(4))
+      x = torch.tensor([[-2.0, -0.5, 0.5, 2.0]])
+      assert torch.allclose(m(x), x * torch.sigmoid(x) * x)
+
+      torch.manual_seed(0)
+      m2 = SwiGLU(8, 16)
+      x2 = torch.randn(3, 8)
+      g, u, dn = m2.gate_proj.weight, m2.up_proj.weight, m2.down_proj.weight
+      ref = (F.silu(x2 @ g.T) * (x2 @ u.T)) @ dn.T
+      assert torch.allclose(m2(x2), ref, atol=1e-6)
+      assert sum(p.numel() for p in m2.parameters()) == 3 * 8 * 16
+    explanation: |
+      答案：`self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))`。
+
+      $\mathrm{SiLU}(x)=x\cdot\sigma(x)$（即 $\beta=1$ 的 Swish），SwiGLU 的名字就来自「Swish 门控的 GLU」。第一个测试把三个矩阵都设成单位阵，输出应为 $\mathrm{SiLU}(x)\odot x$，可以区分常见的错误写法：
+
+      - 填 `torch.sigmoid`：得到原始的 GLU（门是 Sigmoid）；
+      - 填 `F.gelu`：得到 GeGLU（Gemma 用的变体）；
+      - 填 `F.relu`：得到 ReGLU。
+
+      这几种变体在 GLU Variants Improve Transformer（Shazeer, 2020）中都有比较，它们的结构相同，只是门的激活函数不同。
+
+  - id: LLM-ARCH-024
+    type: multiple
+    difficulty: 1
+    frequency: 2
+    points: [FFN与SwiGLU]
+    source: 'Geva 等, Transformer Feed-Forward Layers Are Key-Value Memories, arXiv:2012.14913；Meng 等, ROME, arXiv:2202.05262'
+    question: |
+      关于 Transformer 中的前馈网络（FFN），下列说法**正确**的有：
+    options:
+      A: 'SwiGLU 中经过 SiLU 的一路（gate_proj）起门控作用，与另一路逐元素相乘'
+      B: 'FFN 中间维度须为 $d_{model}$ 的整数倍（如 4d），否则输出无法与残差相加'
+      C: 'FFN 可视为键值记忆：升维矩阵的行像「键」匹配输入模式，降维矩阵中对应的向量像「值」'
+      D: 'FFN 对每个位置独立计算，不在 token 之间交换信息'
+      E: '标准配置（中间维度 4d）下，FFN 约占每个 Block 参数量的三分之二'
+    answer: [A, C, D, E]
+    explanation: |
+      **结论**：A、C、D、E 正确。
+
+      - A 对：门的一路过 SiLU（Hugging Face 实现中的 gate_proj），值的一路（up_proj）保持线性，两者逐元素相乘，只放行「有用」的部分。
+      - B 错：残差相加只要求 FFN 的**输入输出**维度等于 $d_{model}$，中间维度可以任意取。Llama-2-7B 的 11008、Llama-3-8B 的 14336 都不是 4096 的整数倍。
+      - C 对：这是 Geva 等（2021）的解读：中间层的每个神经元对应一对「键—值」，键被特定的输入模式激活，激活系数再乘上对应的值向量写回残差流。ROME 等知识编辑方法也主要通过修改 FFN 权重来改写事实，常被引作「事实性知识多存储在 FFN 中」的证据。顺带一提，GELU $=x\cdot\Phi(x)$ 在负半轴输出很小的负值、梯度不为 0，不像 ReLU 那样容易产生死神经元。
+      - D 对：FFN 是逐位置（position-wise）的「升维 → 非线性 → 降维」，token 间的信息交换只发生在注意力里。
+      - E 对：每层注意力约 $4d^2$、FFN 约 $8d^2$，FFN 占 $8/12\approx2/3$。
+  - id: LLM-ARCH-025
+    type: calc
+    difficulty: 2
+    frequency: 3
+    points: [参数量估算]
+    tags: [Llama-2-7B]
+    question: |
+      Llama-2-7B 的配置：词表 $V=32000$，$d=4096$，32 层，32 个注意力头（MHA，头维度 128），SwiGLU 中间维度 11008；所有线性层无偏置；每层 2 个 RMSNorm，最后再有 1 个 RMSNorm；输入 Embedding 与输出层**不共享**权重。请精确计算总参数量，并给出注意力、FFN、Embedding 与输出层各自的占比。
+    answer: '6,738,415,616（约 6.74B）；注意力约 31.9%，FFN 约 64.2%，Embedding 与输出层约 3.9%，RMSNorm 可忽略'
+    explanation: |
+      **每层**：
+      - 注意力：$W^Q,W^K,W^V,W^O$ 都是 $4096\times4096$，共 $4\times4096^2=67{,}108{,}864$；
+      - FFN（SwiGLU 三个矩阵）：$3\times4096\times11008=135{,}266{,}304$；
+      - 两个 RMSNorm：$2\times4096=8192$；
+      - 每层合计 $202{,}383{,}360$。
+
+      **全模型**：
+      - 32 层：$32\times202{,}383{,}360=6{,}476{,}267{,}520$；
+      - Embedding + 输出层：$2\times32000\times4096=262{,}144{,}000$；
+      - 最终 RMSNorm：$4096$；
+      - 总计 $\mathbf{6{,}738{,}415{,}616}\approx6.74$B，与官方公布的参数量一致。
+
+      **占比**：注意力 $32\times67.1\text{M}=2.15$B，约 31.9%；FFN $4.33$B，约 64.2%；Embedding 与输出层 $0.26$B，约 3.9%；RMSNorm 约 26.6 万，可以忽略。
+
+      口算时用「每层 $12d^2$」：$12\times32\times4096^2\approx6.44$B，加上 $2Vd\approx0.26$B 得 6.70B，与精确值只差 0.5%（差在 11008 向上取整）。
+
+  - id: LLM-ARCH-026
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [参数量估算]
+    tags: [GPT-3]
+    question: |
+      GPT-3 175B 的配置为 96 层、$d_{model}=12288$，标准多头注意力，FFN 中间维度为 $4d$。用「每层约 $12d^2$」估算，所有 Transformer 层（不含词嵌入）的参数量最接近：
+    options:
+      A: '约 1.8B'
+      B: '约 58B'
+      C: '约 174B'
+      D: '约 522B'
+    answer: C
+    explanation: |
+      **结论**：$12\times96\times12288^2\approx1.74\times10^{11}$，约 174B。再加上约 0.6B 的词嵌入（$50257\times12288$）和约 0.03B 的位置嵌入（$2048\times12288$），就是常说的 175B。
+
+      每层 $12d^2$ 的来源：注意力 $W^Q,W^K,W^V,W^O$ 共 $4d^2$；FFN 两个矩阵 $d\times4d$ 与 $4d\times d$ 共 $8d^2$。
+
+      - A 错：约 1.8B 是只算了**一层**的 $12d^2$，忘了乘层数。
+      - B 错：约 58B 是只算了注意力的 $4d^2\times96$，漏了占大头的 FFN。
+      - D 错：约 522B 是把 FFN 的两个矩阵误当成 $4d\times4d$（每层 $4d^2+32d^2=36d^2$）。
+    source: 'GPT-3 论文（Brown 等, 2020）'
+
+  - id: LLM-ARCH-027
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [计算量估算]
+    question: |
+      估算稠密 Transformer 的训练算力时，常用 $C\approx6ND$（$N$ 为参数量，$D$ 为训练 token 数）。其中系数 6 的来源是：
+    options:
+      A: '前向每个参数约 1 次乘加，计 2N FLOPs/token；反向要分别算激活梯度和权重梯度，计 4N'
+      B: '前向 2N、反向 2N（梯度沿权重反传一次），再加优化器每处理一个 token 更新参数的 2N'
+      C: '混合精度 Adam 下每个参数对应约 6 份状态（权重、梯度、动量等），每个 token 都要各更新一次'
+      D: '前向 3N、反向 3N，因为反向与前向的矩阵乘次数相同，只是计算方向相反'
+    answer: A
+    explanation: |
+      **结论**：6 = 前向 2 + 反向 4。
+
+      矩阵乘 $y=Wx$ 中每个权重参与一次乘法和一次加法，前向约 $2N$ FLOPs/token。反向时，每个线性层要算两个矩阵乘：对输入的梯度 $\partial L/\partial x=W^\top\delta$（继续往前传）和对权重的梯度 $\partial L/\partial W=\delta x^\top$，各约 $2N$，合计 $4N$。
+
+      - B 错：反向要做两个矩阵乘，约 4N 而不是 2N；优化器更新每一步只做一次、与 token 数无关，摊到每个 token 上可以忽略。
+      - C 错：优化器状态数影响的是**显存**（混合精度 Adam 每参数约 16 字节），不是 FLOPs；状态也是每步更新一次，而非每个 token 一次。
+      - D 错：反向的矩阵乘次数是前向的两倍。
+
+      注意 $6ND$ 不含注意力打分的计算；若使用激活重计算，还要多算一次前向，实际执行的 FLOPs 约为 $8ND$。
+    source: 'Scaling Laws for Neural Language Models（Kaplan 等, 2020）arXiv:2001.08361'
+
+  - id: LLM-ARCH-028
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [计算量估算]
+    tags: [Llama-3-8B, H100, MFU]
+    question: |
+      Llama-3-8B（参数量 $8.03\times10^9$）预训练约用了 15T token。(1) 用 $C\approx6ND$ 估算总训练算力；(2) 若使用 1024 张 H100（BF16 稠密峰值约 989 TFLOPS），模型算力利用率（MFU）为 40%，需要训练多少天？折合多少 GPU 小时？
+    answer: '总算力约 7.2×10^23 FLOPs；约 1.78×10^6 秒，即约 20.6 天，约 51 万 GPU 小时'
+    explanation: |
+      1. **总算力**：$C=6\times8.03\times10^9\times15\times10^{12}\approx7.23\times10^{23}$ FLOPs。
+      2. **集群有效算力**：每卡 $0.4\times989\times10^{12}\approx3.96\times10^{14}$ FLOPs/s，1024 卡合计 $\approx4.05\times10^{17}$ FLOPs/s。
+      3. **时间**：$7.23\times10^{23}/4.05\times10^{17}\approx1.78\times10^{6}$ 秒 $\approx20.6$ 天。
+      4. **GPU 小时**：$1024\times1.78\times10^6/3600\approx5.1\times10^{5}$，约 51 万 GPU 小时。
+
+      说明：这是理想估算，未计入注意力打分的 FLOPs、故障重启、评测与数据加载开销；实际 GPU 小时通常更多。H100 的 1979 TFLOPS 是带 2:4 稀疏的数字，估算稠密训练时要用 989 TFLOPS。
+
+  - id: LLM-ARCH-029
+    type: calc
+    difficulty: 3
+    frequency: 1
+    points: [计算量估算]
+    tags: [MFU, PaLM]
+    question: |
+      用 Llama-2-7B（$N=6.74\times10^9$，32 层，$d=4096$）在 A100（BF16 稠密峰值 312 TFLOPS）上训练，序列长度 $T=4096$，实测单卡吞吐 3000 token/s。
+      (1) 用 $6N$ 作为每 token 的训练 FLOPs，模型算力利用率（MFU）是多少？
+      (2) PaLM 论文计算 MFU 时还计入注意力打分的 $12LdT$ FLOPs/token（$L$ 为层数），按这个口径 MFU 是多少？两种口径的差异从何而来？
+    answer: '(1) 约 38.9%；(2) 约 45.1%（注意力项约为 6N 的 15.9%）'
+    explanation: |
+      **(1)** 每 token $6N=6\times6.74\times10^9=4.04\times10^{10}$ FLOPs；每秒 $4.04\times10^{10}\times3000=1.21\times10^{14}$ FLOPs；MFU $=1.21\times10^{14}/3.12\times10^{14}\approx$ **38.9%**。
+
+      **(2)** 注意力项 $12LdT=12\times32\times4096\times4096\approx6.44\times10^{9}$，约为 $6N$ 的 15.9%。每 token 共 $4.69\times10^{10}$ FLOPs，乘以 3000 得 $1.41\times10^{14}$，MFU $\approx$ **45.1%**。
+
+      **差异来源**：$6N$ 只统计与参数相乘的矩阵乘。注意力的 $QK^\top$ 和「权重乘 $V$」不涉及参数，前向每层每 token 约 $2Td+2Td=4Td$ FLOPs，乘以「前向 + 反向」的 3 倍即 $12LdT$（PaLM 的口径不按因果掩码减半）。序列越长，这一项占比越大，只用 $6N$ 会**低估**真实完成的计算，使 MFU 偏低。
+
+      延伸：MFU 只算模型必需的 FLOPs；若开启激活重计算，硬件实际多做了一次前向，按实际执行 FLOPs 算出的叫 HFU（Hardware FLOPs Utilization），会高于 MFU。
+    source: 'PaLM 论文附录 B（Chowdhery 等, 2022）arXiv:2204.02311'
+
+  - id: LLM-ARCH-030
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [计算量估算]
+    question: |
+      训练算力估算公式 $C\approx6ND$ 已经包含了注意力打分（$QK^\top$ 以及注意力权重乘 $V$）的计算量，因此同一个模型把训练上下文从 4K 增加到 128K，每个 token 的训练 FLOPs 基本不变。
+    answer: false
+    explanation: |
+      **错误**。$6N$ 只统计「与参数相乘」的部分；注意力打分不含参数，按因果掩码平均，前向每 token 约多出 $2LTd$ FLOPs（$L$ 层、上下文 $T$、隐藏维度 $d$），与 $2N$ 的比值约为 $LTd/N$，随 $T$ 线性增长。
+
+      以 Llama-3-8B（32 层、$d=4096$、$N\approx8.03\times10^9$）为例：
+      - $T=4$K 时，$LTd/N=32\times4096\times4096/8.03\times10^9\approx0.07$，注意力只占参数部分的 7%，可以忽略；
+      - $T=128$K（131072）时，比值约 2.1，注意力打分的 FLOPs 已是参数部分的两倍多。
+
+      所以长上下文训练每个 token 更贵，这也是预训练通常先用短序列、只在最后阶段拉长上下文的原因之一。
+
+  - id: LLM-ARCH-031
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [Embedding与LM Head, 参数量估算]
+    tags: [Llama-3-8B, 词表]
+    question: |
+      Llama-3-8B 的词表 $V=128256$，$d=4096$，输入 Embedding 与输出层不共享权重。这两部分合计约 ____ B 个参数（保留两位小数），约占全模型 8.03B 参数的 ____ %（取整数）。
+    answer: [['1.05', '1.05B', '约1.05'], ['13', '13%', '约13']]
+    explanation: |
+      $2\times128256\times4096=1{,}050{,}673{,}152\approx1.05$B，$1.05/8.03\approx13\%$。
+
+      对比 Llama-2-7B：词表 32000，两部分合计 $2\times32000\times4096\approx0.26$B，只占 3.9%。词表从 32K 扩到 128K，让同样的文本切出更少的 token（更省上下文、生成步数更少），代价是这部分参数翻了约 4 倍。模型越小，这部分的占比越高，这也是小模型更倾向于共享输入输出权重的原因。
+
+  - id: LLM-ARCH-032
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [Embedding与LM Head, 计算量估算]
+    question: |
+      Llama-3-8B 的输入 Embedding 与输出层（LM Head）参数量相同，都是 $128256\times4096$。推理时每生成一个 token，两者的计算量对比是：
+    options:
+      A: '参数量相同，计算量也相同：两者每生成一个 token 都约需 $2Vd\approx1.05$ GFLOPs'
+      B: '两者都相当于查表：LM Head 只是取出与隐状态最匹配的那个词向量，计算量都可忽略'
+      C: 'Embedding 查表几乎不耗算力；LM Head 只需对 top-k 候选词算点积，开销也很小'
+      D: 'Embedding 只是按 id 取一行；LM Head 要做 $d\times V$ 矩阵乘，约 1.05 GFLOPs'
+    answer: D
+    explanation: |
+      **结论**：参数量相同不代表计算量相同。Embedding 层是查表（gather），只读出 $d$ 个数；LM Head 要把 $d$ 维隐状态与 $V$ 个输出向量逐一做点积，得到 $V$ 个 logits，约 $2Vd=2\times128256\times4096\approx1.05$ GFLOPs，约占每 token 总计算量（约 $2N\approx16$ GFLOPs）的 6.5%。
+
+      - A 错：混淆了参数量与计算量。数学上可以把查表写成 one-hot 乘矩阵，但实际实现都是直接取行。
+      - B 错：要知道哪个词向量与隐状态「最匹配」，就得先和全部 $V$ 个向量做点积，这就是一次完整的矩阵乘。
+      - C 错：top-k / top-p 采样作用在完整的 logits 上，必须先对整个词表算出 $V$ 个 logits 才能挑选候选词。
+
+      延伸：训练时所有位置都要算 logits，序列长、词表大时，logits 张量本身就会占用大量显存；推理时只需要最后一个位置的 logits。
+
+  - id: LLM-ARCH-033
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [Embedding与LM Head, 激活值显存]
+    tags: [Llama-3-8B, 交叉熵, 长序列]
+    question: |
+      用 Llama-3-8B（词表 $V=128256$，$d=4096$）做 SFT，单条序列长度 8192、micro-batch 为 1。训练框架先把整条序列每个位置的 logits 用 FP32 算出来，再求交叉熵。
+      (1) 仅 logits 这一个张量要占多少显存？它是一层隐状态（BF16）的多少倍？
+      (2) 序列长度增加到 32768 时，logits 张量多大？
+      (3) 给出两种缓解办法。
+    answer: '(1) 约 3.9 GiB，约为一层隐状态的 63 倍；(2) 约 15.7 GiB；(3) 分块计算或融合 LM Head 与交叉熵、不物化完整 logits；只对需要算损失的位置计算 logits'
+    explanation: |
+      **(1)** logits 形状为 $(T, V)$：$8192\times128256\times4$ 字节 $=4{,}202{,}692{,}608$ 字节 $\approx3.91$ GiB。一层隐状态 $(T,d)$ 用 BF16 只有 $8192\times4096\times2$ 字节 $=64$ MiB，logits 约是它的 $\frac{128256}{4096}\times\frac{4}{2}\approx63$ 倍。
+
+      **(2)** 长度变为 4 倍：$3.91\times4\approx15.7$ GiB。反向时还要存同样大小的 logits 梯度，交叉熵内部的 log-softmax 也可能再产生一份，峰值会达到这个数的 2～3 倍。
+
+      **(3)** 缓解办法：
+      - **分块 / 融合交叉熵**：把序列按块切开，逐块做「LM Head 矩阵乘 + 交叉熵」，反向时再逐块重算，从不物化完整的 $(T,V)$ 张量。开源实现如 Liger Kernel 的融合线性交叉熵、Cut Cross-Entropy。
+      - **只对有标签的位置算 logits**：SFT 通常只对回答部分计算损失，可以先用掩码挑出这些位置的隐状态，再过 LM Head。
+      - 另外，logits 用 BF16 存储、只在分块计算交叉熵时临时转成 FP32，也能把这部分减半。
+
+      大词表让 LM Head 成为长序列训练的显存热点，这在小词表（如 32K）时代并不明显。
+
+  - id: LLM-ARCH-034
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [权重共享]
+    tags: [PyTorch, tie embeddings]
+    question: |
+      下面的代码构造了一个只有 Embedding 和输出层的模型，分别在不共享、共享权重时统计 `parameters()` 与 `state_dict()` 中的元素总数。输出是什么？
+    code: |
+      import torch.nn as nn
+
+      class LM(nn.Module):
+          def __init__(self, V, d, tie):
+              super().__init__()
+              self.embed = nn.Embedding(V, d)
+              self.lm_head = nn.Linear(d, V, bias=False)
+              if tie:
+                  self.lm_head.weight = self.embed.weight
+
+      for tie in (False, True):
+          m = LM(1000, 64, tie)
+          n_params = sum(p.numel() for p in m.parameters())
+          n_state = sum(t.numel() for t in m.state_dict().values())
+          print(tie, n_params, n_state)
+    answer: |
+      False 128000 128000
+      True 64000 128000
+    explanation: |
+      - 不共享时有两个独立的 $1000\times64$ 矩阵，两种统计都是 128000。
+      - 共享时 `self.lm_head.weight = self.embed.weight` 让两个模块引用**同一个** Parameter 对象。`parameters()` 会按对象去重，只返回一次，所以是 64000，正好省下 $V\times d$ 个参数；而 `state_dict()` 按名字列出 `embed.weight` 和 `lm_head.weight` 两项（指向同一块存储），逐项求和就数了两遍，得到 128000。
+
+      工程含义：统计参数量要用 `parameters()`（或按存储地址去重）；保存、加载与格式转换时要注意共享关系，例如 safetensors 不允许直接保存共享存储的张量，Hugging Face 会在加载后调用 `tie_weights()` 重新绑定。忘记重新绑定会让两份权重在后续训练中各自更新，悄悄变成「不共享」。
+
+  - id: LLM-ARCH-035
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [权重共享, Embedding与LM Head]
+    source: 'Qwen2.5-0.5B 模型配置（Hugging Face Qwen/Qwen2.5-0.5B config.json）；Qwen2.5 技术报告 arXiv:2412.15115'
+    tags: [Qwen2.5]
+    question: |
+      Qwen2.5-0.5B 的公开配置为词表 $V=151936$、隐藏维度 $d=896$、24 层，开启了输入输出权重共享，总参数约 0.49B。它选择共享权重，最主要的考虑是：
+    options:
+      A: '共享后 LM Head 直接复用 Embedding 的查表结果，省掉 $d\times V$ 矩阵乘，推理计算量约减半'
+      B: '$V\times d$ 约 1.36 亿、占总参数约 28%，不共享就要再多出这么多，对小模型代价很大'
+      C: '共享后 Embedding 矩阵只从输出端获得梯度，避免了输入端稀疏梯度带来的训练不稳定'
+      D: '0.5B 模型的 $V\times d$ 只占总参数的 3% 左右，共享主要是为了兼容早期的模型格式'
+    answer: B
+    explanation: |
+      **结论**：小模型里 $V\times d$ 的占比很高，共享能省下可观的参数。
+
+      $151936\times896=136{,}134{,}656\approx1.36\times10^8$，占 0.49B 的约 27.6%。若不共享，总参数要增加到约 0.63B。相比之下，Llama-2-7B 的一个 $V\times d$ 矩阵只占全模型的 1.9%，共享省得很少，分开后输入、输出表示可以各自更自由，所以 7B 以上的模型多不共享。
+
+      - A 错：共享只是复用同一个矩阵，LM Head 仍要做 $d\times V$ 的矩阵乘，计算量不变。
+      - C 错：共享矩阵会**同时**收到输入端和输出端的梯度，两者相加。
+      - D 错：按题中配置算，$V\times d$ 约占 28% 而不是 3%。15 万的词表一点也不小，正因为词表大，这部分参数才占比高。
+
+  - id: LLM-ARCH-036
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [权重共享]
+    question: |
+      输入 Embedding 与输出层共享权重后，共享矩阵在每个训练步会同时收到两路梯度：输入端只有本批次中出现过的 token 对应的行有梯度，而输出端经过对整个词表的 Softmax，每一行都有梯度。
+    answer: true
+    explanation: |
+      **正确**。设输出 logits 为 $z=Wh$，交叉熵对 $W$ 第 $j$ 行的梯度是 $(p_j-y_j)\,h$。Softmax 的概率 $p_j$ 对每个 token 都大于 0，所以输出端每一步都会更新**所有** $V$ 行；输入端查表只涉及本批次出现过的 token，梯度是稀疏的。共享时，自动求导把两路梯度相加到同一个矩阵上。
+
+      Press 与 Wolf（2017，Using the Output Embedding to Improve Language Models）据此分析了共享的好处：词向量每一步都能从输出端得到更新，罕见 token 的表示也能持续得到训练信号，同时省下 $V\times d$ 个参数。
+
+  - id: LLM-ARCH-037
+    type: calc
+    difficulty: 3
+    frequency: 1
+    points: [激活值显存]
+    tags: [GPT-3, Megatron, FlashAttention]
+    question: |
+      Korthikanti 等（2022）给出 GPT 式 Transformer 层在训练时每层需保存的激活约为 $sbh\,(34+5as/h)$ 字节（16 位激活、不做张量 / 序列并行、不做重计算），其中 $s$ 为序列长度，$b$ 为 micro-batch，$h$ 为隐藏维度，$a$ 为注意力头数。对 GPT-3 175B（$h=12288$，$a=96$，96 层），取 $s=2048$、$b=1$：
+      (1) 每层激活约多少 GiB？其中与 $s^2$ 有关的部分占多少？
+      (2) 96 层合计约多少 GiB？
+      (3) 若注意力改用不保存 $s\times s$ 矩阵的实现（如 FlashAttention），合计降到多少？
+    answer: '(1) 每层约 2.67 GiB，其中 s² 项约 1.88 GiB（约 70%）；(2) 约 256.5 GiB；(3) 约 76.5 GiB'
+    explanation: |
+      **(1)** $5as/h=5\times96\times2048/12288=80$，比常数项 34 还大。
+      - 每层：$sbh\times(34+80)=2048\times12288\times114\approx2.87\times10^9$ 字节 $\approx2.67$ GiB；
+      - $s^2$ 项：$5as^2b=2048\times12288\times80$ 字节 $\approx1.88$ GiB，约占 70%。
+
+      **(2)** $96\times2.67\approx256.5$ GiB，远超单卡显存。
+
+      **(3)** 只剩 $34sbh$：每层 $2048\times12288\times34$ 字节 $\approx0.80$ GiB，96 层约 76.5 GiB。
+
+      **公式来源**：34 来自线性部分要保存的张量，例如注意力输入、Q、K、V、输出投影的输入（各 $2sbh$），MLP 的输入（$2sbh$），GeLU 的输入与输出（$4h$ 维，各 $8sbh$），两个 LayerNorm 的输入，以及 dropout 掩码；$5as^2b$ 来自 Softmax 输出（$2as^2b$）、注意力 dropout 掩码（$as^2b$）和 dropout 之后的权重（$2as^2b$）。FlashAttention 不物化这些 $s\times s$ 张量，反向时重算，所以平方项消失。现代 Llama 式结构没有 dropout、使用 SwiGLU 与 RMSNorm，常数会不同，但「线性项 + 平方项」的结构不变。
+    source: 'Reducing Activation Recomputation in Large Transformer Models（Korthikanti 等, 2022）arXiv:2205.05198'
+
+  - id: LLM-ARCH-038
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [激活值显存]
+    tags: [FlashAttention]
+    question: |
+      训练时其他条件不变，只把序列长度 $s$ 加倍。对于朴素注意力实现（把 $s\times s$ 的注意力权重矩阵保存下来供反向使用）和 FlashAttention 实现，每层需保存的激活显存分别大约如何变化？
+    options:
+      A: '两者都约变为 4 倍：FlashAttention 只改变计算顺序，仍需 $O(s^2)$ 显存'
+      B: '两者都约翻倍：两种实现保存的激活相同，区别只在是否融合成一个 kernel'
+      C: '朴素实现约翻倍；FlashAttention 基本不变，因为反向所需的量都靠重算得到'
+      D: '朴素实现增至 2～4 倍（$s^2$ 项变 4 倍）；FlashAttention 约翻倍'
+    answer: D
+    explanation: |
+      **结论**：激活显存 ≈ 线性项（$\propto s$）+ 注意力矩阵项（$\propto s^2$）。朴素实现两项都有，加倍后总量在 2～4 倍之间，$s$ 越长越接近 4 倍；FlashAttention 不保存 $s\times s$ 矩阵，只保存 Q、K、V、输出和每行的 Softmax 统计量，激活随 $s$ 线性增长，加倍后约翻倍。
+
+      - A 错：混淆了计算量与显存。FlashAttention 的计算量仍是 $O(s^2)$，但它反向时重算注意力矩阵，显存是 $O(s)$。
+      - B 错：两者保存的内容不同，差别正在于是否保存 $s\times s$ 矩阵；kernel 融合是 FlashAttention 减少显存读写的手段，不是两者激活相同的理由。
+      - C 错：FlashAttention 只重算 $s\times s$ 的注意力矩阵，Q、K、V、输出等与 $s$ 成正比的张量仍要保存，层里其他部分（FFN、Norm）的激活也照样存在；朴素实现也不是只翻倍。
+    source: 'FlashAttention 论文 arXiv:2205.14135'
+
+  - id: LLM-ARCH-039
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [架构变体对比]
+    tags: [PaLM, GPT-J, 并行 Block]
+    question: |
+      GPT-J、PaLM 把串行的「注意力子层 → FFN 子层」改成并行结构：$y=x+\mathrm{Attn}(\mathrm{Norm}(x))+\mathrm{FFN}(\mathrm{Norm}(x))$。关于这种设计，下列说法正确的是：
+    options:
+      A: '注意力与 FFN 的输入投影可融合成一次矩阵乘；PaLM 报告大规模下训练提速约 15%'
+      B: '注意力与 FFN 共用一组输入投影矩阵，每个 Block 的参数量约减少三分之一'
+      C: '并行后 FFN 能同时看到本层输入和注意力输出，信息流更充分，同等规模下质量更好'
+      D: '并行结构只适用于 Encoder，因为 Decoder-only 模型的因果掩码要求两个子层串行执行'
+    answer: A
+    explanation: |
+      **结论**：并行 Block 用一点表达力换训练速度。
+
+      两个子层读同一个 $\mathrm{Norm}(x)$，Q、K、V 投影和 FFN 的升维投影可以拼成一个矩阵乘，提高 GPU 利用率。PaLM 论文报告：大规模下训练速度提升约 15%；消融实验中 8B 规模有轻微下降，62B 规模没有观察到下降，因此推断在 540B 上质量中性。
+
+      - B 错：参数量不变，注意力和 FFN 仍各有自己的矩阵，只是计算上可以拼接融合，提速来自更高的 GPU 利用率。
+      - C 错：恰好相反。串行结构中 FFN 能读到本层注意力的结果；并行结构里 FFN 只能看到本层输入，这是它的潜在代价（PaLM 在 8B 规模上观察到轻微下降）。
+      - D 错：GPT-J 和 PaLM 本身就是 Decoder-only 模型，因果掩码只作用于注意力内部，与两个子层是否并行无关。
+    source: 'PaLM 论文（Chowdhery 等, 2022）arXiv:2204.02311'
+
+  - id: LLM-ARCH-040
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [架构变体对比]
+    source: 'Attention Is All You Need arXiv:1706.03762；GPT-2 技术报告（Radford 等, 2019, Language Models are Unsupervised Multitask Learners）；Llama 2 arXiv:2307.09288（GQA 用于 34B、70B）；The Llama 3 Herd of Models arXiv:2407.21783；PaLM arXiv:2204.02311（去掉偏置）'
+    tags: [GPT-2, Llama]
+    question: |
+      从原始 Transformer（2017）、GPT-2（2019）到 Llama 3（2024），Decoder-only 大模型的「架构配方」在哪些部件上发生了变化？请至少列出 5 处，并说明每处变化的主要动机。
+    answer: |
+      1. **整体结构**：原始 Transformer 是 Encoder-Decoder；GPT-2 起为 Decoder-only。动机：统一的续写目标、训练信号密、可用 KV Cache。
+      2. **归一化位置**：Post-LN → GPT-2 改为 Pre-LN（并在最后加 `ln_f`）→ Llama 沿用 Pre-Norm。动机：深层训练稳定，对学习率预热不敏感。
+      3. **归一化类型**：LayerNorm → RMSNorm（Llama）。动机：去掉减均值和偏置，更省，效果相当。
+      4. **位置编码**：正弦（加在输入）→ GPT-2 可学习绝对位置（上限 1024）→ Llama 的 RoPE（每层旋转 Q、K；Llama 3 把 base 调到 500000）。动机：点积只依赖相对位置、零参数、兼容 KV Cache、便于扩展长度。
+      5. **FFN**：ReLU → GELU（GPT-1 起使用，GPT-2 沿用）→ SwiGLU（Llama，中间维度约 $8d/3$，Llama 3 为 $3.5d$）。动机：门控在同参数量下效果更好。
+      6. **注意力**：MHA → GQA（Llama 2 只在 34B 与 70B 上使用，其中 34B 未公开发布；Llama 3 全系 8 个 KV 头）。动机：缩小 KV Cache 和 Decode 的读带宽。
+      7. **偏置**：原始 Transformer、GPT-2 的线性层带偏置 → Llama 全部去掉。动机：PaLM 报告去掉偏置有助于大模型训练稳定。
+      8. **词表与权重共享**：约 3.7 万共享 BPE → GPT-2 的 50257 字节级 BPE → Llama 2 的 32K → Llama 3 的 128K；原始 Transformer、GPT-2 共享输入输出权重，Llama 7B/8B 不共享。动机：更好的压缩率与多语言能力；大模型中共享省下的比例很小。
+      9. **上下文长度**：GPT-2 1024 → Llama 2 4K → Llama 3 8K → Llama 3.1 128K。动机：长文档、长对话与 Agent 轨迹的需求。
+    rubric:
+      - '列出至少 5 处正确的变化（5 分）'
+      - '至少 3 处给出合理的动机（3 分）'
+      - '模型与时间对应准确，没有张冠李戴（如 Llama 2 只在 34B、70B 上用 GQA，公开发布的只有 70B）（2 分）'
+    explanation: |
+      **常见失分点**：只罗列名词不讲动机；把 Pre-Norm 说成 Llama 首创（GPT-2 已经是 Pre-LN）；说 Llama 2 全系使用 GQA；把 RoPE 说成加在 Embedding 上；说 SwiGLU 让参数量变成 1.5 倍。能把每处变化归到「训练稳定、推理省显存、长度扩展、效果更好」几类动机上，回答会更有条理。
+
+  - id: LLM-ARCH-041
+    type: design
+    difficulty: 3
+    frequency: 2
+    points: [架构变体对比, 参数量估算]
+    source: 'Llama 2 arXiv:2307.09288；Qwen2 技术报告 arXiv:2407.10671；GQA arXiv:2305.13245'
+    question: |
+      团队计划从零预训练一个约 7B 参数的中英双语 Decoder-only 基座模型。目标：支持 32K 上下文；单张 80 GB GPU 部署时能服务较高的并发；后续还要做长上下文扩展和 Agent 微调。请给出你的架构配置（层数、隐藏维度、头数与 KV 头数、FFN 类型与中间维度、归一化方案、位置编码与 base、词表大小、是否共享 Embedding），估算总参数量与每 token 的 KV Cache，并说明每项选择的理由与主要风险。
+    answer: |
+      **1. 参考配置**（与 Llama / Qwen 同级的成熟配方）：
+      - 层数 $L=32$，隐藏维度 $d=4096$，32 个 Q 头（头维度 128），**8 个 KV 头（GQA）**；
+      - FFN：SwiGLU，中间维度 11008（约 $8d/3$，对齐到 256 的倍数），线性层无偏置；
+      - 归一化：Pre-Norm + RMSNorm，最后补一个 RMSNorm；训练出现 logits 增长或损失尖峰时加 QK-Norm；
+      - 位置编码：RoPE，base 取 $10^6$ 量级（为 32K 及后续扩展留出低频余量）；
+      - 词表：约 15 万的字节级 BPE（如 152064，对齐到 128 的倍数），训练语料中英均衡，保证中文压缩率；
+      - 不共享 Embedding（7B 规模共享省得少，分开更灵活）。
+
+      **2. 估算**：
+      - 每层注意力 $2d^2+2d\cdot n_{kv}d_h=33.6\text{M}+8.4\text{M}=41.9$M，FFN $3\times4096\times11008=135.3$M，每层约 177.2M，32 层约 5.67B；
+      - Embedding + 输出层 $2\times152064\times4096\approx1.25$B（约占 18%）；总计约 **6.92B**；
+      - KV Cache 每 token $2\times32\times8\times128\times2$ 字节 $=128$ KiB，32K 序列 4 GiB；
+      - 单卡 80 GB：BF16 权重约 12.9 GiB，留出约 5 GiB 给激活与运行时后，约 56 GiB 可做 KV Cache，可同时容纳约 14 条满 32K 的序列或约 110 条 4K 序列；若用 MHA，每 token 512 KiB，只能容纳约 3 条满 32K 序列。
+
+      **3. 理由**：GQA-8 在效果接近 MHA 的前提下把 KV Cache 降到 1/4，8 个 KV 头也便于 8 卡张量并行；Pre-RMSNorm、SwiGLU、去偏置是经过大规模验证的稳定配方；大 base 的 RoPE 便于先短后长的训练和后续用 YaRN 扩展；大词表提升中文压缩率，直接降低上下文占用和推理成本。
+
+      **4. 训练与扩展计划**：先用 4K～8K 长度完成大部分预训练，再用长文本做继续预训练到 32K；用大海捞针、RULER 等评测有效上下文。
+
+      **5. 风险与验证**：
+      - 大词表让 Embedding 与输出层占约 18% 参数，长序列训练时 logits 张量很大（需要分块交叉熵）；
+      - GQA 可能带来轻微掉点，可在小规模上与 MHA 做消融；若 KV 预算更紧，可评估 MLA，但实现与推理算子更复杂；
+      - 长上下文能力取决于长文本数据质量，标称 32K 不等于有效 32K；
+      - 大规模训练稳定性：监控损失尖峰、注意力 logits 最大值，准备 QK-Norm、梯度裁剪等手段。
+    rubric:
+      - '给出完整且自洽的配置：层数、维度、头数 / KV 头数、FFN、归一化、位置编码、词表、权重共享（3 分）'
+      - '正确估算总参数量（约 7B 量级，有计算过程）与每 token KV Cache，并换算出单卡并发（3 分）'
+      - '每项选择给出与目标（中英双语、32K、高并发、后续扩展）相关的理由（2 分）'
+      - '指出主要风险与验证方式，如大词表占比、长文本数据、GQA 消融、训练稳定性（2 分）'
+    explanation: |
+      **常见失分点**：只给配置不给数字；参数量估算漏掉 Embedding 与输出层（大词表下约占 18%）；用 MHA 却声称能高并发服务 32K；把 base 和长上下文能力画等号、忽略长文本训练与评测；词表只说「越大越好」不提占比与 logits 显存。设计题的关键是让每个选择都能落到显存、速度或效果上的具体收益。
+
+  - id: LLM-ARCH-042
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [残差流, Post-Norm与Pre-Norm, LayerNorm与RMSNorm, FFN与SwiGLU]
+    tags: [手撕, numpy, Decoder Block]
+    question: |
+      用 numpy 实现一个 Llama 风格 Decoder Block 的前向计算（不含位置编码）：
+
+      ```python
+      def decoder_block(x, p, n_heads, eps=1e-6): ...
+      ```
+
+      - `x`：形状 `(T, D)`；`p` 是参数字典：`g1`、`g2` 形状 `(D,)`，是两个 RMSNorm 的缩放参数；`Wq`、`Wk`、`Wv`、`Wo` 形状 `(D, D)`；`W1`、`W3` 形状 `(D, F)`，`W2` 形状 `(F, D)`。线性层一律写成 `h @ W`，没有偏置。
+      - 结构为 Pre-Norm：`h = x + Attn(RMSNorm(x))`，`y = h + SwiGLU(RMSNorm(h))`，其中 `SwiGLU(z) = (SiLU(z @ W1) * (z @ W3)) @ W2`。
+      - 注意力为带因果掩码的多头自注意力（MHA，头维度 `D // n_heads`），Softmax 需数值稳定；`RMSNorm(x) = x / sqrt(mean(x**2) + eps) * g`。
+      - 返回形状 `(T, D)` 的输出。
+    answer: |
+      import numpy as np
+
+      def rms_norm(x, g, eps):
+          return x / np.sqrt((x ** 2).mean(-1, keepdims=True) + eps) * g
+
+      def decoder_block(x, p, n_heads, eps=1e-6):
+          T, D = x.shape
+          dh = D // n_heads
+          split = lambda m: m.reshape(T, n_heads, dh).transpose(1, 0, 2)    # (H, T, dh)
+
+          h = rms_norm(x, p["g1"], eps)                                      # ① Pre-Norm
+          q, k, v = split(h @ p["Wq"]), split(h @ p["Wk"]), split(h @ p["Wv"])
+          s = q @ k.transpose(0, 2, 1) / np.sqrt(dh)
+          s = s + np.triu(np.full((T, T), -np.inf), k=1)                     # 因果掩码
+          w = np.exp(s - s.max(-1, keepdims=True))                           # 数值稳定
+          w = w / w.sum(-1, keepdims=True)
+          x = x + (w @ v).transpose(1, 0, 2).reshape(T, D) @ p["Wo"]         # ② 残差
+
+          h = rms_norm(x, p["g2"], eps)                                      # ③ Pre-Norm
+          gate = h @ p["W1"]
+          ffn = (gate / (1.0 + np.exp(-gate)) * (h @ p["W3"])) @ p["W2"]     # SwiGLU
+          return x + ffn                                                     # ④ 残差
+    test: |
+      import torch
+      import torch.nn.functional as F
+
+      rng = np.random.default_rng(0)
+      T, D, H, Fd = 6, 16, 4, 24
+      shapes = {"Wq": (D, D), "Wk": (D, D), "Wv": (D, D), "Wo": (D, D),
+                "W1": (D, Fd), "W3": (D, Fd), "W2": (Fd, D)}
+      p = {k: rng.normal(scale=0.3, size=s) for k, s in shapes.items()}
+      p["g1"], p["g2"] = rng.uniform(0.5, 1.5, D), rng.uniform(0.5, 1.5, D)
+      x = rng.normal(size=(T, D))
+      y = decoder_block(x, p, H)
+      assert y.shape == (T, D)
+
+      # 1) 与 PyTorch 的独立实现对拍
+      t = {k: torch.tensor(v) for k, v in p.items()}
+      xt = torch.tensor(x)
+      h = F.rms_norm(xt, (D,), t["g1"], eps=1e-6)
+      q, k, v = ((h @ t[w]).view(T, H, D // H).transpose(0, 1) for w in ("Wq", "Wk", "Wv"))
+      a = F.scaled_dot_product_attention(q, k, v, is_causal=True).transpose(0, 1).reshape(T, D)
+      xr = xt + a @ t["Wo"]
+      h2 = F.rms_norm(xr, (D,), t["g2"], eps=1e-6)
+      ref = xr + (F.silu(h2 @ t["W1"]) * (h2 @ t["W3"])) @ t["W2"]
+      assert np.allclose(y, ref.numpy(), atol=1e-8)
+
+      # 2) 因果性：修改最后一个 token，不影响前面位置的输出
+      x2 = x.copy()
+      x2[-1] += 5.0
+      assert np.allclose(decoder_block(x2, p, H)[:-1], y[:-1])
+
+      # 3) 残差：两个子层的输出投影全为 0 时，Block 退化为恒等映射
+      p0 = dict(p, Wo=np.zeros((D, D)), W2=np.zeros((Fd, D)))
+      assert np.allclose(decoder_block(x, p0, H), x)
+
+      # 4) 数值稳定：注意力打分很大时不出现 NaN / inf
+      big = dict(p, Wq=p["Wq"] * 1e4)
+      assert np.isfinite(decoder_block(x, big, H)).all()
+    explanation: |
+      **思路**：严格按「Norm → 子层 → 加回残差」写两遍。
+      1. 第一个子层：RMSNorm 后做 Q、K、V 投影，拆成 `(H, T, dh)`；打分除以 $\sqrt{d_h}$，上三角加 $-\infty$，减去每行最大值后做 Softmax，加权求和、拼回 `(T, D)`、乘 $W^O$，**加回 x**。
+      2. 第二个子层：对新的残差流再做 RMSNorm，过 SwiGLU：$\mathrm{SiLU}(z)=z\cdot\sigma(z)=z/(1+e^{-z})$，门与值逐元素相乘后降维，**加回**。
+
+      **测试的含义**：对拍保证数学正确；因果性检查掩码方向；把 $W^O$、$W_2$ 置 0 后输出等于输入，验证了 Pre-Norm 结构中残差主干是一条干净的恒等通路（Post-Norm 的实现过不了这一条，因为主干上还有 Norm）；放大 $W^Q$ 检查 Softmax 的数值稳定。
+
+      **易错点**：把 Norm 放在残差相加之后（写成了 Post-Norm）；第二个子层错用了原始 `x` 而不是加过注意力输出的残差流；缩放用了 $\sqrt{D}$；拆头时直接 `reshape(n_heads, T, dh)` 打乱了数据；SiLU 写成了 Sigmoid。
+
+  - id: LLM-ARCH-043
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [激活值显存, Embedding与LM Head]
+    source: 'Llama-3-8B 模型配置（Hugging Face meta-llama/Meta-Llama-3-8B config.json）；ZeRO arXiv:1910.02054；Liger Kernel arXiv:2410.10989；Cut Your Losses in Large-Vocabulary Language Models arXiv:2411.09009；DeepSpeed-Ulysses arXiv:2309.14509'
+    tags: [Llama-3-8B, 长序列, SFT]
+    question: |
+      团队用 8 张 A100-80GB 对 Llama-3-8B 做全参数 SFT：ZeRO-3、BF16 混合精度、AdamW，已开启 FlashAttention-2 和逐层梯度检查点。序列长度 4K 时训练正常；把最大序列长度提高到 32K（micro-batch 仍为 1）后，第一个 step 在计算 loss 时就 OOM。请分析显存主要花在哪里，并给出解决方案。
+    answer: |
+      **1. 显存账本（单卡，32K 序列）**：
+      - **模型状态**：混合精度 AdamW 每参数约 16 字节（BF16 权重与梯度 + FP32 主权重与两份动量），$8.03\times10^9\times16/8\approx16$ GB；
+      - **检查点激活**：每层只存输入，$32\times32768\times4096\times2$ 字节 $=8$ GiB；反向重算某一层时，SwiGLU 的中间张量（$32768\times14336$，BF16 每份约 0.9 GiB）等还要临时占几 GiB；
+      - **logits 与交叉熵**：$(T,V)=32768\times128256$，BF16 约 7.8 GiB，若整体转成 FP32 则约 15.7 GiB；交叉熵内部的 log-softmax 和反向的 logits 梯度各需同样大小，峰值可达 30～45 GiB。这正好发生在 loss 计算处，是 OOM 的主因。4K 时这部分只有 1～2 GiB，所以之前没有暴露。
+
+      **2. 解决方案**：
+      - **不物化完整 logits**：用分块交叉熵或融合「LM Head + 交叉熵」的算子（如 Liger Kernel 的融合线性交叉熵、Cut Cross-Entropy），按块计算并在反向时重算；
+      - **只对需要算损失的位置算 logits**：SFT 只训练回答部分时，先挑出这些位置的隐状态再过 LM Head；
+      - 检查训练代码是否把整段 logits 转成了 FP32，改为分块转换；
+      - **序列 / 上下文并行**（如 Ulysses、Ring Attention）：把 32K 序列切到多卡上，激活和 logits 按卡数分摊；
+      - 其他：激活卸载到 CPU、按长度分桶，避免少数超长样本决定峰值。
+
+      **3. 验证**：用 `torch.cuda.max_memory_allocated` 或 PyTorch Profiler 的显存时间线定位峰值出现的算子，确认修复后 loss 处的峰值下降，并对比修复前后的 loss 数值一致、吞吐可接受。
+    rubric:
+      - '估算模型状态（ZeRO-3 下每卡约 16 GB）与检查点激活（约 8 GiB）（2 分）'
+      - '指出 logits 与交叉熵中间张量随 T×V 增长、是 loss 处 OOM 的主因，并给出数量级（3 分）'
+      - '给出分块 / 融合交叉熵、只对标签位置计算 logits 等针对性方案（2 分）'
+      - '给出序列 / 上下文并行、激活卸载等通用长序列方案（2 分）'
+      - '说明如何用显存分析工具定位与验证（1 分）'
+    explanation: |
+      **常见失分点**：只想到「注意力是 $O(T^2)$」，却忽略已经开了 FlashAttention；把问题归因于参数和优化器状态（ZeRO-3 下它们与序列长度无关）；没意识到 128K 大词表让 logits 成为长序列下的显存大户；只给出「减小序列长度」这种回避问题的方案。
+
+  - id: LLM-ARCH-044
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [残差流, Post-Norm与Pre-Norm, FFN与SwiGLU]
+    tags: [白板题, Llama]
+    question: |
+      请在白板上画出（或用文字描述）一层 Llama 风格 Decoder Block 的完整数据流，说明每个部件的作用以及为什么这样设计；再说明整个模型在 Block 堆叠之外还有哪些部件。
+    answer: |
+      1. **数据流**：输入 $x$（残差流）→ RMSNorm → Q、K、V 投影（GQA 时 K、V 头更少）→ 对 Q、K 施加 RoPE → 因果自注意力 $\mathrm{softmax}(QK^\top/\sqrt{d_h}+M)V$ → 拼接各头、乘 $W^O$ → 加回 $x$ 得到 $h$；$h$ → RMSNorm → SwiGLU（gate、up、down 三个矩阵）→ 加回 $h$ 得到输出。公式：$h=x+\mathrm{Attn}(\mathrm{Norm}(x))$，$y=h+\mathrm{FFN}(\mathrm{Norm}(h))$。
+      2. **分工**：注意力是 token 之间交换信息的唯一途径；FFN 逐 token 做非线性加工，参数占大头，存储大量知识；Norm 稳住数值；残差给梯度留恒等通路，并形成各层共同读写的残差流。
+      3. **设计理由**：Pre-Norm 梯度直达、训练稳；RMSNorm 去掉减均值，更省；RoPE 让点积只依赖相对位置、零参数、兼容 KV Cache；GQA 缩小 KV Cache；SwiGLU 同参数量下效果更好；线性层去偏置更稳定。
+      4. **Block 之外**：token Embedding（$V\times d$ 查表）→ $N$ 层 Block → 最终 RMSNorm → LM Head（$d\times V$，可能与 Embedding 共享）→ logits；训练时接交叉熵，推理时接采样。
+      5. **参数分布**：每层约 $12d^2$，注意力 $4d^2$（GQA 更少），FFN $8d^2$，FFN 约占三分之二。
+    rubric:
+      - '数据流顺序正确：Norm 在子层之前、残差在子层之后，RoPE 只作用于 Q、K（3 分）'
+      - '说明注意力与 FFN 的分工，以及 Norm 与残差的作用（3 分）'
+      - '说明 Pre-Norm、RMSNorm、RoPE、GQA、SwiGLU 等选择中至少 3 项的理由（2 分）'
+      - '补全 Block 之外的部件：Embedding、最终 Norm、LM Head（2 分）'
+    explanation: |
+      **常见失分点**：把 Norm 画在残差相加之后（那是 Post-Norm）；忘了最后的 Norm；把 RoPE 画在 Embedding 上或作用于 V；把「token 之间交换信息」说成 FFN 的职责；不知道 GQA 中 K、V 投影比 Q 投影窄。
+
+  - id: LLM-ARCH-045
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [参数量估算, 计算量估算]
+    tags: [config.json, Llama-3-8B]
+    question: |
+      面试官给你一个 Decoder-only 模型的 config.json（Llama-3-8B：`vocab_size`=128256、`hidden_size`=4096、`num_hidden_layers`=32、`num_attention_heads`=32、`num_key_value_heads`=8、`intermediate_size`=14336、`tie_word_embeddings`=false），请口述如何估算：(1) 参数量；(2) 训练 15T token 所需的算力和大致 GPU 时间；(3) BF16 推理时的权重显存、每生成一个 token 的计算量，以及单条 128K 序列的 KV Cache。要求给出公式和数量级。
+    answer: |
+      1. **参数量**：
+         - 每层注意力（GQA）：$2d^2+2d\cdot n_{kv}d_h=2\times4096^2+2\times4096\times8\times128\approx41.9$M；
+         - 每层 FFN（SwiGLU）：$3d\cdot d_{ff}=3\times4096\times14336\approx176.2$M；
+         - 32 层约 $32\times218\text{M}\approx6.98$B，加 Embedding 与输出层 $2Vd\approx1.05$B，共约 **8.03B**。
+         - 注意：套用「每层 $12d^2$」会得到约 7.5B。GQA 让注意力降到约 $2.5d^2$，FFN 加大到约 $10.5d^2$，每层实为约 $13d^2$，要按配置修正。
+      2. **训练算力**：$6ND\approx6\times8.03\times10^9\times15\times10^{12}\approx7.2\times10^{23}$ FLOPs。按单卡有效 400 TFLOPS 估算，约 $1.8\times10^9$ 卡·秒，即约 50 万 GPU 小时（1000 张卡约三周）。
+      3. **推理**：
+         - 权重：$8.03\times10^9\times2$ 字节 $\approx16$ GB（约 15 GiB）；
+         - 每 token 计算：约 $2N\approx16$ GFLOPs（长上下文时还要加注意力打分）；
+         - KV Cache：每 token $2Ln_{kv}d_h\times2$ 字节 $=2\times32\times8\times128\times2=128$ KiB，128K（131072）序列约 16 GiB，已经接近权重本身。
+      4. **说明口径**：忽略 Norm 和偏置；GB 与 GiB 相差约 7%；$6ND$ 不含注意力打分，长上下文时要单独加。
+    rubric:
+      - '参数量公式正确，区分 GQA 注意力与 SwiGLU FFN，结果约 8B，并能指出 12d² 口径的偏差（3 分）'
+      - '用 6ND 得到约 7×10^23 FLOPs，并换算成 GPU 时间（3 分）'
+      - '权重显存约 16 GB、每 token 约 2N FLOPs、128K 序列 KV Cache 约 16 GiB（3 分）'
+      - '说明估算口径与被忽略的项（1 分）'
+    explanation: |
+      **常见失分点**：把 GQA 模型的注意力按 $4d^2$ 算、FFN 按 $8d^2$ 算，却不说明偏差；漏掉 Embedding 与输出层（128K 大词表下约占 13%）；把训练的 $6N$ 用到推理上；KV Cache 公式漏掉 K、V 的系数 2 或层数；不区分 GB 与 GiB 还给出「精确」结论。
+
+  - id: LLM-ARCH-046
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [Encoder-Decoder结构, 架构变体对比]
+    question: |
+      请比较 Encoder-Decoder 与 Decoder-only 两种架构：结构上有什么不同（子层组成、注意力掩码）？训练和推理流程有什么不同？在什么场景下你仍会选择 Encoder-Decoder？
+    answer: |
+      1. **结构**：
+         - Encoder-Decoder 有两个堆栈。编码器层 = 双向自注意力 + FFN；解码器层 = 因果自注意力 + 交叉注意力 + FFN，交叉注意力的 Q 来自解码器，K、V 来自编码器最后一层的输出。
+         - Decoder-only 只有一个堆栈，每层 = 因果自注意力 + FFN，输入和输出拼在同一条序列里。
+      2. **训练**：Encoder-Decoder 把输入送进编码器、目标送进解码器（teacher forcing），只在目标上算损失，常用去噪目标（如 T5 的片段破坏、BART 的文本重建）；Decoder-only 对整段做下一个 token 预测（SFT 时可只对回答部分算损失）。
+      3. **推理**：Encoder-Decoder 的编码器对输入只算一次且是双向的，交叉注意力的 K、V 一次算好、每步复用，解码器自注意力的 KV Cache 只包含输出部分；Decoder-only 先 prefill 整段输入（因果），再逐 token decode，KV Cache 同时包含输入和输出。
+      4. **参数与计算**：L+L 层的 Encoder-Decoder 参数约等于 2L 层 Decoder-only，计算量约等于 L 层 Decoder-only（T5 论文）。
+      5. **选型**：输入输出界限清晰、需要对输入做双向理解、输入长而输出短的任务，如机器翻译、摘要、语音识别（Whisper）、部分结构化抽取，Encoder-Decoder 仍很有竞争力；同一输入要多次解码时编码结果可复用。通用对话、上下文学习、工具调用和需要统一生态的场景选 Decoder-only。
+    rubric:
+      - '结构差异：子层组成、注意力掩码、交叉注意力的 Q / K / V 来源（3 分）'
+      - '训练流程差异：输入与目标分别进入哪个堆栈、常见预训练目标（2 分）'
+      - '推理流程差异：编码一次、交叉注意力 K / V 复用、KV Cache 的范围（2 分）'
+      - '参数量与计算量的关系（1 分）'
+      - '给出合理的选型场景（2 分）'
+    explanation: |
+      **常见失分点**：说解码器的自注意力是双向的；说交叉注意力的 Q 来自编码器；认为 Encoder-Decoder 每步都要重新编码输入；只说「Encoder-Decoder 已经过时」而给不出适用场景。
+
+  - id: LLM-ARCH-047
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [Decoder-only为何主流, 架构变体对比]
+    tags: [序列分类, padding]
+    question: |
+      团队用一个 Decoder-only 模型加线性分类头做意图分类：取「最后一个位置」的隐状态送入分类头。逐条推理时结果正常；改成批量推理（按 batch 内最长的样本在右侧补 pad）后，batch 中较短样本的准确率明显下降，最长的那条却不受影响。最可能的原因是：
+    options:
+      A: '批量推理降低了注意力计算的数值精度，短样本被补的 pad 多，累积的数值误差更大'
+      B: '代码取的是张量最后一列的隐状态；右侧补 pad 后，短样本的最后一列是 pad，没有取到它真正的最后一个 token'
+      C: 'Decoder-only 的因果注意力无法处理长度不同的样本，批量推理时必须改成双向注意力才能得到正确结果'
+      D: '短样本本身信息不足，模型原本就分不准，批量推理只是让这个问题暴露出来，与实现方式无关'
+    answer: B
+    explanation: |
+      **结论**：Decoder-only 模型做分类要取每条样本**最后一个真实 token** 的隐状态，补齐后必须按 attention mask 或 pad id 定位，不能直接取最后一列。
+
+      原理：因果注意力下第 $t$ 个位置只能看到前 $t$ 个 token，只有最后一个真实 token 的表示汇总了整句信息，所以分类头接在它上面。右侧补 pad 后，短样本的最后一列是 pad token：attention mask 只能阻止别的位置看到 pad，pad 位置本身的输出却与句子内容无关，分类自然出错。最长的样本没有补 pad，所以不受影响。Hugging Face 的实现（`GenericForSequenceClassification`）在每条样本中找「最靠右的非 pad token」，同时兼容左、右两种 padding；没有定义 pad token 时，batch 大于 1 会直接报错。
+
+      - A 错：数值精度问题不会只出现在短样本上，而且逐条推理正常，说明问题在取位置的逻辑。
+      - C 错：配合 attention mask，因果注意力完全可以批量处理不同长度的样本，与是否双向无关。
+      - D 错：同样的样本逐条推理是对的，说明不是模型能力问题。
+
+      延伸：基于 Decoder 的向量模型也常取最后一个（EOS）token 做池化；也有方法在训练时去掉因果掩码、改用双向注意力来增强表示，如 LLM2Vec、NV-Embed。
+    source: 'Hugging Face transformers modeling_layers.py（GenericForSequenceClassification）；LLM2Vec arXiv:2404.05961；NV-Embed arXiv:2405.17428'
+
+  - id: LLM-ARCH-048
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [Decoder-only为何主流, 架构变体对比]
+    question: |
+      面试官追问：「既然 Decoder-only 是主流，那做文本分类时，Decoder-only 模型能胜过 BERT 这类 Encoder-only 模型吗？」请分别从「结构本身的表达能力」与「规模、数据和工程成本」两类论据分析，并说明在什么条件下各自更合适。
+    answer: |
+      1. **结构论据（同等参数、同样数据）**：
+         - Encoder-only 的双向注意力让每个 token 同时看到左右文，掩码语言模型目标直接训练「理解」型表示；对 token 级任务（命名实体识别、抽取式问答）和小规模句向量有结构优势。
+         - Decoder-only 的因果注意力下，只有最后一个 token 看过整句，前面位置都缺右文；做分类要取最后一个真实 token 的隐状态，或改造成双向注意力（如 LLM2Vec 先开启双向注意力，再做掩码下一词预测与对比学习；NV-Embed 在对比训练时去掉因果掩码）。
+      2. **规模与工程论据**：
+         - Decoder 大模型的参数与预训练数据规模大得多，知识与推理能力强：零样本、少样本即可分类，标注少、类别常变、需要背景知识或复杂判断（如合规审查、细粒度意图）时优势明显；用 LoRA 加分类头微调也能达到很强的效果。
+         - 成本：7B 的 Decoder 比 1 亿～3 亿参数的 BERT 大一到两个数量级，延迟、吞吐与显存都不利。
+      3. **怎么选**：
+         - 高 QPS、低延迟、类别固定、标注充足：微调 Encoder（或蒸馏出的小模型），性价比高；
+         - 冷启动、标注少、类别多变、需要推理或解释：Decoder 大模型（提示或微调）；
+         - 常见组合：先用大模型零样本 / 少样本建立基线并产出标注，再蒸馏到小 Encoder 上线；或者小模型处理主流量、大模型处理低置信度的难例（级联）。
+      4. **结论**：Decoder-only 成为主流，主要因为生成任务、统一的使用接口和规模化训练的效率，而不是它在所有理解任务上都有结构优势。是否「胜过」要在同一测试集上比较准确率 / F1、校准与单位成本后再下结论。
+    rubric:
+      - '指出双向注意力与 MLM 目标在理解类、token 级任务上的结构优势（3 分）'
+      - '说明 Decoder-only 分类取最后一个 token、缺右文，以及改造成双向的思路（2 分）'
+      - '说明大模型在零样本、少样本、复杂判断上的规模优势，以及推理成本的劣势（3 分）'
+      - '给出按场景选型或蒸馏、级联的组合方案（2 分）'
+    explanation: |
+      **常见失分点**：笼统地说「大模型一定更强」或「BERT 一定更适合分类」，不区分结构论据与规模论据；忽视推理成本与延迟；不知道 Decoder-only 做分类要取最后一个真实 token；把「Decoder-only 成为主流」的原因理解成它在所有任务上都更好。
+    source: 'LLM2Vec arXiv:2404.05961；NV-Embed arXiv:2405.17428'
+
+  - id: LLM-ARCH-049
+    type: code_output
+    difficulty: 1
+    frequency: 1
+    points: [架构变体对比]
+    tags: [Prefix LM, GLM, 注意力掩码]
+    question: |
+      Prefix LM 让前缀（如提示部分）内部双向可见，生成部分保持因果。下面的代码为长度 6、前缀长度 3 的序列构造注意力掩码（第 $i$ 行第 $j$ 列为 1 表示位置 $i$ 能看到位置 $j$）。输出是什么？
+    code: |
+      import numpy as np
+
+      def prefix_lm_mask(T, P):
+          m = np.tril(np.ones((T, T), dtype=int))   # 先构造因果掩码
+          m[:P, :P] = 1                             # 前 P 个位置（前缀）之间互相可见
+          return m
+
+      m = prefix_lm_mask(6, 3)
+      print(m[0].tolist(), m[4].tolist())
+      print(int(m.sum()) - int(np.tril(np.ones((6, 6))).sum()))
+    answer: |
+      [1, 1, 1, 0, 0, 0] [1, 1, 1, 1, 1, 0]
+      3
+    explanation: |
+      - 第 0 行：位置 0 属于前缀，能看到整个前缀（位置 0～2），看不到生成部分，即 `[1, 1, 1, 0, 0, 0]`；在因果掩码下它只能看到自己。
+      - 第 4 行：生成部分的位置 4 能看到全部前缀与此前的生成 token，即 `[1, 1, 1, 1, 1, 0]`，与因果掩码相同。
+      - 比因果掩码多出来的只有前缀块的上三角：$P(P-1)/2=3$ 个，即 (0,1)、(0,2)、(1,2)。
+
+      **Prefix LM 与 Causal LM 的取舍**：
+      - 前缀内双向注意力，对输入的理解更充分，适合「给定输入、生成输出」的任务；
+      - 损失通常只在生成部分计算，前缀不产生监督信号，同样的数据提供的训练信号比 Causal LM 少；
+      - 前缀 token 的表示依赖整个前缀：多轮对话中把上一轮回答并入新的前缀后，前缀内各位置的表示都会变化，已缓存的 KV 不能直接复用，这是它在对话场景中不如 Causal LM 方便的重要原因。
+
+      GLM 的自回归空白填充用的也是这种掩码：被挖空后的原文（Part A）内部可以相互看到、看不到被挖出的片段；被挖出的片段（Part B）按自回归方式生成，能看到 Part A 和 Part B 中位于它之前的 token。论文称这样在一个模型中同时学到了「双向编码器」和「单向解码器」。
+    source: 'GLM arXiv:2103.10360（2.1 节）'

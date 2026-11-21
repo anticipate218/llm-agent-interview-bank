@@ -1,0 +1,837 @@
+domain: INF
+subcategory: SPEC
+questions:
+
+  - id: INF-SPEC-001
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [投机解码原理]
+    question: |
+      投机解码（speculative decoding）能加速自回归生成，最根本的原因是：
+    options:
+      A: '草稿模型在简单 token 上比目标模型更准，由它代写这部分内容，整体质量与速度一并提升'
+      B: 'Decode 受带宽限制，一次前向验证多个位置与生成 1 个 token 耗时相近'
+      C: '草稿模型替目标模型完成了大部分 token 的计算，目标模型执行的总浮点运算量因此减少'
+      D: '验证时目标模型只需对草稿 token 做前向、不再读写 KV Cache，省掉了读 KV 的时间'
+    answer: B
+    explanation: |
+      **结论**：投机解码利用的是 Decode 阶段「算力闲置、带宽打满」的特点。
+
+      Decode 每步都要把全部权重从显存读一遍，batch 小时算术强度只有个位数，算力利用率很低。一次前向处理 1 个 token 与处理 5 个 token，读权重的成本相同，额外的计算几乎是「免费」的。于是先让便宜的草稿连续猜 γ 个 token，再让目标模型一次前向把 γ+1 个位置全部验证：草稿猜对时，一次前向就能产出多个 token，猜对几个就前进几个，每次前向至少前进 1 个 token。
+
+      - A 错：草稿通常比目标模型弱；输出由目标模型的验证规则决定，草稿质量只影响接受率（速度）。
+      - C 错：总计算量反而增加——被拒绝的草稿 token 白算了，草稿模型自己也要计算。它省的是串行的前向次数。
+      - D 错：目标模型照常使用并更新 KV Cache，被拒绝 token 的 KV 还要回滚。
+    source: '投机解码（Leviathan 等, 2022, arXiv:2211.17192）'
+
+  - id: INF-SPEC-002
+    type: judge
+    difficulty: 1
+    frequency: 3
+    points: [无损性]
+    question: |
+      投机采样中，草稿模型越差，最终输出的质量就越差；所以草稿模型必须足够接近目标模型，否则会损害生成质量。
+    answer: false
+    explanation: |
+      **错误**。标准投机采样（以 $\min(1,p/q)$ 接受、拒绝后从 $\max(0,p-q)$ 归一化的残差分布重采样）可以严格证明：每个位置输出 token 的分布恰好等于目标模型的分布 $p$，与草稿分布 $q$ 无关。
+
+      草稿的好坏只影响**接受率** $\alpha=\sum_x\min(p(x),q(x))$，也就是每轮能产出几个 token、能加速多少。极端情况下草稿完全胡猜，几乎每轮都在第一个位置被拒绝，每轮只产出 1 个 token，速度比不用投机解码还慢（多了草稿开销），但输出分布仍与目标模型一致。
+
+      要注意的是，这个结论只对「标准接受规则」成立；Medusa 的典型接受（typical acceptance）这类宽松规则会以分布偏差换取更高的接受率。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192；Chen 等, 2023, arXiv:2302.01318'
+
+  - id: INF-SPEC-003
+    type: fill
+    difficulty: 2
+    frequency: 3
+    points: [接受拒绝采样]
+    question: |
+      词表只有 A、B、C 三个 token。某个位置上，目标模型的分布 $p=(0.5,\ 0.3,\ 0.2)$，草稿模型的分布 $q=(0.2,\ 0.3,\ 0.5)$，草稿采样到了 C。按标准投机采样规则：接受 C 的概率为 ____；若被拒绝，从残差分布重新采样得到 A 的概率为 ____；对草稿所有可能的提议取平均，这个位置的接受率 $\alpha=\sum_x\min(p(x),q(x))$ 为 ____。
+    answer: [['0.4', '40%', '2/5'], ['1', '1.0', '100%'], ['0.7', '70%']]
+    explanation: |
+      - **接受 C**：$\min(1,\ p(C)/q(C))=\min(1,\ 0.2/0.5)=0.4$。
+      - **残差分布**：$\max(0,\ p-q)=(0.3,\ 0,\ 0)$，归一化后为 $(1,0,0)$，拒绝后一定输出 A。
+      - **接受率**：$\alpha=\min(0.5,0.2)+\min(0.3,0.3)+\min(0.2,0.5)=0.2+0.3+0.2=0.7$。
+
+      **验证无损**：最终输出 A 的概率 = 草稿提议 A 且被接受（$0.2\times1$）+ 被拒绝后补成 A（总拒绝概率 $1-0.7=0.3$，乘以 1）$=0.5=p(A)$；输出 B 的概率 $=0.3\times1=0.3$；输出 C 的概率 $=0.5\times0.4=0.2$。三者正好等于 $p$。
+
+      直观理解：草稿高估了 C（$q>p$），所以 C 要按比例 $p/q$ 打折；被打折掉的概率质量全部「还给」草稿低估的 A。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192'
+
+  - id: INF-SPEC-004
+    type: calc
+    difficulty: 2
+    frequency: 3
+    points: [接受率与加速比]
+    question: |
+      某投机解码配置中，草稿 token 的接受率 $\alpha=0.7$（假设各位置的接受相互独立），草稿模型一次前向的耗时是目标模型的 $c=0.1$ 倍。忽略其他开销，加速比按「每轮期望产出的 token 数 ÷ 每轮耗时（以目标模型一次前向为 1）」计算。
+
+      (1) 草稿长度 $\gamma=3$ 时，每轮期望产出多少个 token？加速比约为多少？
+      (2) $\gamma=6$ 呢？
+      (3) $\gamma$ 是不是越大越好？说明原因。
+    answer: '(1) 约 2.53 个，加速比约 1.95；(2) 约 3.06 个，加速比约 1.91；(3) 不是：多猜的 token 被用上的概率按 α^k 递减，而草稿耗时随 γ 线性增加，本例 γ=4 左右最优（约 1.98）'
+    explanation: |
+      **公式**：一轮中前 $k$ 个草稿全部被接受的概率为 $\alpha^k$；每轮产出 = 被接受的草稿数 + 1（拒绝时的重采样或全部接受后额外采样的 1 个），期望为
+
+      $$
+      \mathbb{E}[N]=\sum_{k=0}^{\gamma}\alpha^k=\frac{1-\alpha^{\gamma+1}}{1-\alpha}
+      $$
+
+      每轮耗时为草稿 $\gamma$ 次前向加目标 1 次前向，即 $1+\gamma c$，加速比约为 $\mathbb{E}[N]/(1+\gamma c)$。
+
+      **(1)** $\mathbb{E}[N]=(1-0.7^4)/0.3=(1-0.2401)/0.3\approx2.53$；加速比 $2.53/1.3\approx1.95$。
+
+      **(2)** $\mathbb{E}[N]=(1-0.7^7)/0.3=(1-0.0824)/0.3\approx3.06$；加速比 $3.06/1.6\approx1.91$。
+
+      **(3)** 第 $k$ 个草稿 token 只有在前面全部被接受时才有用，概率为 $\alpha^k$，边际收益递减；而每多猜一个就多付 $c$ 的固定成本。本例逐个计算：$\gamma=1,2,3,4,5,6$ 的加速比约为 1.55、1.83、1.95、1.98、1.96、1.91，在 $\gamma=4$ 附近最优。接受率越高、草稿越便宜，最优 $\gamma$ 越大。此外，$\gamma$ 越大，高负载时验证的额外计算越多，这一点在单请求模型里没有体现。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192'
+
+  - id: INF-SPEC-005
+    type: calc
+    difficulty: 3
+    frequency: 2
+    points: [草稿模型选择, 接受率与加速比]
+    question: |
+      为一个 70B 目标模型挑选独立草稿模型，草稿长度 $\gamma=4$（接受相互独立，忽略其他开销）：
+
+      - 草稿 A：1B 模型，接受率 $\alpha=0.6$，单次前向耗时是目标模型的 $c=0.02$ 倍；
+      - 草稿 B：7B 模型，$\alpha=0.8$，$c=0.1$。
+
+      (1) 分别计算每轮期望产出的 token 数与加速比；
+      (2) 若把 $\gamma$ 改为 6，两者的加速比分别是多少？结论是否改变？
+      (3) 除了单请求的加速比，选择草稿模型还要考虑哪些因素？
+    answer: '(1) A：约 2.31 个、加速比约 2.13；B：约 3.36 个、加速比约 2.40；(2) A 约 2.17，B 约 2.47，仍是 B 更好；(3) 草稿的显存与 KV 占用、高负载下的额外计算、词表是否一致、部署与维护成本等'
+    explanation: |
+      公式：$\mathbb{E}[N]=(1-\alpha^{\gamma+1})/(1-\alpha)$，加速比 $\approx\mathbb{E}[N]/(1+\gamma c)$。
+
+      **(1)**
+      - A：$\mathbb{E}[N]=(1-0.6^5)/0.4=(1-0.0778)/0.4\approx2.31$；加速比 $2.31/(1+4\times0.02)=2.31/1.08\approx2.13$。
+      - B：$\mathbb{E}[N]=(1-0.8^5)/0.2=(1-0.3277)/0.2\approx3.36$；加速比 $3.36/1.4\approx2.40$。
+
+      **(2)**
+      - A：$\mathbb{E}[N]=(1-0.6^7)/0.4\approx2.43$，加速比 $2.43/1.12\approx2.17$；
+      - B：$\mathbb{E}[N]=(1-0.8^7)/0.2\approx3.95$，加速比 $3.95/1.6\approx2.47$。
+
+      B 仍然更好：接受率每提高一点，期望产出按几何级数增长，足以抵消更大的草稿开销。但这不是绝对的——$c$ 再大或 $\alpha$ 提升有限时，结论会反过来，要用公式算。
+
+      **(3)** 其他因素：
+      - **显存**：7B 草稿的 BF16 权重约 14 GB，还要有自己的 KV Cache，会挤占目标模型的 batch 容量；
+      - **负载**：高并发时 GPU 接近算力瓶颈，草稿的计算与被拒绝 token 的验证都要真金白银地算，大草稿的劣势放大；
+      - **硬性条件**：标准做法要求草稿与目标共用分词器和词表；
+      - **工程成本**：多维护一个模型及其版本对齐；可以考虑 EAGLE、MTP 一类更轻量的草稿方案。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192'
+
+  - id: INF-SPEC-006
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [接受拒绝采样]
+    question: |
+      下面的代码实现了投机采样的一轮验证（词表大小为 3，草稿长度为 2）。为了让结果确定，接受判断与重采样用的随机数由参数直接给出，重采样用逆 CDF 的方式完成。输出是什么？
+    code: |
+      import numpy as np
+
+      def spec_round(drafts, q, p, u_acc, u_res):
+          """q[i]、p[i]：草稿 / 目标模型在第 i 个位置的分布（p 比 q 多一个位置）"""
+          out = []
+          for i, x in enumerate(drafts):
+              if u_acc[i] < min(1.0, p[i][x] / q[i][x]):
+                  out.append(x)                                           # 接受
+                  continue
+              r = np.maximum(p[i] - q[i], 0)                              # 拒绝：残差重采样
+              out.append(int(np.searchsorted(np.cumsum(r / r.sum()), u_res)))
+              return out
+          out.append(int(np.searchsorted(np.cumsum(p[-1]), u_res)))      # 全部接受：额外采样一个
+          return out
+
+      q = [np.array([.6, .3, .1]), np.array([.2, .7, .1])]
+      p = [np.array([.5, .4, .1]), np.array([.3, .35, .35]), np.array([.1, .1, .8])]
+      print(spec_round([0, 1], q, p, u_acc=[0.7, 0.9], u_res=0.25))
+      print(spec_round([0, 1], q, p, u_acc=[0.7, 0.4], u_res=0.25))
+      print(spec_round([0, 1], q, p, u_acc=[0.9, 0.1], u_res=0.95))
+    answer: |
+      [0, 0]
+      [0, 1, 2]
+      [1]
+    explanation: |
+      两个位置的接受概率：位置 0 草稿为 token 0，$\min(1,0.5/0.6)\approx0.833$；位置 1 草稿为 token 1，$\min(1,0.35/0.7)=0.5$。
+
+      - **第 1 行**：$0.7<0.833$，接受 0；$0.9\ge0.5$，拒绝。残差 $\max(0,p_1-q_1)=(0.1,0,0.25)$，归一化后累积分布为 $(0.286,0.286,1)$，$u=0.25$ 落在第一段，补出 token 0。输出 `[0, 0]`，共 2 个 token。
+      - **第 2 行**：两个草稿都被接受（$0.4<0.5$），再从第 3 个位置的 $p=(0.1,0.1,0.8)$ 额外采样：累积分布 $(0.1,0.2,1)$，$u=0.25$ 落在 token 2。输出 `[0, 1, 2]`，一次前向产出 3 个 token。
+      - **第 3 行**：$0.9\ge0.833$，第一个草稿就被拒绝。残差 $\max(0,p_0-q_0)=(0,0.1,0)$，归一化后只能是 token 1。后面的草稿直接作废，不再检查。输出 `[1]`。
+
+      要点：每轮至少产出 1 个 token、至多 $\gamma+1$ 个；第一次拒绝后立即结束本轮。
+
+  - id: INF-SPEC-007
+    type: code_debug
+    difficulty: 3
+    frequency: 3
+    points: [接受拒绝采样, 无损性]
+    question: |
+      下面是单个草稿 token 的投机采样实现：草稿从 $q$ 中采样一个 token，以 $\min(1,p/q)$ 接受，否则重新采样。用蒙特卡洛统计输出分布时发现它与目标分布 $p$ 明显不符。请找出 bug 并修正。
+    code: |
+      import numpy as np
+
+      def spec_sample(p, q, rng):
+          """单个草稿 token 的投机采样：返回该位置最终输出的 token"""
+          x = rng.choice(len(q), p=q)                       # 草稿模型提议
+          if rng.random() < min(1.0, p[x] / q[x]):
+              return x                                      # 接受
+          return rng.choice(len(p), p=p)                    # 拒绝：重新采样
+    fixed_code: |
+      import numpy as np
+
+      def spec_sample(p, q, rng):
+          """单个草稿 token 的投机采样：返回该位置最终输出的 token"""
+          x = rng.choice(len(q), p=q)                       # 草稿模型提议
+          if rng.random() < min(1.0, p[x] / q[x]):
+              return x                                      # 接受
+          r = np.maximum(p - q, 0)                          # 拒绝：从残差分布重新采样
+          return rng.choice(len(p), p=r / r.sum())
+    test: |
+      rng = np.random.default_rng(0)
+      p = np.array([0.5, 0.3, 0.2])
+      q = np.array([0.2, 0.3, 0.5])
+      n = 20000
+      freq = np.bincount([spec_sample(p, q, rng) for _ in range(n)], minlength=3) / n
+      assert np.abs(freq - p).max() < 0.02, freq
+    answer: |
+      **问题**：最后一行在拒绝后直接从目标分布 $p$ 重新采样。正确做法是从残差分布 $\max(0,\ p-q)$ 归一化后采样：
+
+      ```python
+      r = np.maximum(p - q, 0)
+      return rng.choice(len(p), p=r / r.sum())
+      ```
+    explanation: |
+      **为什么错**：接受环节已经以概率 $\min(p(x),q(x))$ 输出了 $x$，草稿高估的 token（$q>p$）已经「拿够」了自己的份额。拒绝后若再从 $p$ 采样，它们又能被采到一次，总概率变成
+
+      $$
+      P(x)=\min(p(x),q(x))+(1-\alpha)\,p(x)\neq p(x)
+      $$
+
+      本例 $\alpha=0.7$，输出分布约为 $(0.35,\ 0.39,\ 0.26)$：草稿高估的 C 被多采，低估的 A 被少采。
+
+      **为什么残差是对的**：拒绝的总概率为 $1-\alpha=\sum_x\max(0,p(x)-q(x))$，而残差分布把这部分概率恰好分给 $p>q$ 的 token，补上它们在接受环节「缺的」那部分：$\min(p,q)+\max(0,p-q)=p$。
+
+      **注意**：只有存在 $p<q$ 的 token 时才可能发生拒绝，此时残差之和一定大于 0，归一化不会除以 0。测试用固定种子统计 2 万次，修正后各 token 的频率与 $p$ 的偏差在 0.01 以内，原代码的偏差约 0.15。
+    source: 'Chen 等, 2023, arXiv:2302.01318'
+
+  - id: INF-SPEC-008
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [无损性]
+    question: |
+      下列对投机采样实现的改动中，会破坏「输出分布与目标模型一致」（无损性）的是：
+    options:
+      A: '每轮根据上一轮的接受情况动态调整草稿长度 γ'
+      B: '草稿模型改用贪心解码，接受判断时把 q 视为在草稿 token 上概率为 1 的 one-hot 分布'
+      C: '草稿模型用温度 0.5 采样，但接受判断时用温度 1.0 下草稿给出的概率作为 q'
+      D: '第一次拒绝之后，丢弃其后的所有草稿 token，只保留残差重采样得到的那一个'
+    answer: C
+    explanation: |
+      **结论**：无损性的前提是——接受判断中的 $q$ 必须是草稿**实际采样所用**的分布；$p$ 必须是目标模型**实际要采样**的分布（施加温度、top-p 等变换之后的分布）。
+
+      - C 破坏无损：草稿实际按温度 0.5 的分布 $q'$ 采样，接受判断却用温度 1.0 的 $q$。证明中「草稿提议 $x$ 且被接受」的概率 $q(x)\min(1,p/q)=\min(p,q)$ 要求两个 $q$ 相同；用错了分布，各 token 的输出概率就不再等于 $p$。
+      - A 无损：$\gamma$ 只依赖已经生成的内容，不影响「给定前缀时下一个 token 的条件分布等于 $p$」这一性质。
+      - B 无损：贪心草稿相当于 $q$ 是 one-hot。接受概率为 $\min(1,p(x))=p(x)$；拒绝后从 $\max(0,p-\delta_x)$ 归一化，也就是把 $x$ 去掉后的 $p$ 重新归一化。合起来每个 token 的概率仍是 $p$。
+      - D 是标准规则本身：拒绝位置之后的草稿以被拒 token 为前提，必须作废。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192'
+
+  - id: INF-SPEC-009
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [无损性, 接受拒绝采样]
+    question: |
+      请证明投机采样（以 $\min(1,p/q)$ 接受，拒绝后从 $\max(0,p-q)$ 归一化的残差分布重采样）单个位置的输出分布恰好等于目标分布 $p$，并回答：(1) 拒绝后为什么不能直接从 $p$ 重新采样？(2)「γ 个草稿全部被接受后，再从 $p$ 额外采样一个 token」为什么也不破坏无损性？(3) 贪心解码时规则退化成什么？
+    answer: |
+      **证明**：输出 $x$ 有两条路径。
+      - 草稿提议 $x$ 且被接受：$q(x)\cdot\min\left(1,\frac{p(x)}{q(x)}\right)=\min(p(x),q(x))$；
+      - 任一提议被拒绝后，从残差中采到 $x$：总拒绝概率为 $\sum_{x'}q(x')\left(1-\min(1,\frac{p(x')}{q(x')})\right)=1-\sum_{x'}\min(p,q)=1-\alpha$；残差分布为 $\frac{\max(0,p(x)-q(x))}{\sum_{x'}\max(0,p-q)}$，而 $\sum_{x'}\max(0,p-q)=1-\sum_{x'}\min(p,q)=1-\alpha$，分母与总拒绝概率约掉，这条路径的概率为 $\max(0,p(x)-q(x))$。
+
+      两者相加：$\min(p,q)+\max(0,p-q)=p(x)$。由于每个位置都在「给定前缀」的条件下满足这一点，按位置归纳可知整个序列的联合分布也与目标模型一致。
+
+      1. **不能直接从 $p$ 重采样**：接受环节已经给了每个 token $\min(p,q)$ 的概率，再从 $p$ 采样会让 $q$ 高估的 token 被重复计入，输出变成 $\min(p,q)+(1-\alpha)p\neq p$。残差分布只在 $p>q$ 的 token 上补足差额。
+      2. **额外采样一个不破坏无损**：$\gamma$ 个草稿全被接受，说明前缀已经确定；目标模型在同一次前向中已经算出第 $\gamma+1$ 个位置的分布 $p$，直接从中采样就是目标模型本来的生成方式，相当于白送一个 token。
+      3. **贪心退化**：$p$ 与 $q$ 都退化为 one-hot，规则变成「草稿 token 等于目标模型的 argmax 就接受，否则输出目标模型的 argmax 并结束本轮」，结果与目标模型自己贪心解码一致（不计浮点误差）。
+    rubric:
+      - '正确写出两条路径的概率并完成 min + max = p 的证明（4 分）'
+      - '说明直接从 p 重采样会导致的偏差（2 分）'
+      - '解释额外采样的 token 为何无损（2 分）'
+      - '说出贪心时的退化规则（2 分）'
+    explanation: |
+      **常见失分点**：只写结论 $\min(p,q)+\max(0,p-q)=p$，说不清拒绝的总概率为什么正好约掉残差的分母；混淆「分布无损」与「逐 token 相同」；忘了温度、top-p 等变换要先作用在 $p$ 与 $q$ 上；认为额外的那个 token 来自草稿。
+
+  - id: INF-SPEC-010
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [无损性]
+    question: |
+      贪心投机解码只接受与目标模型 argmax 相同的 token，所以在实际的浮点实现中，它的输出应当与目标模型逐 token 贪心解码的结果逐字一致；两者一旦出现差异，就说明投机解码的实现有 bug。
+    answer: false
+    explanation: |
+      **错误**。在数学上，贪心投机解码只接受与目标模型 argmax 相同的 token，结果应当一致；但在实际实现中，验证时目标模型一次前向处理 $\gamma+1$ 个位置，使用的 kernel、分块方式与 batch 形状都与逐 token 解码不同，浮点累加的顺序随之改变。当两个候选 token 的 logits 非常接近时，微小的数值差异就可能翻转 argmax，后续生成从此分叉。出现这种差异并不说明实现有错；排查时可以看分叉点是否都出现在前两名 logits 非常接近的位置。
+
+      「无损」严格地说指的是**分布一致**（贪心时为数学上的结果一致），不保证在浮点实现中逐 token 相同。同样的现象在连续批处理中也存在：同一个请求和不同的请求拼成 batch，结果可能有细微差异。评测投机解码是否「改变了效果」时，应比较任务指标或分布，而不是要求输出逐字一致。
+
+  - id: INF-SPEC-011
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [接受率与加速比]
+    question: |
+      单个位置的接受率 $\alpha=\sum_x\min(p(x),q(x))$，它等于 1 减去 $p$ 与 $q$ 之间的 ____ 距离。若 $\alpha=0.5$、草稿长度 $\gamma=2$，假设各位置的接受相互独立，每轮期望产出 ____ 个 token。
+    answer: [['总变差', '总变差距离', 'TV', '全变差', 'total variation'], '1.75']
+    explanation: |
+      **第一空**：总变差距离 $\mathrm{TV}(p,q)=\frac12\sum_x|p(x)-q(x)|$。由 $|p-q|=p+q-2\min(p,q)$，求和得 $\sum|p-q|=2-2\sum\min(p,q)$，所以 $\sum_x\min(p,q)=1-\mathrm{TV}(p,q)$。两个分布越接近，接受率越高；完全相同时 $\alpha=1$。
+
+      **第二空**：$\mathbb{E}[N]=\sum_{k=0}^{\gamma}\alpha^k=1+0.5+0.25=1.75$，或用公式 $(1-0.5^3)/(1-0.5)=0.875/0.5=1.75$。
+
+      即使接受率只有一半，每轮也能产出约 1.75 个 token；但还要扣除草稿的耗时，最终加速比为 $1.75/(1+2c)$。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192'
+
+  - id: INF-SPEC-012
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [草稿模型选择]
+    question: |
+      为投机解码选择或训练独立的草稿模型时，下列说法正确的有：
+    options:
+      A: '以目标模型为教师蒸馏草稿（如 DistillSpec），让草稿分布向目标对齐，可提高接受率'
+      B: '草稿模型越大，接受率越高，加速比也就越大，显存允许时应选尽量大的草稿'
+      C: '评估草稿要同时看接受率与草稿单次前向的相对耗时 c，二者共同决定加速比'
+      D: '标准做法要求草稿与目标模型使用相同的分词器和词表，以便逐 token 比较 p 与 q'
+      E: '草稿参数量不到目标模型的 1/100 时，草稿开销可以忽略，加速比约等于 γ+1'
+    answer: [A, C, D]
+    explanation: |
+      - A 对：接受率只取决于 $p$ 与 $q$ 的接近程度，让草稿直接拟合目标模型的输出分布最对症。DistillSpec（Zhou 等, 2023）以目标模型为教师蒸馏草稿，并指出使用草稿自己生成的数据（on-policy）、按任务与解码方式选择合适的散度效果更好，比标准投机解码再快 10%～45%。用业务领域（如代码）的数据蒸馏，也能让草稿在该领域更准。
+      - B 错：草稿越大，$c$ 越大；加速比约为 $\mathbb{E}[N]/(1+\gamma c)$，接受率的提升未必抵得过耗时的增加，还要额外占用显存。
+      - C 对：两者缺一不可。例如 $\gamma=4$ 时，$\alpha=0.6$、$c=0.02$ 的草稿加速约 2.13 倍，$\alpha=0.8$、$c=0.1$ 的草稿约 2.40 倍。
+      - D 对：接受判断需要同一个 token 在两个模型下的概率 $p(x)$、$q(x)$，词表不同就无法直接比较。（也有研究支持异构词表的草稿，但需要额外的对齐处理，不是标准做法。）
+      - E 错：即使 $c\to0$，加速比也约为 $\mathbb{E}[N]$，只有每个草稿 token 都被接受时才达到 $\gamma+1$。参数量小不代表加速：若与目标分布差异大、接受率很低，每轮只产出 1 个 token 左右，加上草稿开销反而更慢；高负载时还可能整体变慢。
+    source: 'DistillSpec（Zhou 等, 2023, arXiv:2310.08461）；Leviathan 等, 2022, arXiv:2211.17192'
+
+  - id: INF-SPEC-013
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [Medusa]
+    question: |
+      关于 Medusa（Cai 等, 2024），下列说法正确的是：
+    options:
+      A: '需要一个与目标模型共用词表的独立小模型作为草稿，Medusa 头只负责重排它的候选'
+      B: 'Medusa 头在特征层面自回归，每个头都以前一个头预测的特征为输入，逐个生成草稿'
+      C: 'Medusa-1 需与主干模型联合微调才能使用，冻结主干只训练新加的头时接受率接近 0'
+      D: '在最后一层隐状态上加几个解码头分别预测更远的位置，候选组成树，一次前向验证'
+    answer: D
+    explanation: |
+      **结论**：Medusa = 多个并行解码头 + 树形验证，不需要独立的草稿模型。
+
+      原 LM head 预测第 $t+1$ 个 token，第 $k$ 个 Medusa 头基于同一个隐状态直接预测第 $t+k+1$ 个 token。每个头取 top-k 候选，组合成候选树，再用树形注意力掩码在一次前向中验证所有分支，取被接受的最长路径。
+
+      - A 错：草稿来自目标模型自身附加的头，省去了维护第二个模型。
+      - B 错：在特征层面自回归是 EAGLE 的做法；Medusa 的各头彼此独立，都从同一个隐状态出发，不依赖前一个头的输出，因此越远的头越不准。
+      - C 错：Medusa-1 冻结主干、只训练新加的头，论文报告超过 2.2 倍的加速；Medusa-2 与主干联合微调，加速更高（2.3～3.6 倍），但需要专门的训练配方来保住主干的能力。
+    source: 'Medusa（Cai 等, 2024, arXiv:2401.10774）'
+
+  - id: INF-SPEC-014
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [Medusa]
+    question: |
+      Medusa 在采样（温度大于 0）时使用「典型接受」（typical acceptance）规则判断候选是否可以接受，这一规则与标准投机采样一样，能保证输出分布与目标模型严格一致。
+    answer: false
+    explanation: |
+      **错误**。典型接受不做拒绝采样，而是看候选 token 在目标模型下的概率是否高于一个与熵相关的阈值（概率足够高、「足够典型」就接受），目的是在保持生成质量的前提下提高接受率。它并不保证输出分布等于目标分布，是一种用分布偏差换速度的近似规则。
+
+      对比：
+      - 贪心解码时，Medusa 只接受与目标模型 argmax 一致的候选，结果与目标模型一致；
+      - 标准投机采样（以 $\min(1,p/q)$ 接受、残差重采样）才是分布无损的；EAGLE、MTP 等方案使用的就是这一类规则。
+
+      所以面试中说「Medusa 和投机采样一样无损」是常见失分点：要区分接受规则，而不是只看草稿来自哪里。
+    source: 'Medusa（Cai 等, 2024, arXiv:2401.10774）'
+
+  - id: INF-SPEC-015
+    type: fill
+    difficulty: 2
+    frequency: 1
+    points: [Medusa, 树形验证]
+    question: |
+      Medusa 有 3 个解码头，分别取 top-3、top-2、top-2 个候选，把所有组合（笛卡尔积）构成一棵候选树（根节点是本步已确定的 token，不计入）。树中需要验证的候选 token 共 ____ 个，对应 ____ 条完整的候选路径。
+    answer: ['21', '12']
+    explanation: |
+      - 第 1 层：3 个节点；
+      - 第 2 层：每个第 1 层节点接 2 个，共 $3\times2=6$ 个；
+      - 第 3 层：每个第 2 层节点再接 2 个，共 $6\times2=12$ 个。
+
+      节点总数 $3+6+12=21$，叶子即完整路径 $3\times2\times2=12$ 条。
+
+      **为什么用树**：12 条路径各自长 3 个 token，分开验证要 36 个位置；树形结构让共享前缀只算一次，只需 21 个位置，且一次前向完成。代价是验证的 token 数随头数与 top-k 指数增长，算力富余有限时会拖慢每步。实践中 Medusa 会根据校准数据上各候选的接受率，挑选一棵稀疏的候选树（只保留最可能被接受的分支），而不是用完整的笛卡尔积。
+    source: 'Medusa（Cai 等, 2024, arXiv:2401.10774）'
+
+  - id: INF-SPEC-016
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [EAGLE]
+    question: |
+      EAGLE（Li 等, 2024）的草稿头与 Medusa 的解码头相比，最关键的不同在于：
+    options:
+      A: '它在特征层面自回归：用顶层特征与提前一步的 token 预测下一个特征，再经 LM head 得到草稿'
+      B: '它不用训练：直接截取目标模型的前几层作为草稿，跳过后面的层来快速猜测 token'
+      C: '它的多个头彼此独立、都从同一个隐状态出发，同时预测未来不同位置的 token，因此可以并行'
+      D: '它用 Jacobi 迭代并行猜测后续 token，把迭代轨迹中的 n-gram 当作草稿，不用额外参数'
+    answer: A
+    explanation: |
+      **结论**：EAGLE 让一个轻量的草稿头（约一层 Transformer）在「特征」上做自回归，而不是在 token 上。
+
+      论文的两个观察：
+      1. 顶层特征（LM head 之前的那一层，论文称 second-to-top-layer）比 token 更有规律，在特征层面自回归更容易预测；
+      2. 采样带来不确定性：同一个特征之后可能接不同的 token，下一个特征也就不同。所以输入里再加上「提前一步」的 token 序列（即已经采样出的那个 token），消除歧义。
+
+      草稿逐个生成，后一个依赖前一个；验证用标准的投机采样规则，生成文本的分布不变。论文报告在 LLaMA2-Chat 70B 上延迟加速 2.7～3.5 倍。
+
+      - B 错：草稿头需要训练（在目标模型的特征上训练），只是成本很低；截取前几层做草稿是自投机（self-speculative）一类方法的思路。
+      - C 错：这是 Medusa 的结构，各头独立、互不依赖。
+      - D 错：这是 Lookahead 解码的思路。
+    source: 'EAGLE（Li 等, 2024, arXiv:2401.15077）'
+
+  - id: INF-SPEC-017
+    type: multiple
+    difficulty: 3
+    frequency: 1
+    points: [EAGLE]
+    question: |
+      关于 EAGLE 系列的后续版本，下列说法正确的有：
+    options:
+      A: 'EAGLE 系列的草稿头针对具体的目标模型训练，目标模型更换或重新微调后，通常需要重新训练草稿头'
+      B: 'EAGLE-3 的草稿头需要与目标模型同样规模，才能达到较高的接受率'
+      C: 'EAGLE-3 放弃「预测特征」的约束，改为直接预测 token，并融合目标模型低、中、高多层的特征'
+      D: 'EAGLE-2 发现候选的接受率主要取决于它在树中的位置、与上下文关系不大，因此离线为每个位置设定固定的分支数'
+      E: 'EAGLE 系列为了提高速度放弃了无损性，输出分布与目标模型略有不同'
+    answer: [A, C]
+    explanation: |
+      **结论**：A、C 正确。
+
+      - A 对：草稿头以目标模型的内部特征为输入、以目标模型的输出为学习对象，与具体的目标模型强绑定；目标模型变了，特征分布也变了，接受率会下降。
+      - B 错：EAGLE 的草稿头非常轻量（大约相当于一层 Transformer），这正是它的 $c$ 很小、加速明显的原因。
+      - C 对：EAGLE-3 发现「预测特征」这一约束限制了草稿从更多训练数据中获益，于是改为直接预测 token，并通过「训练时测试」（training-time test）融合多层特征；论文报告最高约 6.5 倍的加速，在 SGLang 中 batch = 64 时吞吐也提升约 1.38 倍。
+      - D 错：恰好相反。EAGLE-2 观察到接受率不只取决于位置，还强烈依赖上下文；而草稿模型的置信度校准得较好，可以近似接受概率。于是每一步按置信度扩展最有希望的分支，动态构建草稿树，取代 EAGLE-1、Medusa 的固定树结构。论文报告比 EAGLE-1 再快 20%～40%。
+      - E 错：EAGLE 系列的验证使用标准投机采样规则，生成文本的分布不变。
+    source: 'EAGLE-2（Li 等, 2024, arXiv:2406.16858）；EAGLE-3（Li 等, 2025, arXiv:2503.01840）'
+
+  - id: INF-SPEC-018
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [MTP]
+    question: |
+      DeepSeek-V3 把训练时使用的 MTP（多 token 预测）模块拿来做推理加速。关于这一做法，下列说法正确的是：
+    options:
+      A: 'MTP 模块参与了主模型的训练目标，推理时去掉它会让主模型的输出分布偏移，因此必须保留'
+      B: 'MTP 用多个彼此独立的并行输出头，同时预测后面几个 token，接受率因此随深度迅速下降'
+      C: 'MTP 模块可作草稿，技术报告称第 2 个 token 的接受率约 85%～90%，TPS 约提升到 1.8 倍'
+      D: 'MTP 草稿与主模型的分布差异较大，必须配合宽松的「典型接受」规则，输出因此不再无损'
+    answer: C
+    explanation: |
+      **结论**：MTP 是「训练时的辅助目标，推理时的免费草稿」。
+
+      DeepSeek-V3 训练时额外预测第 2 个 token（预测深度 D = 1），用来增强训练信号。推理时 MTP 模块可以直接丢弃，主模型照常工作；也可以保留下来当草稿，按投机解码的方式验证。由于它与主模型共享嵌入层和输出头，又是和主模型一起训练的，预测与主模型高度一致，第 2 个 token 的接受率达到 85%～90%，解码 TPS 约提升到 1.8 倍。
+
+      - A 错：MTP 模块是可选的，推理时可以丢弃；主模型的前向不经过它，去掉它不影响主模型的输出。
+      - B 错：这是 Meta 多 token 预测（Gloeckle 等, 2024）的结构；DeepSeek-V3 的 MTP 按深度串联，保持完整的因果链。
+      - D 错：用作草稿时同样走标准的验证规则，不改变输出分布。
+    source: 'DeepSeek-V3 技术报告（arXiv:2412.19437）'
+
+  - id: INF-SPEC-019
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [MTP]
+    question: |
+      Meta 的多 token 预测（Gloeckle 等, 2024）在共享主干上接多个彼此独立的输出头，并行预测后续几个 token；DeepSeek-V3 的 MTP 则按深度依次串联多个模块，每个模块以上一深度的表示和对应位置 token 的嵌入作为输入，在每个预测深度都保持完整的因果链。
+    answer: true
+    explanation: |
+      **正确**。两种多 token 预测的结构不同：
+
+      - **Meta（Gloeckle 等, 2024）**：共享主干之上接 $n$ 个独立的输出头（各自一层 Transformer 加共享的 unembedding），同时预测未来 $n$ 个 token。训练时增强了模型对「更远未来」的规划；推理时这些头可以做自投机解码，论文报告 4-token 预测的模型最多约 3 倍加速。
+      - **DeepSeek-V3**：第 $k$ 个 MTP 模块把第 $k-1$ 深度的表示与第 $i+k$ 个 token 的嵌入拼接、投影后，经过一个 Transformer 块，再用共享的输出头预测第 $i+k+1$ 个 token。技术报告明确对比了 Gloeckle 等人的并行独立头，强调自己是「顺序预测、保持每个深度的完整因果链」。
+
+      差异的直观含义：并行独立头预测更远的 token 时看不到中间 token 的信息，越远越不准；串联结构在每一步都以前一个预测位置的信息为条件，草稿质量更好。这与 Medusa（独立头）和 EAGLE（逐步自回归）的区别类似。
+    source: 'Gloeckle 等, 2024, arXiv:2404.19737；DeepSeek-V3 技术报告（arXiv:2412.19437）'
+
+  - id: INF-SPEC-020
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [Lookahead解码]
+    question: |
+      Lookahead Decoding（Fu 等, 2024）的特点是：
+    options:
+      A: '训练一个与目标模型共用词表的小草稿模型，由它逐个提出候选，再交给目标模型验证'
+      B: '不用草稿模型、也不用训练：用 Jacobi 迭代生成 n-gram 候选，同一次前向中验证，输出不变'
+      C: '在目标模型最后一层加几个预测头，各头预测不同位置的 token，候选组成树后一次验证'
+      D: '用最近几个 token 在提示词里查找相同片段，把其后的内容当作草稿，不用训练也不用额外模型'
+    answer: B
+    explanation: |
+      **结论**：Lookahead 解码是一种「无草稿模型、精确」的并行解码方法。
+
+      它不需要草稿模型、数据库或额外训练，在同一次前向中做两件事：前瞻分支用 Jacobi 迭代并行更新一个二维窗口里的猜测，把迭代轨迹中出现的 n-gram 收集进候选池；验证分支从池中挑出首 token 与当前最后一个 token 衔接的 n-gram，按目标模型的输出验证，接受最长的正确前缀。论文称之为精确（exact）的并行解码算法：用每步更多的计算（FLOPs）换更少的解码步数，在 MT-bench 上最高约 1.8 倍加速。
+
+      - A 是独立草稿模型方案。
+      - C 是 Medusa。
+      - D 是 Prompt Lookup（n-gram 匹配）：同样不需要训练和额外模型，但它的候选来自提示词，而不是 Jacobi 迭代；在「输出大量照抄输入」的任务中很有效。
+    source: 'Lookahead Decoding（Fu 等, 2024, arXiv:2402.02057）'
+
+  - id: INF-SPEC-021
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [Lookahead解码]
+    question: |
+      朴素的 Jacobi 解码先随机初始化后续 $n$ 个位置的猜测，再并行迭代更新；每次迭代至少会让一个位置固定为正确结果，所以最多 $n$ 次迭代就收敛到与贪心解码相同的输出。但实践中它很少能在一次迭代中同时确定多个 token，加速有限，这正是 Lookahead 解码要收集并复用 Jacobi 轨迹中 n-gram 的原因。
+    answer: true
+    explanation: |
+      **正确**。把贪心解码看成求解方程组 $y_i=\arg\max p(\cdot\mid x,y_{<i})$，$i=1..n$：Jacobi 迭代每轮用上一轮的猜测作为前缀，并行更新所有位置。第一个位置的前缀是真实的，一轮后必然正确；之后每轮至少再多一个位置正确，因此最多 $n$ 轮收敛到贪心结果，且不比逐个解码慢。
+
+      问题在于：只要前面某个 token 猜错，后面的 token 即使「碰巧」猜对内容，位置也常常不对，很难被一次性确认，所以朴素 Jacobi 的平均加速很小。Lookahead 解码的改进是：Jacobi 轨迹虽然不收敛得快，但会产生大量「局部正确」的 n-gram；把它们存进池里，后续遇到匹配的上下文时作为候选整段验证，就能一次接受多个 token。
+    source: 'Lookahead Decoding（Fu 等, 2024, arXiv:2402.02057）'
+
+  - id: INF-SPEC-022
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [树形验证]
+    question: |
+      树形验证（如 SpecInfer、Medusa、EAGLE-2）把多条候选路径展平成一个序列，在一次前向中同时验证。此时注意力掩码与位置编码应如何设置？
+    options:
+      A: '直接使用普通的因果掩码，位置编号按展平后的顺序依次递增，与普通 Prefill 相同'
+      B: '各候选节点之间互相可见以共享信息，位置编号统一取「前缀长度 + 1」'
+      C: '每条候选路径单独复制一份完整前缀，作为独立的请求放进 batch，各自使用因果掩码'
+      D: '节点只看已确认前缀、树中祖先与自己，位置编号取「前缀长度 + 节点深度」'
+    answer: D
+    explanation: |
+      **结论**：树形注意力掩码让每个节点「只看到自己这条路径」，就像各条路径分别做了一次普通的因果前向，但共享前缀只计算一次。
+
+      展平后，节点 $i$ 对节点 $j$ 可见当且仅当 $j$ 是 $i$ 的祖先或 $i$ 本身；已确认的前缀对所有节点可见。位置编码按节点在树中的深度计算，因为同一深度的兄弟节点在各自的路径上处于同一个位置。验证后取被接受的最长路径，并只保留这条路径上节点的 KV。
+
+      - A 错：普通因果掩码会让后面的分支看到前面兄弟分支的 token，位置也被错误地拉长，验证结果不再等价于逐条路径的计算。
+      - B 错：分支之间互相可见同样破坏了每条路径的因果性；不同深度的节点位置也不相同，不能统一取一个值。
+      - C 错：结果正确但浪费：共享前缀与公共的树节点被重复计算和存储，失去了树形验证的意义。
+    source: 'SpecInfer（Miao 等, 2023, arXiv:2305.09781）；Medusa（arXiv:2401.10774）'
+
+  - id: INF-SPEC-023
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [树形验证]
+    question: |
+      实现树形验证（贪心解码）的两个核心函数：
+
+      ```python
+      def tree_mask(parents: list[int]) -> tuple[np.ndarray, list[int]]: ...
+      def accept_longest(parents, tokens, root_pred, pred) -> list[int]: ...
+      ```
+
+      - `parents[i]` 是第 i 个候选节点的父节点下标，`-1` 表示父节点为根（已确认的最后一个 token）；要求父节点排在子节点之前，否则抛出 `ValueError`。
+      - `tree_mask` 返回 `(mask, depth)`：`mask[i, j]` 为 True 表示节点 i 能看到节点 j（j 是 i 自己或 i 的祖先）；`depth[i]` 为节点深度（根的子节点为 1）。
+      - `accept_longest`：`tokens[i]` 是节点 i 的候选 token；`root_pred` 是目标模型在根之后预测的 token，`pred[i]` 是目标模型在节点 i 之后预测的 token。节点被接受当且仅当父节点被接受（根总被接受）且 `tokens[i]` 等于目标模型在父节点之后的预测。返回本轮新确定的 token：最长被接受路径上的 token，再加上目标模型在路径末端之后的预测（额外的 1 个）；多条路径一样长时取下标最小的末端节点。
+    answer: |
+      import numpy as np
+
+      def tree_mask(parents):
+          n = len(parents)
+          mask = np.zeros((n, n), dtype=bool)
+          depth = [0] * n
+          for i, par in enumerate(parents):
+              if not -1 <= par < i:
+                  raise ValueError("父节点必须排在子节点之前")
+              mask[i, i] = True
+              if par >= 0:
+                  mask[i] |= mask[par]                # 继承父节点能看到的全部祖先
+                  depth[i] = depth[par] + 1
+              else:
+                  depth[i] = 1
+          return mask, depth
+
+      def accept_longest(parents, tokens, root_pred, pred):
+          n = len(parents)
+          accepted, depth = [False] * n, [0] * n
+          best, best_len = -1, 0
+          for i, par in enumerate(parents):
+              expect = root_pred if par < 0 else pred[par]
+              if (par < 0 or accepted[par]) and tokens[i] == expect:
+                  accepted[i] = True
+                  depth[i] = 1 if par < 0 else depth[par] + 1
+                  if depth[i] > best_len:
+                      best, best_len = i, depth[i]
+          path, node = [], best
+          while node >= 0:                            # 从末端回溯到根
+              path.append(tokens[node])
+              node = parents[node]
+          bonus = root_pred if best < 0 else pred[best]
+          return path[::-1] + [bonus]
+    test: |
+      m, d = tree_mask([-1, 0, 1])                    # 一条链：退化为普通因果掩码
+      assert m.tolist() == [[True, False, False], [True, True, False], [True, True, True]]
+      assert d == [1, 2, 3]
+
+      parents = [-1, -1, 0, 0, 2]                     # 根下 a(0)、b(1)；a 下 c(2)、d(3)；c 下 e(4)
+      m, d = tree_mask(parents)
+      assert d == [1, 1, 2, 2, 3]
+      assert m[4].tolist() == [True, False, True, False, True]   # e 只看到 a、c 和自己
+      assert not m[1, 0] and not m[3, 2]              # 兄弟节点互不可见
+      assert tree_mask([])[0].shape == (0, 0)
+      try:
+          tree_mask([1, -1])
+          raise AssertionError("应抛出 ValueError")
+      except ValueError:
+          pass
+
+      tokens = [10, 11, 20, 21, 30]
+      pred = [20, 99, 30, 99, 40]
+      assert accept_longest(parents, tokens, 10, pred) == [10, 20, 30, 40]     # 整条 a-c-e 被接受
+      assert accept_longest(parents, tokens, 11, pred) == [11, 99]             # 只接受 b
+      assert accept_longest(parents, tokens, 7, pred) == [7]                   # 全部拒绝，仍得 1 个
+      assert accept_longest(parents, tokens, 10, [21, 99, 30, 55, 40]) == [10, 21, 55]
+    explanation: |
+      **思路**：
+      1. **掩码**：节点按拓扑序给出，所以处理节点 $i$ 时父节点的那一行已经算好；`mask[i] = mask[par] | 自己`，即「父节点能看到的所有祖先 + 父节点自己 + 我」。深度 = 父深度 + 1，用于位置编码（前缀长度 + 深度）。
+      2. **验证**：目标模型一次前向后，每个节点位置都有一个「下一个 token 的预测」。节点 $i$ 被接受的条件是父节点被接受，且它的 token 等于父节点位置的预测（父节点为根时用 `root_pred`）。同样按拓扑序一遍扫描即可。
+      3. **输出**：取最深的被接受节点，回溯得到路径；再加上目标模型在该节点之后的预测，这就是投机解码中「每轮至少产出 1 个 token」的那个额外 token。
+
+      **边界**：一个候选都没接受时，返回 `[root_pred]`，与普通解码前进一步等价；父节点下标不合法时报错，避免静默地构造出错误的掩码。
+
+      **复杂度**：掩码 $O(n^2)$（按行做布尔或），验证 $O(n+\text{路径长度})$。真实系统中掩码只与树的形状有关，固定树结构时可以预先算好；采样（非贪心）时，接受判断改用多候选的投机采样规则，以保证分布无损。
+    source: 'SpecInfer（Miao 等, 2023, arXiv:2305.09781）；Medusa（arXiv:2401.10774）'
+
+  - id: INF-SPEC-024
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [适用场景]
+    question: |
+      下列场景中，投机解码的加速效果通常**最小**的是：
+    options:
+      A: '高峰期 batch 很大、已接近算力瓶颈的在线服务，用较高的温度生成创意文案'
+      B: '低负载时的交互式代码补全，温度为 0'
+      C: '回答中大量照抄检索片段的 RAG 服务，配合 Prompt Lookup 使用'
+      D: '单用户本地部署的对话助手，草稿模型与目标模型同系列'
+    answer: A
+    explanation: |
+      **结论**：投机解码靠「闲置的算力」换「更少的串行步数」，算力不闲、草稿又猜不准时，收益最小。
+
+      A 同时踩中两个不利因素：
+      - **负载高**：大 batch 时 GPU 已接近算力瓶颈，每条序列多验证 $\gamma$ 个位置都要真实计算，被拒绝的 token 还白算了，吞吐可能不升反降；
+      - **温度高、创意写作**：分布平坦、随机性大，草稿很难猜中，接受率低。
+
+      - B：低负载、算力富余；代码的确定性高，温度 0 时接受率高，是典型的收益场景。
+      - C：照抄检索内容，n-gram 匹配的命中率很高，且 Prompt Lookup 几乎没有额外开销。
+      - D：batch = 1 是最典型的带宽瓶颈，同系列草稿的接受率通常不错。
+
+  - id: INF-SPEC-025
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [适用场景, 接受率与加速比]
+    source: 'Leviathan 等, 2022, arXiv:2211.17192；NVIDIA H100 规格 https://www.nvidia.com/en-us/data-center/h100/'
+    question: |
+      Llama-3-8B（约 $8\times10^9$ 参数，BF16 权重 16 GB）部署在 H100（BF16 稠密算力 989 TFLOPS、显存带宽 3.35 TB/s）。只考虑线性层：每处理 1 个 token 约需 $2\times8\times10^9$ 次浮点运算；每个前向步读一遍权重；单步耗时 = max(读权重时间, 计算时间)。忽略 KV、注意力与草稿模型的开销。
+
+      (1) batch = 128 的普通 Decode，每步耗时约多少？
+      (2) 开启投机解码、$\gamma=4$（每条序列一次验证 5 个位置），每个验证步耗时约多少？
+      (3) 接受率 $\alpha$ 分别为 0.7 与 0.5 时（各位置独立），平均每产出一个 token 需要多少毫秒？与 (1) 相比是变快还是变慢？
+      (4) batch 不超过多少时，$\gamma=4$ 的验证步仍处于带宽瓶颈？
+    answer: '(1) 约 4.78 ms（带宽瓶颈）；(2) 约 10.4 ms（算力瓶颈）；(3) α=0.7 时约 3.73 ms，比 4.78 ms 快约 1.28 倍；α=0.5 时约 5.34 ms，反而变慢；(4) 约 59'
+    explanation: |
+      **(1)** 读权重：$16\times10^9/3.35\times10^{12}\approx4.78$ ms；计算：$2\times8\times10^9\times128/989\times10^{12}\approx2.07$ ms。取大者，约 **4.78 ms**，带宽瓶颈。
+
+      **(2)** 每步处理 $128\times5=640$ 个 token，计算 $\approx2.07\times5\approx10.35$ ms > 4.78 ms，变成算力瓶颈，约 **10.4 ms**。
+
+      **(3)** 每轮每条序列期望产出 $\mathbb{E}[N]=(1-\alpha^5)/(1-\alpha)$：
+      - $\alpha=0.7$：$\mathbb{E}[N]\approx2.77$，每个 token $10.35/2.77\approx3.73$ ms，比 4.78 ms 快约 1.28 倍；
+      - $\alpha=0.5$：$\mathbb{E}[N]\approx1.94$，每个 token $10.35/1.94\approx5.34$ ms，比不开还慢约 12%（$5.34\div4.78\approx1.12$）。
+
+      **(4)** 线性层的算术强度约等于每步处理的 token 数，H100 的拐点约为 $989/3.35\approx295$ FLOP/B。要求 $B\times(\gamma+1)\le295$，即 $B\le59$。
+
+      **结论**：小 batch 时验证几乎「免费」，加速比接近单请求的理论值；batch 超过拐点后，验证的每个 token 都要付算力成本，收益取决于接受率，接受率不够高时就会变慢。这就是高负载时要自动减小 $\gamma$ 或关闭投机解码的原因。真实系统还要加上 KV 读取、注意力和草稿开销，结论需要压测确认。
+
+  - id: INF-SPEC-026
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [适用场景, 草稿模型选择]
+    question: |
+      关于投机解码在不同任务与模型上的收益，下列说法正确的有：
+    options:
+      A: '投机解码减少了目标模型的总计算量，所以在高负载、算力打满时同样能显著提升吞吐'
+      B: '实践中，分布越尖锐接受率通常越高：同一对模型在温度为 1 的随机采样下，接受率一般低于贪心解码'
+      C: '长上下文时，验证 γ+1 个位置要把整段 KV 读 γ+1 遍，带宽开销随之成倍增加，难以加速'
+      D: 'Prompt Lookup 不用额外模型，在 RAG、代码修改等「大量照抄输入」的任务上接受率很高'
+      E: 'MoE 模型验证多个 token 时会激活更多专家、读取更多权重，加速比常低于同规模稠密模型'
+    answer: [B, D, E]
+    explanation: |
+      - A 错：投机解码的总计算量是增加的（被拒绝的 token 白算，草稿也要计算），它省的是串行步数；算力打满时额外计算会直接挤占吞吐。
+      - B 对：Leviathan 等的实测中，T5-XXL 配 T5-small 的翻译任务，贪心时 $\alpha=0.75$，温度 1 时为 0.62；论文也总结「调整后的分布越尖锐，$\alpha$ 越高」。
+      - C 错：一次前向中，$\gamma+1$ 个位置的 query 共享同一次 KV 读取（与 Prefill 一样），KV 只读一遍。长上下文、小 batch 时 Decode 仍是带宽瓶颈，投机解码依然有效。
+      - D 对：Prompt Lookup 用最近几个 token 在提示词中查找相同片段，把其后的内容当作草稿。RAG、摘要、代码修改这类任务的输出与输入高度重合，n-gram 匹配几乎零成本就能给出长而准的草稿。
+      - E 对：稠密模型验证多个 token 时权重只读一遍；MoE 中每个 token 激活的专家不同，验证 5 个 token 可能激活更多专家，读取的字节随之增加，「验证几乎免费」的前提被削弱。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192'
+
+  - id: INF-SPEC-027
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [投机解码原理, 适用场景]
+    question: |
+      在推理框架中落地投机解码，需要处理的工程问题包括：
+    options:
+      A: '高负载时可以按 batch 大小或接受率缩短草稿长度，甚至临时关闭投机'
+      B: '投机解码只作用于 Decode，开启后 TTFT 一定完全不变'
+      C: '被拒绝的草稿 token 的 KV 已经写入缓存，需要回滚或标记作废'
+      D: '独立草稿模型有自己的权重与 KV Cache，要占用额外显存，并随目标模型的验证结果同步回滚'
+      E: 'batch 内各序列每轮接受的长度不同，调度与 KV 块分配要处理这种参差'
+    answer: [A, C, D, E]
+    explanation: |
+      **结论**：A、C、D、E 正确。
+
+      - A 对：batch 大、接近算力瓶颈时，验证草稿的额外计算不再「免费」，被拒绝的 token 白白消耗算力；按负载与接受率调整 $\gamma$ 甚至暂停投机，可以避免吞吐下降。投机解码本身可以与连续批处理同时使用，vLLM、SGLang 等主流框架都支持。
+      - B 错：草稿模型同样要对提示词做 Prefill；高负载时验证的额外计算会拉长排队，TTFT 可能略增。
+      - C 对：验证时目标模型对 $\gamma$ 个草稿位置都写入了 KV；被拒绝位置及其之后的 KV 必须丢弃（分页 KV 中通常是回退序列长度、释放多余的块）。
+      - D 对：独立草稿模型要常驻显存、维护自己的 KV，拒绝时也要回滚，会挤占目标模型的 batch 容量。EAGLE、MTP 这类附加在目标模型上的轻量草稿，这部分开销小得多。
+      - E 对：一轮验证后，有的序列前进 1 个 token，有的前进 $\gamma+1$ 个；下一轮的 batch 是参差的，KV 块分配也要按各自的实际长度处理。vLLM V1 把它统一表达为「本步为每个请求计算若干个 token」。
+
+      此外还有：接受判断中的 $p$ 要用目标模型经温度、top-p 等变换后的分布，$q$ 要用草稿实际采样所用的分布；CUDA Graph 需要按多 token 的形状录制。
+  - id: INF-SPEC-028
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [Medusa, EAGLE, MTP, Lookahead解码]
+    question: |
+      投机解码有多种草稿来源：独立草稿模型、Medusa、EAGLE、MTP、Lookahead 解码、Prompt Lookup。请从「草稿从哪来、是否需要训练、是否严格无损、优缺点与适用场景」几个方面比较它们。
+    answer: |
+      1. **独立草稿模型**：同系列小模型，必须共用词表；通常无需训练（有现成小模型时），也可蒸馏对齐；标准规则下无损。优点是简单通用；缺点是额外占显存、要维护第二个模型，草稿自回归 $\gamma$ 次也有开销。
+      2. **Medusa**：在最后一层隐状态上加多个独立解码头，第 $k$ 个头预测第 $t+k+1$ 个 token，候选组成树、一次前向验证。需要训练解码头（Medusa-1 冻结主干，Medusa-2 联合微调）。贪心时与目标一致；采样时常用典型接受，不严格无损。优点是不需要第二个模型；缺点是各头相互独立，越远越不准。
+      3. **EAGLE 系列**：轻量草稿头在特征层面自回归（输入顶层特征和提前一步的 token），EAGLE-2 动态草稿树，EAGLE-3 直接预测 token 并融合多层特征。需要针对目标模型训练草稿头；标准规则验证，无损。接受率高、开销小，是目前通用场景的主流选择。
+      4. **MTP**：模型预训练时就带多 token 预测模块（如 DeepSeek-V3），推理时直接当草稿；无需额外训练、无损；DeepSeek-V3 报告第 2 个 token 接受率 85%～90%、TPS 约 1.8 倍。只适用于自带 MTP 的模型，草稿长度受模块深度限制。
+      5. **Lookahead 解码**：无草稿模型、无训练，用 Jacobi 迭代收集 n-gram 候选再验证，输出与原模型一致；代价是每步额外的计算，加速幅度中等。
+      6. **Prompt Lookup**：在提示词中做 n-gram 匹配，零训练、几乎零开销、无损；只在输出大量照抄输入（RAG、摘要、代码修改）时有效。
+      7. **共同点**：加速都依赖接受率与闲置算力，高负载、大 batch 时收益缩水；可以组合使用（如 EAGLE 加 n-gram 兜底）。
+    rubric:
+      - '正确说明各方案的草稿来源（3 分）'
+      - '正确说明训练需求（2 分）'
+      - '正确区分无损性，特别是 Medusa 典型接受不严格无损（3 分）'
+      - '给出合理的适用场景与共同局限（2 分）'
+    explanation: |
+      **常见失分点**：把 Medusa 与 EAGLE 混为一谈（独立头 vs 特征自回归）；说「所有投机解码都无损」；不知道 MTP 来自预训练、无需额外训练；把 Lookahead 解码和 Prompt Lookup 搞混（前者靠 Jacobi 迭代生成 n-gram，后者从提示词里复制）。
+    source: 'Medusa（arXiv:2401.10774）；EAGLE（arXiv:2401.15077）；DeepSeek-V3（arXiv:2412.19437）；Lookahead（arXiv:2402.02057）'
+
+  - id: INF-SPEC-029
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [接受率与加速比, 草稿模型选择]
+    question: |
+      投机解码的草稿长度 $\gamma$ 应该如何选择？为什么不是越大越好？有哪些动态调整 $\gamma$（或草稿树规模）的方法？不同负载下应如何配置？
+    answer: |
+      1. **静态选择**：按 $\mathbb{E}[N]/(1+\gamma c)$（$\mathbb{E}[N]=(1-\alpha^{\gamma+1})/(1-\alpha)$）估算加速比，用离线测得的接受率 $\alpha$ 与草稿相对耗时 $c$ 扫描 $\gamma$ 取最大值。$\alpha$ 越高、草稿越便宜，最优 $\gamma$ 越大；例如 $\alpha=0.7$、$c=0.1$ 时最优约为 4。
+      2. **为什么不是越大越好**：第 $k$ 个草稿只有在前面全部被接受时才有用，概率为 $\alpha^k$，边际收益几何递减；每多猜一个，草稿多一次前向，验证多一个位置。高负载时多验证的 token 要占真实算力，被拒绝的部分全部浪费。
+      3. **按任务区分**：代码、结构化输出、照抄型任务接受率高，可以取大；创意写作、高温度采样接受率低，取小或关闭。
+      4. **动态调整**：
+         - 按最近的接受情况调整：例如 Hugging Face 的 assisted generation 曾默认采用启发式——全部接受就把草稿数加 2，否则减 1；
+         - 按草稿置信度提前停止：草稿对下一个 token 的置信度低于阈值就不再继续猜；
+         - 动态草稿树：EAGLE-2 按置信度扩展最有希望的分支，树的形状随上下文变化。
+      5. **按负载调整**：低负载、小 batch 时放大 $\gamma$ 追求低 TPOT；batch 接近 Roofline 拐点时减小 $\gamma$，超过阈值时自动关闭投机解码，以保住吞吐与 goodput。
+      6. **验证方式**：上线前按任务类型统计平均接受长度、TPOT 与吞吐，在不同 QPS 下压测，选择满足 SLO 的配置。
+    rubric:
+      - '写出期望产出与加速比公式，并说明如何扫描选 γ（3 分）'
+      - '解释边际收益递减与额外计算成本（2 分）'
+      - '给出至少两种动态调整方法（3 分）'
+      - '说明按任务与负载区别配置（2 分）'
+    explanation: |
+      **常见失分点**：认为「γ 越大越快」；只考虑单请求延迟，忽略高负载时验证的计算成本；不区分任务类型；说不出任何动态调整策略。
+    source: 'Leviathan 等, 2022, arXiv:2211.17192；EAGLE-2（arXiv:2406.16858）；Hugging Face 文本生成文档 https://huggingface.co/docs/transformers/main_classes/text_generation'
+
+  - id: INF-SPEC-030
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [适用场景, 接受率与加速比]
+    question: |
+      某对话服务（8B 目标模型，H100）为了降低 TPOT 启用了投机解码（1B 独立草稿模型，$\gamma=5$）。灰度结果：
+
+      1. 低峰期 P50 TPOT 从 22 ms 降到 11 ms；
+      2. 晚高峰（batch 常在 150 以上）整体吞吐下降约 20%，P99 TTFT 明显上升；
+      3. 「写诗、写故事」类请求几乎没有加速，代码与表格类请求加速明显。
+
+      请分析这些现象的原因，并给出改进方案。
+    answer: |
+      **原因分析**
+      1. **低峰期收益明显**：batch 小，Decode 处于带宽瓶颈，验证 6 个位置与生成 1 个 token 耗时相近；草稿与目标同系列，接受率尚可，TPOT 减半符合预期。
+      2. **高峰期吞吐下降**：batch 150 时每步要验证约 $150\times6=900$ 个 token，远超 H100 的 Roofline 拐点（约 295），已进入算力瓶颈；被拒绝的 token 和草稿模型的计算都是真实开销，平均每 token 的计算成本上升。草稿模型的权重和 KV 还占用显存，可容纳的 batch 变小，排队变长，P99 TTFT 随之上升。
+      3. **任务差异**：创意写作温度高、分布平坦，接受率低，每轮产出接近 1 个 token，却付出了草稿的开销；代码、表格结构性强、可预测，接受率高。
+
+      **改进方案**
+      1. **按负载开关**：batch 或排队长度超过阈值时自动减小 $\gamma$ 或关闭投机解码，优先保证吞吐与 goodput。
+      2. **动态 $\gamma$**：按每个请求最近的接受情况调整，或按草稿置信度提前停止。
+      3. **按任务 / 采样参数启用**：低温度、代码、结构化输出、RAG 默认启用；高温度的创意类请求关闭或用小 $\gamma$；RAG、代码修改类请求叠加 Prompt Lookup。
+      4. **换更轻、更准的草稿**：用 EAGLE 类草稿头或自带的 MTP 模块替代 1B 独立模型，$c$ 更小、接受率更高，显存开销也更小；或用目标模型的输出蒸馏草稿。
+      5. **度量与验证**：按任务类型统计平均接受长度、草稿开销占比，按 QPS 压测吞吐、P99 TPOT 与 TTFT，以 goodput 为准决定开关阈值；持续监控，防止流量结构变化后配置失效。
+    rubric:
+      - '用带宽瓶颈解释低峰期的收益（2 分）'
+      - '用算力瓶颈、拒绝浪费与草稿显存占用解释高峰期吞吐下降与 TTFT 上升（3 分）'
+      - '用温度与接受率解释任务差异（2 分）'
+      - '给出按负载开关、动态 γ、按任务启用、更换草稿等改进方案（3 分）'
+    explanation: |
+      **常见失分点**：认为投机解码「总是更快」或「减少了计算量」；只看 TPOT 不看吞吐与 TTFT；没有注意到草稿模型占用显存会缩小 batch；给出的方案只有「调小 γ」，缺少按负载、按任务的区分。
+
+  - id: INF-SPEC-031
+    type: design
+    difficulty: 3
+    frequency: 1
+    points: [草稿模型选择, EAGLE, 适用场景]
+    question: |
+      你负责为公司的代码助手落地投机解码：目标模型 70B，部署在 8×H100 上（张量并行 TP = 8），场景包括交互式补全与代码对话，核心诉求是降低 TPOT。请给出设计方案，包括：草稿方案的选型、训练数据与训练方式、上线前如何证明「更快且效果不变」、线上配置与监控、风险与回退。
+    answer: |
+      **1. 需求与指标**
+      - 目标：交互场景 P50 / P99 TPOT 下降，同时吞吐（goodput）不下降、效果不变；
+      - 负载画像：补全请求短、温度低、并发高；对话请求长、温度可能较高；代码修改类请求大量照抄上下文。
+
+      **2. 草稿选型**
+      - 若目标模型自带 MTP 模块，优先直接使用（零训练）；
+      - 否则训练 EAGLE（EAGLE-3）草稿头：只有约一层的规模，随目标模型做 TP 也几乎不增加通信，$c$ 很小，接受率高；
+      - 独立草稿模型作为备选：需要同词表的小模型，会额外占显存，并引入两套模型的版本管理；
+      - 叠加 Prompt Lookup：代码修改、重构类请求大量照抄原代码，n-gram 草稿几乎免费，可与模型草稿组合（取更长的候选或按场景切换）。
+
+      **3. 训练数据与方式**
+      - 用目标模型在真实代码提示（脱敏后的补全与对话日志、内部代码库）上自生成回复，让草稿学习的正是目标模型的分布；
+      - 覆盖主要编程语言与常见温度，留出验证集统计各位置的接受率；
+      - 目标模型每次升级，都要重新生成数据、重训草稿头并重新评估。
+
+      **4. 上线前验证**
+      - **效果不变**：贪心时对比开 / 关投机解码的输出（允许少量浮点差异），并在代码评测集（如单测通过率）与业务评测上比较，差异应在噪声范围内；采样时比较任务指标与输出分布统计；
+      - **速度**：按任务统计平均接受长度、草稿开销占比；在不同 QPS 下压测 TPOT、TTFT、吞吐，找出收益转负的 batch 阈值。
+
+      **5. 线上配置**
+      - 动态 $\gamma$ 或动态草稿树（EAGLE-2 式），按置信度扩展；
+      - 负载感知：batch 或排队超过阈值时减小 $\gamma$ 或关闭；
+      - 按请求参数区分：低温度、补全类默认开启，高温度对话可关闭或用小 $\gamma$。
+
+      **6. 监控与回退**
+      - 指标：每个位置的接受率、平均接受长度、TPOT / TTFT / 吞吐分位数、显存占用、开关状态；
+      - 特性开关支持秒级关闭；按流量灰度（1% → 10% → 50% → 100%），对比对照组的效果与性能；
+      - 风险：目标模型升级导致接受率骤降（需要告警）、草稿与目标的词表或版本不匹配、显存余量变小导致抢占、实现 bug 破坏无损性（在灰度中用贪心一致性抽检兜底）。
+    rubric:
+      - '结合场景给出草稿选型并说明理由（MTP / EAGLE / 独立草稿 / Prompt Lookup）（2 分）'
+      - '给出用目标模型自生成数据训练草稿的方案，并考虑版本更新（2 分）'
+      - '给出「效果不变 + 速度提升」两方面的上线前验证方法（2 分）'
+      - '给出动态 γ、负载感知、按请求区分等线上配置（2 分）'
+      - '给出监控指标、灰度与回退方案及主要风险（2 分）'
+    explanation: |
+      **常见失分点**：只选方案不讲验证，尤其没有证明「效果不变」的方法；忽略高并发下收益转负、没有负载感知的开关；用通用数据训练草稿而不是目标模型的输出；忘了目标模型升级后草稿需要重训；没有回退开关。
+    source: 'EAGLE-3（arXiv:2503.01840）；DeepSeek-V3（arXiv:2412.19437）'

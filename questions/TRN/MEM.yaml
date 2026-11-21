@@ -1,0 +1,892 @@
+domain: TRN
+subcategory: MEM
+questions:
+
+  - id: TRN-MEM-001
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [训练显存账本, 优化器状态]
+    question: |
+      按 ZeRO 论文的口径（前向、反向使用 BF16 参数，优化器另外维护 FP32 副本），混合精度 AdamW 全参训练的模型状态约为每参数 16 字节。下列拆分正确的是：
+    options:
+      A: 'BF16 权重 2 + FP32 梯度 4 + FP32 一阶矩 4 + FP32 二阶矩 4 + BF16 主权重 2'
+      B: 'BF16 权重 2 + BF16 梯度 2 + FP32 主权重 4 + FP32 一阶矩 4 + FP32 二阶矩 4'
+      C: 'FP32 权重 4 + FP32 梯度 4 + FP32 一阶矩 4 + FP32 二阶矩 4，前向和反向直接使用 FP32 权重'
+      D: 'BF16 权重 2 + BF16 梯度 2 + FP32 一阶矩 4 + FP32 二阶矩 4 + 激活 4'
+    answer: B
+    explanation: |
+      **结论**：$2+2+12$，其中优化器状态 12 字节 = FP32 主权重 4 + 一阶矩 $m$ 4 + 二阶矩 $v$ 4。
+
+      7B 模型的模型状态约 $7\times10^9\times16=112$ GB，单张 80 GB 的卡连模型状态都放不下，还没算激活。
+
+      - A 错：主权重必须是 FP32，否则小的更新会被舍入吞掉；这个口径下梯度是 BF16。
+      - C 错：这是纯 FP32 训练的账本（合计也是 16 字节），与题设「前向、反向使用 BF16 参数」不符。PyTorch 的 `autocast` 写法确实保留 FP32 参数、计算时临时转成 BF16，此时账本是 $4+4+4+4$，合计同样约 16 字节。
+      - D 错：激活与 batch 和序列长度成正比，不是「每参数」的固定开销。
+
+      延伸：有的框架把梯度累加在 FP32 缓冲中（如 Megatron 的 main_grad），账本变为 $2+4+12=18$ 字节/参数。
+
+  - id: TRN-MEM-002
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [训练显存账本]
+    question: |
+      与纯 FP32 训练相比，BF16 混合精度训练能把 AdamW 的模型状态显存（权重、梯度与优化器状态）减少约一半。
+    answer: false
+    explanation: |
+      **错误**。逐项算一下：
+      - 纯 FP32：权重 4 + 梯度 4 + $m$ 4 + $v$ 4 = 16 字节/参数；
+      - 混合精度：BF16 权重 2 + BF16 梯度 2 + FP32 主权重 4 + $m$ 4 + $v$ 4 = 16 字节/参数。
+
+      两者的模型状态基本一样大，混合精度多存了一份 FP32 主权重，正好抵消了权重和梯度减半省下的空间。混合精度真正的收益在于：
+      - **激活**以 16 位保存，显存约减半；
+      - **速度**：Tensor Core 的 BF16 吞吐远高于 FP32（A100 上 BF16 稠密 312 TFLOPS，FP32 只有 19.5 TFLOPS）；
+      - 通信量减少（16 位梯度、参数）。
+
+      要减少模型状态，靠的是 ZeRO / FSDP 分片、8-bit 优化器、卸载等手段。
+
+  - id: TRN-MEM-003
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [训练显存账本, 显存估算]
+    source: 'ZeRO（Rajbhandari 等）arXiv:1910.02054；Reducing Activation Recomputation in Large Transformer Models（Korthikanti 等, 2022）arXiv:2205.05198'
+    question: |
+      全参训练一个大模型时，GPU 显存都花在了哪些地方？请给出估算方法，并说明估算时最容易遗漏的部分。
+    answer: |
+      1. **模型状态**（与参数量成正比）：混合精度 AdamW 为 BF16 权重 2 + 梯度 2 + 优化器 12（FP32 主权重、$m$、$v$）= 16 字节/参数，7B 约 112 GB；梯度用 FP32 累加时为 18 字节/参数。
+      2. **激活**（与 micro-batch × 序列长度成正比）：按 Korthikanti 等（2022）的估算，使用 FlashAttention、不做张量并行与重计算时每层约 $34sbh$ 字节，Llama-2-7B 在 $s=4096$、$b=1$ 时约 18 GB；开启全量重计算后每层只存约 $2sbh$。
+      3. **输出层 logits 与损失**：$s\times b\times V$ 个数，转成 FP32 时每个 4 字节；大词表 + 长序列时可达数 GB（Llama 3 在 $s=8192$ 时一条样本约 4 GB），反向时还有同样大小的梯度。
+      4. **临时缓冲**：矩阵乘的 workspace、优化器更新时的中间张量、通信缓冲（梯度分桶、参数 all-gather 的缓冲）。
+      5. **框架与系统开销**：CUDA 上下文（数百 MB 级）、cuBLAS / NCCL 的 workspace、缓存分配器的碎片（reserved 但未被使用的部分）。
+      6. **估算方法**：模型状态 = 字节数/参数 × 参数量；激活 = 每层公式 × 层数（随 $b$、$s$ 线性变化）；再加 logits；最后预留 10%～20% 的余量，并以实测的 `torch.cuda.max_memory_allocated()` 和显存快照为准。
+      7. **最易遗漏**：大词表下的 FP32 logits；梯度的实际精度；梯度累积并不减少模型状态；碎片导致「总量够却分配失败」。
+    rubric:
+      - '正确拆分模型状态 16 字节/参数并能代入估算（3 分）'
+      - '说明激活的估算方式及其与 batch、序列长度的关系（2 分）'
+      - '提到 logits、临时缓冲、CUDA 上下文与碎片等其他开销（3 分）'
+      - '给出估算流程、余量与实测验证方法（2 分）'
+    explanation: |
+      **常见失分点**：只算权重（7B 只算 14 GB）；不知道优化器状态是大头；忽视激活与序列长度的关系；完全没有提到 logits 和碎片；估算不留余量、也不用实测校准。
+
+  - id: TRN-MEM-004
+    type: calc
+    difficulty: 1
+    frequency: 2
+    points: [显存估算, 优化器状态, 卸载技术]
+    question: |
+      单张 80 GB 的 GPU（按 1 GB = $10^9$ 字节计），忽略激活与临时缓冲，全参训练时：
+      (1) 标准混合精度 AdamW（每参数 16 字节）最多能训练多大的模型？
+      (2) 把 $m$、$v$ 换成 8 bit（各 1 字节），仍保留 FP32 主权重，最多能训练多大？
+      (3) 把全部优化器状态（FP32 主权重与 $m$、$v$，共 12 字节/参数）卸载到 CPU 内存，GPU 上只留 BF16 权重和梯度，GPU 能容纳的上限是多少？此时 CPU 内存至少要存多少优化器状态？
+    answer: '(1) 约 5B；(2) 约 8B；(3) 约 20B，CPU 内存约 240 GB'
+    explanation: |
+      **(1)** $80\times10^9/16=5\times10^9$，约 **5B** 参数。
+
+      **(2)** 每参数 $2+2+4+1+1=10$ 字节，$80\times10^9/10=8\times10^9$，约 **8B**。
+
+      **(3)** GPU 上每参数只剩 $2+2=4$ 字节，$80\times10^9/4=2\times10^{10}$，约 **20B**；CPU 上的优化器状态 $2\times10^{10}\times12=2.4\times10^{11}$ 字节，约 **240 GB**。
+
+      **说明**：
+      - 实际还要给激活、logits、临时缓冲和碎片留出空间，可训练的规模明显更小；
+      - 8-bit 优化器（Dettmers 等, 2022）用分块量化保存 $m$、$v$，效果通常接近 32 位版本；
+      - 卸载用 PCIe 带宽和 CPU 计算换显存，每步都要在 CPU 与 GPU 之间传输梯度和参数，吞吐会下降，只有每步计算量足够大时才划算。
+
+  - id: TRN-MEM-005
+    type: calc
+    difficulty: 3
+    frequency: 2
+    points: [显存估算, 激活显存]
+    question: |
+      某 1.5B 参数的模型：隐藏维度 $h=1536$，28 层，词表 $V=151936$。单卡训练，序列长度 $s=4096$，micro-batch $b=8$，BF16 混合精度 AdamW，使用 FlashAttention。按以下口径估算（1 GB = $10^9$ 字节）：
+      - 模型状态 16 字节/参数；
+      - 激活每层 $34sbh$ 字节；
+      - 计算交叉熵前把整批 logits 转成 FP32 保存（只算这一份）。
+
+      (1) 三部分各约多少 GB？总计能否放进 80 GB？
+      (2) 开启全量激活重计算（每层只存 $2sbh$，另加一层的完整激活）后，总计约多少？此时哪一部分是除模型状态之外最大的显存项？
+    answer: '(1) 模型状态 24 GB、激活约 47.9 GB、logits 约 19.9 GB，合计约 92 GB，放不下；(2) 激活降到约 4.5 GB，合计约 48 GB，此时 FP32 logits（约 19.9 GB）成为最大的显存项'
+    explanation: |
+      **(1)**
+      - 模型状态：$1.5\times10^9\times16=24$ GB；
+      - 激活：$34\times4096\times8\times1536\times28\approx4.79\times10^{10}$ 字节，约 47.9 GB；
+      - logits：$4096\times8\times151936\times4\approx1.99\times10^{10}$ 字节，约 19.9 GB；
+      - 合计约 91.8 GB，超过 80 GB。
+
+      **(2)**
+      - 激活：$2sbh\times28+34sbh\approx2.82+1.71=4.53$ GB；
+      - 合计约 $24+4.5+19.9\approx48$ GB，可以放下；
+      - 此时 FP32 logits 约 19.9 GB，是激活的 4 倍多，成了最大的激活类显存项。
+
+      **启示**：小模型配大词表时，logits 的显存不可忽视：它与 $V$ 成正比，与模型的层数、隐藏维度无关。缓解办法是分块计算交叉熵，或使用把 LM Head 与交叉熵融合的算子，不一次性物化全部 logits；也可以保持 BF16、只在分块计算时转成 FP32，或减小 micro-batch、配合梯度累积。
+
+  - id: TRN-MEM-006
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [优化器状态]
+    source: 'Lion：Symbolic Discovery of Optimization Algorithms arXiv:2302.06675；Adafactor arXiv:1804.04235；8-bit Optimizers via Block-wise Quantization（Dettmers 等）arXiv:2110.02861'
+    tags: [Adafactor, 8-bit Adam, Lion]
+    question: |
+      关于不同优化器的状态显存，下列说法**正确**的有：
+    options:
+      A: 'Adafactor 把矩阵参数的二阶矩分解为行、列统计量，显存从 $O(mn)$ 降到 $O(m+n)$'
+      B: '带动量的 SGD 只存一份动量，保留 FP32 主权重时模型状态约 2 + 2 + 4 + 4 = 12 字节/参数'
+      C: '优化器状态的显存与 batch size 成正比：batch 越大，需要累计的梯度统计量越多，状态也越大'
+      D: '8-bit Adam 用分块量化把 $m$、$v$ 存成 8 bit，这部分显存约为 32 位版本的四分之一'
+      E: 'Lion 与 Adam 一样同时维护一阶矩和二阶矩，只是用符号函数决定更新方向，两者的优化器状态一样大'
+    answer: [A, B, D]
+    explanation: |
+      - A 对：Adafactor（Shazeer 与 Stern, 2018）把 $m\times n$ 矩阵的二阶矩近似为行和与列和的外积，大幅节省显存，还可以不保存一阶矩。
+      - B 对：BF16 权重 2 + BF16 梯度 2 + FP32 主权重 4 + FP32 动量 4 = 12 字节/参数。
+      - C 错：优化器状态是「每个参数一份」，只与参数量有关；与 batch、序列长度成正比的是激活。
+      - D 对：$m$、$v$ 从各 4 字节变为各 1 字节，即 8 字节降到约 2 字节（另有少量分块缩放常数）。Dettmers 等（2022）用分块量化与动态量化，使效果接近 32 位优化器。
+      - E 错：Lion 只维护一份动量，用符号函数决定更新方向，状态显存与带动量的 SGD 相当，比 Adam 少一半。
+  - id: TRN-MEM-007
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [优化器状态]
+    question: |
+      混合精度训练中，AdamW 的一阶矩 $m$ 和二阶矩 $v$ 通常以 FP32 保存，而不是像权重一样用 16 位。最主要的原因是：
+    options:
+      A: '优化器更新在 Tensor Core 上执行，而 Tensor Core 只接受 FP32 格式的优化器状态作为输入操作数'
+      B: '$m$ 和 $v$ 会参与前向中的归一化计算，必须与激活保持同样的高精度，否则 loss 会剧烈抖动'
+      C: '$v$ 是梯度平方的滑动平均，值很小、FP16 易下溢，且每步只按 $1-\beta$ 小幅变化，16 位难以记录'
+      D: '用 FP32 保存 $m$ 和 $v$ 时初始偏差可以忽略，优化器因此可以跳过偏差修正，节省每步的计算'
+    answer: C
+    explanation: |
+      **结论**：问题出在「数值很小」和「每步变化很小」两点上。
+
+      - 范围：FP16 的最小正规数约 $6.1\times10^{-5}$，最小次正规数约 $6\times10^{-8}$。梯度为 $10^{-4}$ 时 $g^2=10^{-8}$，在 FP16 中要么下溢为 0，要么只剩极少的有效位。
+      - 精度：滑动平均每步的相对变化约为 $1-\beta_2$。$\beta_2=0.999$ 时只有 0.1%，小于 BF16 的相对精度（约 0.4%），更新会被舍入吞掉，$v$ 停滞不动。
+
+      因此 FP32 是稳妥的默认选择。也有例外：DeepSeek-V3 用 BF16 保存 AdamW 的 $m$、$v$，报告没有观察到效果下降（它的 $\beta_2=0.95$，每步相对变化 5%，远大于 BF16 的精度）。
+
+      - A 错：优化器更新是逐元素运算，不走 Tensor Core。
+      - B 错：$m$、$v$ 只在参数更新时使用，不参与前向。
+      - D 错：偏差修正针对的是 $m$、$v$ 从 0 初始化带来的初期偏小，与存储精度无关。
+
+  - id: TRN-MEM-008
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [优化器状态, FP16与BF16]
+    question: |
+      下面的代码模拟 Adam 二阶矩的滑动平均更新（$\beta_2=0.999$，新的 $g^2$ 恒为 2.0），分别用 FP32 和 BF16 保存 $v$。输出是什么？
+    code: |
+      import torch
+
+      for dt in (torch.float32, torch.bfloat16):
+          v = torch.tensor(1.0, dtype=dt)          # 二阶矩的当前值
+          for _ in range(100):
+              v = 0.999 * v + 0.001 * 2.0
+          print(dt, round(v.item(), 4))
+    answer: |
+      torch.float32 1.0952
+      torch.bfloat16 1.0
+    explanation: |
+      - **FP32**：$v_{100}=2-(2-1)\times0.999^{100}\approx2-0.9048=1.0952$，正常地向 2.0 靠拢。
+      - **BF16**：BF16 在 1.0 附近的间距是：1 以下为 $2^{-8}\approx0.0039$，1 以上为 $2^{-7}\approx0.0078$。第一步 $0.999\times1.0=0.999$，与 1.0 只差 0.001，小于半个间距，舍入回 1.0；再加 0.002 得 1.002，同样舍入回 1.0。每一步都回到 1.0，$v$ 永远停在原地。
+
+      这就是低精度滑动平均的「停滞」：每步的相对变化小于该格式相对精度的一半时，更新会被完全吞掉。所以 $m$、$v$ 一般用 FP32 保存；$\beta_2=0.95$ 时每步变化 5%，BF16 尚能记录，这也是 DeepSeek-V3 能用 BF16 保存优化器矩的原因之一。同样的道理也解释了为什么需要 FP32 主权重。
+
+  - id: TRN-MEM-009
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [激活显存]
+    question: |
+      关于训练时的激活显存，下列说法**正确**的有：
+    options:
+      A: '增加数据并行的卡数，即使每卡的 micro-batch 不变，也能按比例降低每张卡上的激活显存'
+      B: '换用更省显存的优化器（如 8-bit Adam）后，激活显存也会按相同比例减少'
+      C: '使用 FlashAttention 时，每层激活约与 micro-batch × 序列长度 × 隐藏维度成正比'
+      D: '激活显存的峰值通常出现在前向刚结束、反向刚开始的时候，此时各层为反向保存的中间结果都还在'
+      E: '激活显存只与参数量有关，与序列长度和 batch 无关'
+    answer: [C, D]
+    explanation: |
+      - A 错：数据并行时每张卡处理自己的 micro-batch，激活只取决于每卡的 $b$ 和 $s$；能切分激活的是张量并行、序列并行、上下文并行等。
+      - B 错：优化器状态与激活是两本独立的账，8-bit 优化器只减少 $m$、$v$ 的显存，激活不受影响。
+      - C 对：FlashAttention 不保存 $s\times s$ 的注意力矩阵，剩下的激活（各线性层的输入、归一化与激活函数的输入输出等）都与 $sbh$ 成正比，Korthikanti 等（2022）估算每层约 $34sbh$ 字节。
+      - D 对：前向过程中激活不断累积，前向结束时达到最大；反向逐层进行，用完的激活随即释放，同时产生梯度。因此估算峰值时要把「全部激活 + 模型状态 + logits」放在一起看。
+      - E 错：激活是前向时为反向保存的中间结果，规模由「处理了多少 token」决定，与 $b$、$s$ 成正比。
+  - id: TRN-MEM-010
+    type: calc
+    difficulty: 2
+    frequency: 3
+    points: [激活显存, 激活重计算]
+    tags: [Llama-2-7B]
+    question: |
+      以 Llama-2-7B（32 层，$h=4096$）为例，按「每层激活约 $34sbh$ 字节」（使用 FlashAttention、不做张量并行）估算，序列长度 $s=4096$，micro-batch $b=4$（1 GB = $10^9$ 字节）：
+      (1) 不做重计算时，32 层的激活共约多少 GB？
+      (2) 开启全量重计算：每层只保存输入（$2sbh$ 字节），反向时再重算出一层的完整激活。此时激活约多少 GB？
+      (3) 重计算让每个 token 的训练计算量大约增加多少？
+    answer: '(1) 约 73 GB；(2) 约 6.6 GB；(3) 多一次前向，从约 6N 增加到约 8N FLOPs，即约多 33%'
+    explanation: |
+      **(1)** $34\times4096\times4\times4096\times32\approx7.30\times10^{10}$ 字节，约 **73 GB**，再加上 112 GB 的模型状态，单卡远远放不下。
+
+      **(2)**
+      - 各层输入：$2\times4096\times4\times4096\times32\approx4.29$ GB；
+      - 反向时临时重算的一层：$34\times4096\times4\times4096\approx2.28$ GB；
+      - 合计约 **6.6 GB**，约为原来的 1/11。
+
+      **(3)** 前向约 $2N$ FLOPs/token，反向约 $4N$；重计算额外多做一次前向，总量约 $8N$，比 $6N$ 多约 **33%**。
+
+      说明：计算 MFU 时分子仍按 $6N$ 统计，重计算会让 MFU 下降；按硬件实际执行的 $8N$ 统计的利用率称为 HFU。显存省下来以后往往可以加大 micro-batch，提高 GPU 利用率，因此整体吞吐的下降通常小于 33%。
+
+  - id: TRN-MEM-011
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [激活重计算]
+    question: |
+      开启全量激活重计算后，反向传播时需要把每层的前向再算一遍，因此一步训练的计算量大约增加三分之一，而不是翻倍。
+    answer: true
+    explanation: |
+      **正确**。一步训练中，前向约占 $2N$ FLOPs/token，反向约占 $4N$（既要算对激活的梯度，又要算对权重的梯度），前向与反向的计算量之比约为 1:2。全量重计算只额外多做一次前向，总量从 $6N$ 变为 $8N$，即增加约 1/3。
+
+      实际耗时的增加通常在 20%～35% 之间，取决于通信能否重叠、重算部分的算子效率等。选择性重计算只重算注意力中「占显存多、计算量小」的部分，额外开销小得多。
+
+  - id: TRN-MEM-012
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [激活重计算]
+    tags: [选择性重计算, Megatron-LM]
+    question: |
+      Korthikanti 等（2022）提出「选择性激活重计算」：只重算注意力中 Softmax、Dropout 以及 $QK^\top$、注意力加权求和等部分，其余激活照常保存。这样选择的主要依据是：
+    options:
+      A: '注意力层的参数在整个 Transformer 层中占比最大，重算时可以暂时释放这些参数，省下的显存最多'
+      B: 'Softmax 和 Dropout 的输出以低精度保存时误差较大，重算一遍能得到更精确的激活，训练更稳定'
+      C: 'MLP 中的 GeLU 是不可逆的非线性，无法从层输入重算出来，所以只能保存 MLP 的激活'
+      D: '这部分激活（含 $s\times s$ 的注意力矩阵）占显存很大，而重算所需的计算量相对很小'
+    answer: D
+    explanation: |
+      **结论**：重计算要挑「显存/计算比」最高的部分。
+
+      不用 FlashAttention 时，注意力中 Softmax 输出、Dropout 掩码等与 $s^2$ 成正比，每层约 $5as^2b$ 字节，序列一长就超过其余所有激活；而它们的计算量远小于各个大矩阵乘。只重算这部分，就能以很小的开销省下大部分激活。论文报告：序列并行与选择性重计算结合，激活显存可降低约 5 倍，同时把重计算带来的额外开销减少 90% 以上。
+
+      FlashAttention 本身就不保存 $s\times s$ 的注意力矩阵，反向时分块重算，相当于把这种「选择性重计算」做进了算子内部。
+
+      - A 错：重计算节省的是激活，不是参数显存；而且 MLP 的参数比注意力更多。
+      - B 错：重计算得到的是同样的结果，与精度无关。
+      - C 错：重计算只需从保存的输入再做一遍前向，不要求函数可逆。MLP 当然可以重算，全量重计算就会重算它，只是它的「显存/计算比」不如注意力的这部分划算。
+
+  - id: TRN-MEM-013
+    type: fill
+    difficulty: 2
+    frequency: 1
+    points: [激活重计算]
+    tags: [次线性显存]
+    question: |
+      Chen 等（2016）的「次线性显存」思路：$n$ 层网络每隔 $k$ 层保存一个检查点，反向时逐段重算。若每层激活记为 1 个单位，显存约为「检查点数 $n/k$ + 一段内的 $k$ 层激活」。对 $n=64$ 层，使显存最小的 $k$ 为 ____，此时约需 ____ 个单位的显存（不做重计算时为 64 个单位）。
+    answer: ['8', '16']
+    explanation: |
+      最小化 $f(k)=n/k+k$：令 $f'(k)=-n/k^2+1=0$，得 $k=\sqrt n=8$，此时 $f=8+8=16$。一般地，显存从 $O(n)$ 降到 $O(\sqrt n)$，代价约为多做一次前向。
+
+      在大模型训练中，常见做法是以每个 Transformer 层为单位做检查点（只保存每层的输入）。这与上面的模型并不矛盾：每层输入只有 $2sbh$ 字节，远小于一层的完整激活（约 $34sbh$），检查点本身的「单位」很小，所以逐层保存输入已经能把激活降到原来的十几分之一。
+    source: 'Training Deep Nets with Sublinear Memory Cost（Chen 等, 2016）arXiv:1604.06174'
+
+  - id: TRN-MEM-014
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [激活重计算, 激活显存]
+    question: |
+      什么是激活重计算（activation recomputation / gradient checkpointing）？它保存什么、重算什么、代价是什么？全量重计算、选择性重计算和激活卸载有什么区别？实践中如何决定用不用、用到什么粒度？
+    answer: |
+      1. **原理**：前向时只保存一部分张量（如每个 Transformer 层的输入），其余中间激活用完即释放；反向传播到某一层时，先用保存的输入把这一层的前向重算一遍，得到所需的激活后再求梯度。
+      2. **代价**：多做一次前向，计算量约增加 1/3（$6N\to8N$ FLOPs/token），吞吐通常下降两三成；换来的是激活显存大幅下降，每层从约 $34sbh$ 降到 $2sbh$ 字节（Llama-2-7B、$s=4096$、$b=1$ 时从约 18 GB 降到约 1.6 GB）。
+      3. **几种变体**：
+         - 全量重计算：每层只存输入，省得最多、开销最大；
+         - 选择性重计算：只重算注意力中显存占用大、计算量小的部分（Korthikanti 等, 2022），额外开销很小；FlashAttention 在反向时重算注意力矩阵，本身就带有这种效果；
+         - 间隔若干层设一个检查点（$\sqrt n$ 策略），在显存与重算量之间折中；
+         - 激活卸载：把需要保存的激活拷到 CPU 内存，反向时再取回，用 PCIe 带宽换显存，可以与计算重叠，不增加计算量。
+      4. **怎么选**：
+         - 先算显存账本：放得下就不开，保住吞吐；
+         - 放不下时先用选择性重计算，或只对一部分层开全量重计算，在显存与速度之间找平衡；
+         - 开启后常常能加大 micro-batch，提高 GPU 利用率，整体吞吐不一定明显下降；
+         - 长序列训练几乎都要开。
+      5. **注意事项**：Dropout 等随机操作重算时要复现相同的随机数（保存 RNG 状态）；与 FSDP / ZeRO-3 结合时，重算前向需要再次 all-gather 参数，通信量增加。
+    rubric:
+      - '说清保存什么、重算什么（3 分）'
+      - '说明计算代价约增加 1/3 及显存收益的量级（2 分）'
+      - '区分全量重计算、选择性重计算与激活卸载（3 分）'
+      - '给出是否开启、开到什么粒度的决策思路（2 分）'
+    explanation: |
+      **常见失分点**：以为重计算会让计算量翻倍；说不出保存的是什么（每层输入）；不知道选择性重计算和 FlashAttention 的关系；把重计算和「梯度累积」混为一谈（后者减少的是每个 micro-batch 的激活，不需要重算）。
+
+  - id: TRN-MEM-015
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [FP16与BF16]
+    question: |
+      FP32、FP16、BF16 的「符号 / 指数 / 尾数」位数分别为 1/8/23、1/5/10、1/8/7。据此判断，下列说法正确的是：
+    options:
+      A: 'BF16 与 FP32 指数位相同、范围相当，但尾数只有 7 位，精度低于 FP16'
+      B: 'BF16 的精度比 FP16 高：指数位多了 3 位，相邻两个可表示数之间的间距更小'
+      C: 'FP16 的表示范围比 BF16 大：它的尾数多出 3 位，能表示的最大值和最小值都更极端'
+      D: 'BF16 和 FP16 都是 16 位，可表示的数值个数相同，因此表示范围和精度基本一致'
+    answer: A
+    explanation: |
+      **结论**：指数位决定范围，尾数位决定精度。
+
+      | 格式 | 最大值 | 最小正规数 | 机器精度 |
+      |---|---|---|---|
+      | FP32 | 约 $3.4\times10^{38}$ | 约 $1.2\times10^{-38}$ | $2^{-23}\approx1.2\times10^{-7}$ |
+      | FP16 | 65504 | 约 $6.1\times10^{-5}$ | $2^{-10}\approx9.8\times10^{-4}$ |
+      | BF16 | 约 $3.4\times10^{38}$ | 约 $1.2\times10^{-38}$ | $2^{-7}\approx7.8\times10^{-3}$ |
+
+      BF16 就是 FP32 的高 16 位，范围与 FP32 相当，与 FP32 互转只需截断或舍入尾数，所以训练中几乎不会溢出或下溢；代价是精度只有约 2～3 位有效十进制数字，需要 FP32 主权重和 FP32 累加来弥补。
+
+      - B 错：方向反了。精度由尾数位决定，BF16 只有 7 位尾数，精度更低；指数位决定的是范围。
+      - C 错：范围由指数位决定，FP16 只有 5 位指数，范围远小于 BF16。
+      - D 错：位数相同、可表示的数值个数相同，但指数与尾数的分配不同，范围和精度也就不同。
+
+  - id: TRN-MEM-016
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [FP16与BF16]
+    question: |
+      FP16 的指数偏置为 15，指数域全 1 保留给 inf 与 NaN，因此正规数可用的最大指数为 ____，FP16 能表示的最大有限值为 ____；BF16 的机器精度（1 与比 1 大的下一个可表示数之差）为 ____。
+    answer: ['15', '65504', ['0.0078125', '2^-7', '1/128', '0.0078']]
+    explanation: |
+      - 5 位指数域的取值为 0～31，31 保留给 inf / NaN，0 用于零和次正规数，所以最大指数域为 30，减去偏置 15 得最大指数 **15**。
+      - 最大尾数为 $1.1111111111_2=2-2^{-10}$，最大值 $=2^{15}\times(2-2^{-10})=65536-32=$ **65504**。
+      - BF16 有 7 位尾数，1 附近的间距为 $2^{-7}=$ **0.0078125**；对比 FP16 的 $2^{-10}\approx0.00098$、FP32 的 $2^{-23}\approx1.2\times10^{-7}$。
+
+      同理，FP16 的最小正规数为 $2^{-14}\approx6.1\times10^{-5}$，最小次正规数为 $2^{-24}\approx6\times10^{-8}$，比它更小的梯度会直接变成 0，这就是 FP16 训练需要 loss scaling 的原因。
+
+  - id: TRN-MEM-017
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [FP16与BF16]
+    tags: [torch.finfo]
+    question: |
+      下面的代码用 `torch.finfo` 查看 FP16 与 BF16 的机器精度和范围，并做两次加法。输出是什么？
+    code: |
+      import torch
+
+      for dt in (torch.float16, torch.bfloat16):
+          fi = torch.finfo(dt)
+          w = torch.tensor(1.0, dtype=dt)
+          print(fi.eps, fi.max > 1e5, (w + fi.eps / 4).item(), (w + fi.eps).item())
+    answer: |
+      0.0009765625 False 1.0 1.0009765625
+      0.0078125 True 1.0 1.0078125
+    explanation: |
+      - `fi.eps`：1 与下一个可表示数之差，FP16 为 $2^{-10}=0.0009765625$，BF16 为 $2^{-7}=0.0078125$。
+      - `fi.max > 1e5`：FP16 的最大值只有 65504，为 False；BF16 约 $3.39\times10^{38}$，为 True。
+      - `w + eps/4`：增量小于半个间距，按就近舍入回到 1.0，增量被「吞掉」。
+      - `w + eps`：恰好是下一个可表示数。
+
+      这两个现象分别对应混合精度的两大问题：FP16 范围小，容易溢出和下溢，需要 loss scaling；BF16 精度低，小的更新会被吞掉，需要 FP32 主权重。
+
+  - id: TRN-MEM-018
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [FP16与BF16]
+    question: |
+      用 BF16 训练的模型，推理时改用 FP16 结果会更准确：FP16 的尾数位更多、精度更高，而两者的指数位数相同，能表示的数值范围也一样。
+    answer: false
+    explanation: |
+      **错误**。FP16 的精度确实更高（10 位尾数，BF16 只有 7 位），但两者的指数位不同：BF16 有 8 位指数，范围与 FP32 相当（最大约 $3.4\times10^{38}$）；FP16 只有 5 位指数，最大只能表示 65504。BF16 训练时数值范围几乎不受限制，模型中某些激活（如残差流中的离群值、部分 FFN 输出、注意力打分）可能超过 65504，改用 FP16 后会溢出成 inf，进而产生 NaN。典型例子是在 TPU 上用 BF16 训练的 T5，直接用 FP16 推理会出现 inf / NaN，Hugging Face 为此在 T5 的 FP16 路径中加入了数值截断。
+
+      大多数模型在 FP16 下可以正常推理，但必须实测验证；出现问题时，可以改用 BF16 推理、让少数层保持 FP32，或对溢出的位置做截断与缩放。
+
+  - id: TRN-MEM-019
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [FP16与BF16, Loss Scaling]
+    question: |
+      用 FP16 做混合精度训练通常必须配合 loss scaling，而用 BF16 时一般不需要。最主要的原因是：
+    options:
+      A: 'BF16 的尾数位比 FP16 更多，有效数字更长，量级很小的梯度在 BF16 中也不会被舍入为 0'
+      B: 'BF16 有 8 位指数、范围与 FP32 相当，小梯度不会下溢；FP16 只有 5 位指数，小梯度易变成 0'
+      C: 'BF16 训练时 Tensor Core 会自动把梯度放大 $2^{16}$ 倍再输出，相当于内置了 loss scaling'
+      D: 'BF16 训练时反向传播全程在 FP32 中计算和存储梯度，下溢问题与 BF16 格式本身无关'
+    answer: B
+    explanation: |
+      **结论**：loss scaling 解决的是**范围**（下溢）问题，而 BF16 的范围与 FP32 相当。
+
+      反向传播中，很多激活梯度都很小（$10^{-6}$ 乃至更小）。FP16 的最小正规数约 $6.1\times10^{-5}$，更小的值只能用有效位越来越少的次正规数表示，小于约 $6\times10^{-8}$ 就直接变成 0。把 loss 乘以 $S$，所有梯度同比放大，就被「搬」回了可表示区间。BF16 的最小正规数约 $1.2\times10^{-38}$，不存在这个问题。
+
+      - A 错：BF16 只有 7 位尾数，比 FP16 的 10 位少，它的弱点恰恰是精度。
+      - C 错：硬件不会自动缩放梯度，loss scaling 要由训练框架显式实现。
+      - D 错：矩阵乘内部用 FP32 累加，但输出的激活梯度仍以 BF16 存储和传递。
+
+  - id: TRN-MEM-020
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [FP8训练]
+    tags: [E4M3, E5M2, Transformer Engine]
+    question: |
+      FP8 有 E4M3（4 位指数、3 位尾数，最大约 448）和 E5M2（5 位指数、2 位尾数，最大约 57344）两种格式。NVIDIA Transformer Engine 常用的「混合（HYBRID）」方案是：
+    options:
+      A: '前向与反向都用 E5M2：范围更大，权重、激活和梯度都不易溢出，可以省去缩放因子'
+      B: '前向与反向都用 E4M3：尾数多一位、精度更高，配合按张量的缩放因子即可覆盖梯度的范围'
+      C: '前向的权重和激活用 E4M3 以保精度，反向的梯度用 E5M2 以保范围'
+      D: '前向用 E5M2、反向用 E4M3：梯度要逐步累加到权重上，比激活更需要精度，激活则需要范围'
+    answer: C
+    explanation: |
+      **结论**：前向要精度，反向要范围。
+
+      权重和激活的分布相对集中，用尾数多一位的 E4M3 更精确；梯度的动态范围更大，用指数多一位的 E5M2 更不容易溢出或下溢。即便如此，FP8 的范围仍然很窄，必须为张量配上缩放因子（如根据历史最大绝对值 amax 计算的延迟缩放）。
+
+      - A 错：前向用 E5M2 会损失不必要的精度；而且无论用哪种格式，FP8 的范围都很窄，必须配缩放因子。
+      - B 错：这不是 Transformer Engine 的混合方案。不过 DeepSeek-V3 确实前向、反向全部使用 E4M3，前提是采用了细粒度的分块缩放，让每一小块数据都能落在合适的范围内。
+      - D 错：方向反了，前向用 E5M2 会损失不必要的精度，而梯度恰恰更需要范围。
+
+      收益：H100 上 FP8 矩阵乘的峰值吞吐约为 BF16 的 2 倍。
+
+  - id: TRN-MEM-021
+    type: code_output
+    difficulty: 2
+    frequency: 1
+    points: [FP8训练]
+    question: |
+      下面的代码把同一组数分别转换成 FP8 的 E4M3 与 E5M2 格式再转回 FP32。输出是什么？
+    code: |
+      import torch
+
+      x = torch.tensor([300.0, 3.3, 0.0005])
+      print(x.to(torch.float8_e4m3fn).float().tolist())
+      print(x.to(torch.float8_e5m2).float().tolist())
+      print(torch.finfo(torch.float8_e4m3fn).max, torch.finfo(torch.float8_e5m2).max)
+    answer: |
+      [288.0, 3.25, 0.0]
+      [320.0, 3.5, 0.00048828125]
+      448.0 57344.0
+    explanation: |
+      FP8 只有 2～3 位尾数，每个 2 的幂区间里只有 4 个（E5M2）或 8 个（E4M3）可表示的数：
+      - **300**：在 $[256,512)$ 中，E4M3 的间距为 $256/8=32$，可选 288 或 320，300 更接近 **288**；E5M2 的间距为 $256/4=64$，可选 256 或 320，舍入为 **320**。
+      - **3.3**：在 $[2,4)$ 中，E4M3 的间距为 0.25，得 **3.25**；E5M2 的间距为 0.5，得 **3.5**。
+      - **0.0005**：E4M3 的最小次正规数为 $2^{-9}\approx0.00195$，0.0005 不到它的一半，直接变成 **0**；E5M2 的范围更大，0.0005 落在 $[2^{-11},2^{-10})$，舍入为 $2^{-11}=$ **0.00048828125**。
+      - 最大值：E4M3（`fn` 表示只有有限值、不表示 inf）为 448，E5M2 为 57344。
+
+      结论：E4M3 精度更高、范围更窄，E5M2 反之；不论哪种，小数值都容易下溢、大数值容易溢出，所以 FP8 训练离不开缩放因子。
+
+  - id: TRN-MEM-022
+    type: multiple
+    difficulty: 3
+    frequency: 2
+    points: [FP8训练]
+    tags: [DeepSeek-V3]
+    question: |
+      DeepSeek-V3 是公开的超大规模 FP8 混合精度训练案例。关于它的做法，下列说法**正确**的有：
+    options:
+      A: '矩阵乘每累加一定长度就把部分和提升到 FP32 累加，弥补 Tensor Core 中 FP8 累加精度不足'
+      B: '主权重和用于累加的梯度仍为 FP32，AdamW 的一阶矩、二阶矩改用 BF16 保存'
+      C: '前向用 E4M3、反向梯度用 E5M2，即 Transformer Engine 式的混合格式'
+      D: 'Embedding、输出层、MoE 门控、归一化和注意力等精度敏感部分仍用 BF16 或 FP32'
+      E: '激活按 1×128、权重按 128×128 的块分别计算缩放因子，以应对离群值'
+    answer: [A, B, D, E]
+    explanation: |
+      **结论**：A、B、D、E 正确，只有 C 错。
+
+      - A 对：论文发现 H800 上 FP8 矩阵乘的内部累加精度有限，于是每累加 128 个元素就把部分和提升到 CUDA Core 上以 FP32 累加。
+      - B 对：论文在「低精度存储与通信」部分说明，AdamW 的 $m$、$v$ 用 BF16 代替 FP32 跟踪，没有观察到效果下降；优化器保存的主权重和用于跨 micro-batch 累加的梯度则仍保留 FP32，以保证数值稳定。这些状态都没有压到 FP8。
+      - C 错：DeepSeek-V3 在所有张量上都使用 E4M3，借助细粒度缩放换取更高的精度，而不是混合格式。
+      - D 对：这些模块计算量占比小，但对精度敏感，保留高精度的代价很小。
+      - E 对：这就是细粒度量化。按张量取一个缩放因子时，少数离群值会让其余数值都挤在很窄的区间里；分块缩放让每一小块各自适配范围。
+
+      论文报告，FP8 训练相对 BF16 基线的 loss 相对误差保持在 0.25% 以内。
+    source: 'DeepSeek-V3 技术报告 arXiv:2412.19437'
+
+  - id: TRN-MEM-023
+    type: short
+    difficulty: 3
+    frequency: 2
+    points: [FP8训练]
+    question: |
+      FP8 训练相比 BF16 训练能带来什么收益？主要难点是什么？业界有哪些应对方法？
+    answer: |
+      1. **收益**：
+         - H100 等硬件上 FP8 矩阵乘的峰值吞吐约为 BF16 的 2 倍（稠密约 1979 对 989 TFLOPS）；
+         - 以 FP8 保存激活、传输参数时，显存与通信量减半。
+      2. **难点**：
+         - **范围窄**：E4M3 最大 448、E5M2 最大 57344，直接转换会溢出或下溢，必须配缩放因子；
+         - **离群值**：激活中个别通道、个别 token 的值远大于其余，按整个张量取一个缩放因子会让大多数值的精度极差；
+         - **精度低**：只有 2～3 位尾数，矩阵乘内部累加误差大；
+         - **稳定性**：误差在长时间训练中累积，可能导致后期发散，需要与 BF16 长时间对比验证。
+      3. **应对方法**：
+         - **缩放策略**：按张量的延迟缩放（Transformer Engine 用历史 amax 计算缩放因子）；细粒度分块缩放（DeepSeek-V3：激活 1×128、权重 128×128）；Blackwell 等新硬件原生支持 MXFP8 这类微缩放格式（每 32 个元素共享一个 8 位指数形式的缩放因子）；
+         - **格式选择**：前向 E4M3、反向 E5M2 的混合方案，或在细粒度缩放下全部使用 E4M3；
+         - **高精度累加**：分段把部分和提升到 FP32 累加；
+         - **敏感模块保留高精度**：Embedding、输出层、归一化、注意力、MoE 门控用 BF16 / FP32，主权重与梯度保持 FP32；
+         - **验证**：与 BF16 训练对比 loss 曲线和下游指标（DeepSeek-V3 报告 loss 相对误差低于 0.25%）。
+    rubric:
+      - '说明吞吐翻倍、显存与通信减半等收益（2 分）'
+      - '说明范围窄、离群值、精度低、长期稳定性等难点（3 分）'
+      - '给出缩放策略、格式选择、高精度累加、敏感模块保留高精度等方法（4 分）'
+      - '提到与 BF16 基线对比验证（1 分）'
+    explanation: |
+      **常见失分点**：以为 FP8 训练只是「把 dtype 改成 FP8」；说不出缩放因子的作用；不知道 E4M3 与 E5M2 的取舍；忽视主权重和优化器状态仍需高精度；没有验证方案。
+
+  - id: TRN-MEM-024
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [Loss Scaling]
+    tags: [GradScaler]
+    question: |
+      关于 FP16 训练中的动态 loss scaling（如 PyTorch 的 `GradScaler`），下列描述正确的是：
+    options:
+      A: '训练开始时根据首步梯度的大小选定一个 scale，此后每一步都用这个固定值放大 loss，不再调整'
+      B: '检测到梯度中有 inf / NaN 时，把这些元素置零、其余梯度照常更新参数，避免浪费整步计算'
+      C: '检测到溢出时把 scale 翻倍以扩大可表示范围；连续若干步正常后再把 scale 减半，防止下溢'
+      D: '梯度出现 inf / NaN 时跳过本步并把 scale 减半，连续若干步无溢出后再把 scale 翻倍'
+    answer: D
+    explanation: |
+      **结论**：动态 loss scaling 让 scale 始终在「刚好不溢出」的上限附近试探。
+
+      PyTorch `GradScaler` 的默认值：初始 scale 为 $2^{16}=65536$，增长因子 2，回退因子 0.5，增长间隔 2000 步。scale 太大就会溢出（跳步、减半），太小又会让小梯度下溢，周期性地翻倍可以重新试探更大的安全值。
+
+      - A 错：这是静态 loss scaling，需要人工调参，无法适应训练中梯度幅度的变化。
+      - B 错：只修正部分元素会得到错误的梯度；溢出时必须整步跳过，所有参数一起不更新。
+      - C 错：方向反了。溢出说明 scale 太大，应减半；放大 scale 并不能扩大格式本身的可表示范围。
+
+  - id: TRN-MEM-025
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [Loss Scaling]
+    question: |
+      用 PyTorch `GradScaler` 做 FP16 训练：初始 scale 为 $2^{16}$，增长间隔 2000 步（连续 2000 步无溢出就把 scale 翻倍；一旦溢出就跳过该步并把 scale 减半）。假设整个训练中，未缩放梯度的最大绝对值恒为 8，缩放后超过 FP16 的最大值 65504 即溢出，其他环节都不溢出。
+      (1) 训练开始后要跳过几步才能稳定下来？稳定时的 scale 是多少？
+      (2) 前 10000 步中一共跳过了多少步？
+    answer: '(1) 跳过 4 步，scale 稳定在 2^12（4096）；(2) 共跳过 8 步'
+    explanation: |
+      **(1)** 依次检查 $8\times S$ 是否超过 65504：
+      - $2^{16}$：524288，溢出；$2^{15}$：262144，溢出；$2^{14}$：131072，溢出；
+      - $2^{13}$：65536 > 65504，仍然溢出；
+      - $2^{12}$：32768，正常。
+      前 4 步被跳过，从第 5 步起 scale 为 $2^{12}=4096$。
+
+      **(2)** 第 5～2004 步连续 2000 步正常，scale 翻倍到 $2^{13}$；第 2005 步溢出，跳过并减半回 $2^{12}$。之后每 2001 步重复一次：第 4006、6007、8008 步各跳过一次；第 8009～10000 步只有 1992 步，不足 2000，不再翻倍。共跳过 $4+4=8$ 步，占 0.08%。
+
+      **讨论**：周期性的「翻倍—溢出—减半」是动态 loss scaling 的正常行为，开销很小；但跳过的步意味着这些 batch 被浪费，梯度分布变化剧烈时跳步会更频繁，要监控跳步比例。BF16 训练没有这个问题。
+
+  - id: TRN-MEM-026
+    type: code_debug
+    difficulty: 2
+    frequency: 2
+    points: [Loss Scaling]
+    question: |
+      下面的函数接收 loss 放大 `scale` 倍后反向得到的 FP16 梯度，负责还原真实梯度并做全局梯度裁剪。实际训练中发现，即使真实梯度的范数远小于阈值，更新也几乎不动。请指出 bug 并修正。
+    code: |
+      import torch
+
+      def unscale_and_clip(scaled_grads, scale, max_norm):
+          """返回可直接用于参数更新的真实梯度（FP32）"""
+          total = torch.sqrt(sum((g.float() ** 2).sum() for g in scaled_grads)).item()
+          coef = min(1.0, max_norm / (total + 1e-6))
+          return [g.float() * coef / scale for g in scaled_grads]
+    fixed_code: |
+      import torch
+
+      def unscale_and_clip(scaled_grads, scale, max_norm):
+          """返回可直接用于参数更新的真实梯度（FP32）"""
+          grads = [g.float() / scale for g in scaled_grads]          # 先在 FP32 中还原
+          total = torch.sqrt(sum((g ** 2).sum() for g in grads)).item()
+          coef = min(1.0, max_norm / (total + 1e-6))
+          return [g * coef for g in grads]
+    test: |
+      scale = 1024.0
+      true = [torch.tensor([0.3, 0.4])]                      # 真实梯度范数 0.5
+      out = unscale_and_clip([(g * scale).half() for g in true], scale, max_norm=1.0)
+      assert torch.allclose(out[0], true[0], atol=1e-3)      # 小于阈值，不应被裁剪
+      big = [torch.tensor([3.0, 4.0])]                       # 真实梯度范数 5
+      out = unscale_and_clip([(g * scale).half() for g in big], scale, max_norm=1.0)
+      assert abs(out[0].norm().item() - 1.0) < 1e-3          # 应被裁剪到范数 1
+    answer: |
+      **问题**：梯度范数是在**放大后的梯度**上计算的，`total` 实际等于 `scale × 真实范数`。裁剪阈值本应针对真实梯度，结果几乎每一步都被大幅裁剪：真实范数 0.5、`scale = 1024` 时，`total = 512`，`coef ≈ 1/512`，更新被缩小了约 500 倍。
+
+      **修正**：先除以 `scale` 还原真实梯度，再计算范数并裁剪：
+
+      ```python
+      grads = [g.float() / scale for g in scaled_grads]
+      total = torch.sqrt(sum((g ** 2).sum() for g in grads)).item()
+      coef = min(1.0, max_norm / (total + 1e-6))
+      return [g * coef for g in grads]
+      ```
+    explanation: |
+      在 PyTorch AMP 中，正确顺序是：`scaler.scale(loss).backward()` → `scaler.unscale_(optimizer)` → `clip_grad_norm_(...)` → `scaler.step(optimizer)` → `scaler.update()`。漏掉 `unscale_` 直接裁剪，就会出现本题的 bug，而且由于动态 scale 一直在变，这个 bug 还会让有效学习率随 scale 一起忽大忽小，非常难排查。
+
+      另外两个细节：还原要在 FP32 中进行（FP16 梯度除以 scale 可能再次下溢）；若梯度中有 inf / NaN，`unscale_` 会记录下来，`scaler.step` 将跳过本步更新。
+
+  - id: TRN-MEM-027
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [Loss Scaling, FP16与BF16]
+    question: |
+      为什么 FP16 混合精度训练需要 loss scaling？请说明它的原理、动态 loss scaling 的流程、实现时的注意事项，以及为什么 BF16 训练通常不需要它。
+    answer: |
+      1. **原因**：FP16 只有 5 位指数，最小正规数约 $6.1\times10^{-5}$，最小次正规数约 $6\times10^{-8}$。反向传播中大量激活梯度很小，直接以 FP16 存储会下溢为 0，或只剩很少的有效位。模拟实验：$10^{-9}$～$10^{-3}$ 之间的梯度直接存成 FP16，约 24% 变成 0。
+      2. **原理**：反向传播对 loss 是线性的，把 loss 乘以 $S$，所有梯度都放大 $S$ 倍，整体移入 FP16 的可表示范围；参数更新前在 FP32 中除以 $S$ 还原。$S$ 取 2 的幂，乘除只改变指数、不引入舍入误差。
+      3. **动态流程**：初始 $S$ 取较大值（如 $2^{16}$）；每步检查梯度中是否有 inf / NaN：有则跳过本步更新、$S$ 减半；连续 $N$ 步（如 2000 步）正常则 $S$ 翻倍。$S$ 始终在「刚好不溢出」的上限附近试探。
+      4. **注意事项**：
+         - 先还原（unscale）再做梯度裁剪，否则裁剪阈值作用在放大后的梯度上；
+         - 溢出时整步跳过，所有参数一起不更新；
+         - 梯度累积时只在最后一个 micro-batch 之后统一检查和还原；
+         - 多卡训练时要同步各卡的溢出标志，保证所有卡同时跳过；
+         - 除以 $S$ 在 FP32 中进行；监控跳步比例。
+      5. **BF16**：8 位指数，范围与 FP32 相当，小梯度不会下溢，一般不需要 loss scaling。它的弱点是精度（7 位尾数），靠 FP32 主权重和 FP32 累加来弥补。
+    rubric:
+      - '说明 FP16 指数位少、小梯度下溢的原因（3 分）'
+      - '说明放大 loss、在 FP32 中还原的原理，以及取 2 的幂的理由（2 分）'
+      - '说清动态 loss scaling 的跳步、减半、翻倍流程（2 分）'
+      - '给出先还原再裁剪、整步跳过等实现注意事项（2 分）'
+      - '解释 BF16 为何一般不需要（1 分）'
+    explanation: |
+      **常见失分点**：说 loss scaling 是为了「防止溢出」（它主要防的是下溢，溢出反而是它带来的副作用、靠动态调整处理）；不知道溢出时要整步跳过；裁剪与还原的顺序搞反；说「BF16 精度更高所以不需要」。
+
+  - id: TRN-MEM-028
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [主权重]
+    question: |
+      混合精度训练中，为什么在 BF16 权重之外还要保留一份 FP32 的主权重（master weights）用于参数更新？
+    options:
+      A: '每步更新量远小于权重本身，直接加到 BF16 权重上会被舍入吞掉，FP32 主权重才能累积这些小更新'
+      B: 'FP32 主权重用于前向计算以保证 loss 的精度，BF16 副本只在反向传播中使用，以节省激活显存'
+      C: 'FP32 主权重可以直接写入检查点，免去保存时的格式转换，检查点文件也更小、加载更快'
+      D: 'BF16 的指数位占用了符号位，无法表示负数，更新后变为负值的权重需要用 FP32 保存'
+    answer: A
+    explanation: |
+      **结论**：主权重解决的是「小更新被舍入吞掉」的问题。
+
+      BF16 在 1.0 附近的间距是 $2^{-7}\approx0.0078$，学习率乘以更新方向后，每步的改变量常常只有 $10^{-4}$ 量级，加到 1.0 上会被舍入回 1.0。模拟实验：BF16 权重连加 1000 次 $10^{-4}$ 仍是 1.0，FP32 主权重则正确地变成 1.1。所以更新在 FP32 主权重上进行，再把结果转换成 BF16 副本供前向、反向使用。
+
+      - B 错：前向、反向用的是 16 位副本，FP32 主权重只用于更新。
+      - C 错：保存主权重会让检查点更大（每参数多 4 字节），而不是更小。
+      - D 错：BF16 有符号位，可以表示负数。
+
+      延伸：不保留主权重的纯 BF16 训练也是可行的，但需要随机舍入或 Kahan 补偿求和等技巧来保留小更新。
+
+  - id: TRN-MEM-029
+    type: fill
+    difficulty: 3
+    frequency: 2
+    points: [主权重, FP16与BF16]
+    question: |
+      BF16 有 7 位尾数。数值 1.0 之上相邻的可表示数是 ____；把 BF16 权重 1.0 加上 0.003（就近舍入），结果是 ____；把它减去 0.003，结果是 ____。
+    answer: ['1.0078125', ['1.0', '1'], '0.99609375']
+    explanation: |
+      - $[1,2)$ 区间内的间距为 $2^{-7}=0.0078125$，所以 1.0 之上相邻的数是 **1.0078125**。
+      - $1.003$ 落在 1.0 与 1.0078125 之间，离 1.0 更近，舍入为 **1.0**：增量被完全吞掉。
+      - $[0.5,1)$ 区间内的间距只有 $2^{-8}=0.00390625$。$0.997$ 落在 0.99609375 与 1.0 之间，离 0.99609375 只有约 0.0009，舍入为 **0.99609375**：减法「生效」了，但实际减少了约 0.0039，比期望的 0.003 多。
+
+      这种不对称说明：直接在 BF16 上累积小更新，不仅会丢失更新，还会引入**系统性偏差**（例如位于 2 的幂附近的权重更容易被往下推），这正是混合精度训练要用 FP32 主权重做更新的原因。
+
+  - id: TRN-MEM-030
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [主权重]
+    question: |
+      在经典的混合精度训练中，FP32 主权重只在优化器更新参数时使用；每步更新后再把它转换成 16 位副本，前向和反向使用的都是这个 16 位副本。
+    answer: true
+    explanation: |
+      **正确**。Micikevicius 等（2018）提出的流程是：每步把 FP32 主权重转换成 FP16 副本 → 用 16 位副本做前向和反向，得到 16 位梯度 → 梯度转换到 FP32（FP16 时先除以 loss scale）→ 在 FP32 主权重上执行优化器更新 → 再生成新的 16 位副本。ZeRO 论文把主权重算在优化器状态里（与 $m$、$v$ 合计 12 字节/参数）。
+
+      PyTorch 的 `autocast` 是另一种实现：模型参数本身就保持 FP32（相当于主权重），在矩阵乘等算子处临时转换成 BF16 / FP16 计算，思想是一致的。
+
+  - id: TRN-MEM-031
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [卸载技术]
+    tags: [ZeRO-Offload, DeepSpeed]
+    question: |
+      ZeRO-Offload 能在单张 V100（32 GB）上训练约 130 亿参数的模型。它的主要做法是：
+    options:
+      A: '把前向和反向计算搬到 CPU 上执行，GPU 只负责存放参数并做 Adam 更新，以减少显存占用'
+      B: '把梯度和优化器状态卸载到 CPU 内存并在 CPU 上执行 Adam 更新，前向和反向仍在 GPU 上'
+      C: '把模型权重压缩成 4 bit 存放在 GPU 上，计算时逐层解压为 16 位，显存降为原来的约四分之一'
+      D: '把激活和优化器状态写到 NVMe 固态硬盘，反向和更新时再读回，GPU 只保留当前层的数据'
+    answer: B
+    explanation: |
+      **结论**：把「占显存最多、计算量最小」的部分搬到 CPU。
+
+      优化器状态（FP32 主权重、$m$、$v$）占模型状态的 3/4，而 Adam 更新只是逐元素运算，计算量远小于前向和反向的矩阵乘。ZeRO-Offload 把它们放到 CPU 内存，用高度优化的 CPU Adam 实现完成更新；GPU 上只保留 16 位参数，负责前向和反向。每步 GPU→CPU 传 16 位梯度、CPU→GPU 传更新后的 16 位参数，共约 4 字节/参数。论文还提出「延迟一步的参数更新」，让 CPU 更新与下一步的 GPU 计算重叠。
+
+      - A 错：前向和反向的计算量巨大，放在 CPU 上会慢几个数量级。
+      - C 错：这是权重量化（如 QLoRA 的做法），不是 ZeRO-Offload。
+      - D 错：ZeRO-Offload 卸载的是梯度与优化器状态；把数据卸载到 NVMe 是后来 ZeRO-Infinity 扩展的能力。
+    source: 'ZeRO-Offload（Ren 等, 2021）arXiv:2101.06840'
+
+  - id: TRN-MEM-032
+    type: calc
+    difficulty: 3
+    frequency: 2
+    points: [卸载技术]
+    question: |
+      用 ZeRO-Offload 在单张 A100 上训练一个 13B 模型：每步把 FP16 梯度从 GPU 传到 CPU，再把更新后的 FP16 参数传回 GPU。假设 PCIe 有效带宽为 25 GB/s、两个方向的传输不重叠（1 GB = $10^9$ 字节）。
+      (1) 每步的 PCIe 传输量和耗时是多少？
+      (2) GPU 以 312 TFLOPS × 45% 的有效算力做前向和反向（每 token 按 $6N$ FLOPs 计），每步至少要处理多少 token，计算时间才能「盖住」传输时间？
+      (3) CPU 内存至少需要多大，才能放下 FP32 主权重、$m$、$v$ 以及 FP16 梯度？
+    answer: '(1) 52 GB，约 2.1 秒；(2) 约 3700 个 token；(3) 约 182 GB'
+    explanation: |
+      **(1)** 梯度与参数各 $13\times10^9\times2=26$ GB，合计 **52 GB**；耗时 $52/25\approx$ **2.1 秒**。
+
+      **(2)** 每 token 的计算量 $6\times13\times10^9=7.8\times10^{10}$ FLOPs；有效算力 $312\times10^{12}\times0.45\approx1.40\times10^{14}$ FLOPs/s；每个 token 约 $5.56\times10^{-4}$ 秒。要让计算时间不少于 2.08 秒，每步至少需要 $2.08/5.56\times10^{-4}\approx$ **3700** 个 token。
+
+      **(3)** $13\times10^9\times12=156$ GB（FP32 主权重、$m$、$v$）+ 26 GB（FP16 梯度）= **182 GB**。
+
+      **结论**：卸载的开销基本是「每步固定」的，每次参数更新处理的 token 越多，传输占比越小。实际中还要考虑：CPU 上 Adam 更新的耗时（受 CPU 内存带宽限制）；一台机器上多张卡共享 CPU 内存与 PCIe 通道；通信与计算的重叠程度。卸载适合「显存不够、但可以接受一定速度损失」的场景，比如单卡微调大模型。
+
+  - id: TRN-MEM-033
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [卸载技术]
+    tags: [ZeRO-Infinity]
+    question: |
+      关于训练中的卸载（offload）技术，下列说法**正确**的有：
+    options:
+      A: 'ZeRO-Infinity 除 CPU 内存外，还能把参数、梯度与优化器状态卸载到 NVMe 固态硬盘'
+      B: '卸载是用 PCIe 带宽和 CPU 计算换 GPU 显存，只有 GPU 计算能掩盖传输时，速度损失才可接受'
+      C: 'PCIe 带宽通常高于 GPU 显存（HBM）带宽，数据放在 CPU 内存反而读取更快，卸载几乎不影响吞吐'
+      D: '卸载能减少训练所需的总计算量，因此即使显存充足，开启卸载也能缩短训练时间'
+      E: '激活卸载会增加训练的总 FLOPs，因为被卸载到 CPU 的激活在反向时必须重新计算一遍'
+    answer: [A, B]
+    explanation: |
+      - A 对：ZeRO-Infinity 把 GPU 显存、CPU 内存和 NVMe 组成多级存储，可以训练远超 GPU 总显存的模型，并通过预取与重叠降低带宽瓶颈的影响。
+      - B 对：卸载的本质是用更慢的存储层级扩充容量，代价是传输时间和 CPU 计算时间。
+      - C 错：PCIe 4.0 x16 单向理论带宽约 32 GB/s，而 A100 / H100 的 HBM 带宽约 2～3.35 TB/s，相差约两个数量级，这正是卸载会拖慢训练的原因。
+      - D 错：卸载不减少计算，只改变数据存放的位置，通常会让训练变慢。
+      - E 错：这是把激活卸载与激活重计算混为一谈。激活卸载把需要保存的激活拷到 CPU 内存，反向时再取回，不需要重算、不增加 FLOPs，代价是 PCIe 传输，可以通过异步传输与计算重叠来隐藏；激活重计算才是「多算一次前向、换显存」。
+  - id: TRN-MEM-034
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [显存碎片]
+    question: |
+      训练中报错：`CUDA out of memory. Tried to allocate 2.00 GiB ... Of the allocated memory 60.00 GiB is allocated by PyTorch, and 15.00 GiB is reserved by PyTorch but unallocated.`（GPU 总显存约 80 GiB）。最可能的原因与最直接的缓解办法是：
+    options:
+      A: '模型状态与激活已接近 80 GiB 上限，只能换用显存更大的 GPU，或改用更大规模的模型并行'
+      B: '存在显存泄漏，那 15 GiB 是泄漏的张量，应在每步训练后调用 `torch.cuda.empty_cache()` 释放'
+      C: '显存碎片：约 15 GiB 空闲缓存被切成小块、凑不出连续 2 GiB，可开启 `expandable_segments`'
+      D: 'CUDA 驱动版本过低，无法分配大于 1 GiB 的单块显存，升级驱动并重启进程即可解决'
+    answer: C
+    explanation: |
+      **结论**：「reserved but unallocated」很大却分配失败，是典型的碎片问题，PyTorch 的报错信息本身也会建议尝试 `expandable_segments`。
+
+      PyTorch 的缓存分配器向驱动申请大块显存（segment），在其中切分给张量使用；张量释放后，空闲块留在缓存里复用。张量大小频繁变化（变长序列、动态 batch）时，空闲块被切得大小不一，与正在使用的块交错，出现「总空闲够、但没有一块足够大」的情况。设置环境变量 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 后，segment 可以按需扩展，显著减少这类碎片；其他办法包括 padding 到固定的几档长度、设置 `max_split_size_mb` 避免大块被切碎、降低峰值显存。
+
+      - A 错：报错显示还有约 15 GiB 已保留但未分配的显存，总量其实够用。
+      - B 错：「reserved but unallocated」说明这 15 GiB 没有被任何张量占用，并不是泄漏；`empty_cache()` 只能把完全空闲的缓存块还给驱动，不能移动正在使用的张量来整理碎片；每步调用还会拖慢训练。
+      - D 错：与驱动版本无关，驱动也没有这种单块大小的限制。
+
+  - id: TRN-MEM-035
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [显存碎片]
+    question: |
+      调用 `torch.cuda.empty_cache()` 可以整理已分配张量之间的显存碎片，把零散的空闲块合并成连续的大块，从而解决「reserved but unallocated 很大、却仍然 OOM」的问题。
+    answer: false
+    explanation: |
+      **错误**。`empty_cache()` 只会把缓存分配器中**完全空闲**的 segment 释放回 CUDA 驱动，它不会也不能移动正在使用的张量。碎片的根源是空闲块与正在使用的块交错在同一个 segment 里，这些 segment 不会被释放，碎片依然存在。它的主要用途是把显存让给其他进程，或让 `nvidia-smi` 显示的占用下降。
+
+      频繁调用反而有害：被释放的显存下次还要通过 `cudaMalloc` 重新申请，这类调用开销大且可能引起同步，训练会变慢。真正有效的手段是：`expandable_segments`、减少张量形状的变化（分桶、固定长度）、`max_split_size_mb`、降低峰值显存。
+
+  - id: TRN-MEM-036
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [显存碎片, 显存估算]
+    question: |
+      团队对一个 7B 模型做全参 SFT，样本长度从几十到 8192 个 token 不等，随机组 batch，每个 batch 内 padding 到该 batch 最长的样本。训练跑了几百步后偶发 OOM，报错时 allocated 约 58 GiB、reserved 约 76 GiB（80 GiB 的卡）；而用 `torch.cuda.max_memory_allocated()` 统计，此前的峰值只有约 66 GiB。请分析原因，给出排查方法和解决方案。
+    answer: |
+      **1. 原因分析：显存碎片 + 偶发的大块申请**
+      - 每个 batch 的形状都不同，激活、logits、临时缓冲的大小随长度剧烈变化。缓存分配器把释放的块缓存起来、切分后复用，大小不一的块交错在一起，形成「保留但用不上」的空洞：reserved − allocated ≈ 18 GiB。
+      - 当某个 batch 恰好很长时（如 8192），需要申请几 GiB 的连续显存（logits、注意力相关的缓冲等），在碎片化的 segment 中找不到足够大的空闲块，又无法再向驱动申请（物理显存已基本被 reserved 占满），于是 OOM。
+      - 峰值 66 GiB 本身放得下，加上十几 GiB 的碎片就超过了 80 GiB。
+
+      **2. 排查方法**
+      - 打印 `torch.cuda.memory_summary()`，关注 inactive split 和 non-releasable 的显存量；
+      - 用 `torch.cuda.memory._record_memory_history()` 记录分配历史，导出显存快照，在 PyTorch 的显存可视化工具中查看时间线，定位大块分配与碎片的来源；
+      - 记录每次 OOM 时的 batch 长度，确认与长样本相关。
+
+      **3. 解决方案**
+      - 设置 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`，让 segment 可扩展，大幅减少碎片；或设置 `max_split_size_mb`，避免大块被切碎；
+      - 减少形状变化：按长度分桶，并 padding 到固定的几档长度（如 1K / 2K / 4K / 8K），或用 packing 拼成固定长度的序列；
+      - 降低峰值：分块计算交叉熵，开启激活重计算，必要时减小 micro-batch 并配合梯度累积；
+      - 训练开始时先跑一个最长的 batch「预热」，让分配器尽早保留足够大的块；
+      - 不要依赖每步调用 `empty_cache()`：它不能整理碎片，还会拖慢训练。
+
+      **4. 验证**：对比修改前后的 reserved − allocated 差值与峰值；用最长样本组成的 batch 做压力测试，长时间运行确认不再 OOM。
+    rubric:
+      - '识别出碎片问题（reserved 远大于 allocated）以及变长形状导致的大块分配失败（3 分）'
+      - '给出 memory_summary、显存快照等排查手段（2 分）'
+      - '给出 expandable_segments、分桶或固定长度、packing 等方案（3 分）'
+      - '提到降低峰值与验证方法，并指出 empty_cache 无效（2 分）'
+    explanation: |
+      **常见失分点**：看到 OOM 就只想到「减 batch」；把问题归咎于显存泄漏；不会解读 allocated 与 reserved 的差别；提出每步 `empty_cache()` 作为方案；没有验证手段。
+
+  - id: TRN-MEM-037
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [显存估算, 卸载技术, 激活重计算]
+    question: |
+      你只有一张 80 GB 的 A100，需要对一个 7B 模型做全参数微调（不允许用 LoRA 等参数高效方法），序列长度 4096。请先估算显存，判断能否直接训练；再给出可行的方案组合，说明每种手段省了什么、代价是什么。
+    answer: |
+      **1. 估算（1 GB = $10^9$ 字节）**
+      - 模型状态：$7\times10^9\times16=112$ GB，已超过 80 GB，即使不算激活也无法直接训练；
+      - 激活（以 Llama-2-7B 为例，$b=1$、$s=4096$，按 $34sbh$ 估算）约 18 GB；开启全量重计算后约 1.6 GB；
+      - 还要考虑 logits、临时缓冲与碎片，预留 10%～20%。
+
+      **2. 可用手段**
+      - **优化器状态卸载到 CPU**（如 DeepSpeed 的 offload_optimizer）：GPU 上只剩 BF16 权重 14 GB + 梯度 14 GB = 28 GB；CPU 内存需要约 $7\times10^9\times12=84$ GB 存优化器状态，再加梯度缓冲。代价是每步通过 PCIe 传输约 28 GB 的梯度与参数，Adam 更新在 CPU 上执行，吞吐明显下降，需要较大的每步 token 数来摊薄。
+      - **8-bit 优化器**（不卸载）：每参数 $2+2+4+1+1=10$ 字节，即 70 GB，加上激活和缓冲非常紧张；若进一步去掉 FP32 主权重（纯 BF16 加随机舍入或 Kahan 补偿求和），约 6 字节/参数即 42 GB，但有数值风险，需要验证效果。
+      - **激活重计算**：激活从约 18 GB 降到约 1.6 GB，计算量增加约 1/3。
+      - **micro-batch = 1 + 梯度累积**：用累积凑出目标全局 batch，激活只按单条序列计算。
+      - **分块交叉熵 / 融合 LM Head**：避免整段 FP32 logits 带来的峰值。
+      - **减少碎片**：`expandable_segments`、固定序列长度。
+
+      **3. 推荐组合**
+      - 首选：BF16 混合精度 + 优化器状态卸载到 CPU + 激活重计算 + micro-batch 1 + 梯度累积。GPU 上约 28 GB 模型状态 + 约 2 GB 激活 + logits 与缓冲，余量充足；要求机器有 100 GB 以上的空闲 CPU 内存。
+      - 备选（CPU 内存或带宽不足时）：8-bit Adam + 激活重计算 + 分块交叉熵，GPU 上约 72 GB 以上，需要严格控制峰值与碎片。
+
+      **4. 验证与风险**：先跑几十步，用 `max_memory_allocated` 确认峰值；用一小段数据对比卸载方案与多卡标准训练的 loss 曲线，确认数值一致；监控吞吐，评估总训练时长是否可接受；8-bit 或纯 BF16 方案要对比最终效果。
+    rubric:
+      - '正确估算 16 字节/参数下的 112 GB，判断无法直接训练（2 分）'
+      - '给出优化器卸载方案，并估算 GPU 与 CPU 内存及 PCIe 代价（3 分）'
+      - '给出 8-bit 优化器、激活重计算、梯度累积等手段及各自代价（3 分）'
+      - '给出合理的组合方案与验证方法（2 分）'
+    explanation: |
+      **常见失分点**：只算权重 14 GB 就认为「能放下」；只说「开 ZeRO-3」（单卡时 ZeRO 分片没有可以分摊的对象，起作用的是其中的卸载功能）；不估算 CPU 内存与 PCIe 开销；方案只罗列名词，不说每种手段省了哪部分显存、付出什么代价。
+
+  - id: TRN-MEM-038
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [FP16与BF16]
+    tags: [FP16, BF16, 训推不一致, 强化学习]
+    question: |
+      Qi 等（2025）发现，RL 微调中训练引擎与推理引擎算出的 token 概率不一致，可以通过把两端的计算精度从 BF16 换回 FP16 来大幅缓解。其道理在于：FP16 比 BF16 多 3 位尾数，舍入误差约为 BF16 的 1/8，两端因算子实现和累加顺序不同而产生的舍入差异随之变小；FP16 动态范围较小的代价，在从训练好的模型出发做 RL 微调时，通常可以靠 loss scaling 承受。
+    answer: true
+    explanation: |
+      **正确**。
+
+      - 位数：FP16 为 1 位符号、5 位指数、10 位尾数；BF16 为 1 位符号、8 位指数、7 位尾数。FP16 的机器精度为 $2^{-10}\approx9.8\times10^{-4}$，BF16 为 $2^{-7}\approx7.8\times10^{-3}$，前者的舍入误差小约 8 倍。
+      - 不一致从哪来：推理引擎与训练框架的算子实现、累加顺序不同，同样的计算在两端得到的舍入误差各不相同。论文认为 BF16 较大的舍入误差破坏了训练与推理的一致性；换回 FP16 只需改几行代码，不必改模型结构或算法。
+      - 代价：FP16 的指数位更少，动态范围小得多（最大约 65504），BF16 的动态范围则与 FP32 相当。大规模预训练中，FP16 容易上溢或下溢，要靠精细的 loss scaling 维持稳定，所以业界普遍改用 BF16；RL 微调从训练好的模型出发，激活和梯度的范围相对稳定，配合 loss scaling 一般够用。
+
+      **常见误解**：以为 FP16 更好是因为「指数位更多、范围更大」，恰好说反了：FP16 胜在精度，BF16 胜在范围。
+
+      训推不一致还有其他来源与对策：内核缺乏 batch invariance、MoE 路由不一致、采样截断等；MiniMax-M1 把 LM head 提升到 FP32，也是从精度入手的做法。
+    source: 'Qi 等 Defeating the Training-Inference Mismatch via FP16 arXiv:2510.26788；MiniMax-M1 技术报告 arXiv:2506.13585'

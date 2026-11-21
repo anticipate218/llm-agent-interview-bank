@@ -1,0 +1,1078 @@
+domain: FND
+subcategory: DL
+questions:
+
+  - id: FND-DL-001
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [多层感知机]
+    question: |
+      把多层感知机中所有的激活函数都去掉（只剩线性层的堆叠），会发生什么？
+    options:
+      A: '整个网络等价于单个线性（仿射）变换，堆多少层表达能力都不会增加'
+      B: '网络仍能逼近任意连续函数，只是需要更多的层，收敛速度也会变慢'
+      C: '网络无法再用梯度下降训练，因为没有激活函数时，反向传播得到的梯度恒为 0'
+      D: '只影响输出范围：激活函数的作用就是把输出限制在 $[0,1]$ 内，以便解释成概率'
+    answer: A
+    explanation: |
+      **结论**：线性映射的复合仍是线性映射。
+
+      $W_3(W_2(W_1x+b_1)+b_2)+b_3=(W_3W_2W_1)x+b'$，等价于一个线性层（不含偏置时就是一个矩阵乘法）。无论堆多少层，网络能表示的仍然只有线性函数（加偏置后是仿射函数），连异或（XOR）都分不开。非线性激活让每一层能「弯折」空间，深层网络才能表示复杂函数。
+
+      - B 错：万能近似定理要求激活函数是非多项式的非线性函数；纯线性网络只能表示线性函数。
+      - C 错：线性层的梯度并不为 0，网络照样可以训练，只是能力有限（相当于训练线性回归或逻辑回归）。
+      - D 错：把输出限制在 $[0,1]$ 只是 sigmoid 输出层的一种用途；隐藏层激活函数的核心作用是引入非线性。
+
+      **细节**：深度线性网络虽然表达能力等价于单层，但它的训练动态（损失面）与单层不同，常被用作分析深度学习优化的理论模型。
+
+  - id: FND-DL-002
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [多层感知机, 泛化与模型容量]
+    source: 'Cybenko, Approximation by Superpositions of a Sigmoidal Function（Math. Control Signals Systems, 1989）；Hornik, Approximation Capabilities of Multilayer Feedforward Networks（Neural Networks, 1991）；Leshno 等, Multilayer Feedforward Networks with a Nonpolynomial Activation Function Can Approximate Any Function（Neural Networks, 1993）；Telgarsky, Benefits of Depth in Neural Networks, arXiv:1602.04485；Eldan 与 Shamir, The Power of Depth for Feedforward Neural Networks, arXiv:1512.03965'
+    tags: [万能近似定理]
+    question: |
+      万能近似定理表明：只有一个隐藏层、但神经元足够多的 MLP，能以任意精度逼近紧集上的任意连续函数。因此实践中用单隐层的宽网络就足够了，增加深度没有必要。
+    answer: false
+    explanation: |
+      **错误**。前半句是定理的内容（Cybenko 1989、Hornik 1991；Leshno 等 1993 证明了激活函数只要不是多项式即可），后半句的推论不成立。
+
+      1. **存在性 ≠ 可学习性**：定理只说明存在这样一组参数，没有说需要多少个神经元，也没有说梯度下降能找到它，更没有说用有限样本学到的网络能泛化。
+      2. **宽度可能需要指数级**：存在一些函数，深层网络用多项式个神经元就能表示，浅层网络却需要指数多个（如 Telgarsky 2016、Eldan 与 Shamir 2016 的深度分离结果）。深度带来的是「组合式」表示：浅层特征被逐层复用、组合成更抽象的特征。
+      3. **实践**：在同样的参数量下，深层网络在图像、语言等任务上通常明显优于浅而宽的网络，这也是「深度学习」的由来。
+
+      正确的理解：万能近似定理说明神经网络的表达能力足够强，但网络的结构（深度、归纳偏置）决定了它能否高效地表示和学习目标函数。
+
+  - id: FND-DL-003
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [多层感知机]
+    question: |
+      一个用于 MNIST 的 MLP，结构为 784 → 256 → 128 → 10，每个全连接层都带偏置。它的参数总数为 ____。
+    answer: ['235146']
+    explanation: |
+      全连接层的参数量 = 输入维度 × 输出维度 + 输出维度（偏置）：
+      - 第 1 层：$784\times256+256=200960$；
+      - 第 2 层：$256\times128+128=32896$；
+      - 第 3 层：$128\times10+10=1290$。
+
+      合计 $200960+32896+1290=235146$。
+
+      **观察**：第一层占了 85% 以上的参数。全连接层的参数随输入维度线性增长，对图像这样的高维输入代价很大，而且没有利用像素的空间结构，这正是 CNN 用局部连接和权重共享来解决的问题。激活函数没有参数，不计入。
+
+  - id: FND-DL-004
+    type: calc
+    difficulty: 2
+    frequency: 3
+    points: [反向传播]
+    tags: [手推反向传播]
+    question: |
+      一个小网络：输入 $x=(1,2)$（行向量），隐藏层 $h=\mathrm{ReLU}(xW_1+b_1)$，输出 $\hat y=h\cdot w_2+b_2$（标量），损失 $L=\frac12(\hat y-t)^2$。参数为
+      $W_1=\begin{pmatrix}1&-1\\0.5&1\end{pmatrix}$，$b_1=(0,-2)$，$w_2=(1,3)$，$b_2=0$，目标 $t=1$。
+      求 $L$，以及 $\partial L/\partial w_2$、$\partial L/\partial b_2$、$\partial L/\partial W_1$、$\partial L/\partial b_1$。
+    answer: '$L=0.5$；$\partial L/\partial w_2=(2,0)$，$\partial L/\partial b_2=1$，$\partial L/\partial W_1=\begin{pmatrix}1&0\\2&0\end{pmatrix}$，$\partial L/\partial b_1=(1,0)$'
+    explanation: |
+      **前向**：
+      1. $xW_1=(1\times1+2\times0.5,\ 1\times(-1)+2\times1)=(2,1)$，加上 $b_1$ 得预激活 $a=(2,-1)$；
+      2. $h=\mathrm{ReLU}(a)=(2,0)$；
+      3. $\hat y=2\times1+0\times3+0=2$，$L=\frac12(2-1)^2=0.5$。
+
+      **反向**（从损失往回逐层乘局部导数）：
+      1. $\partial L/\partial\hat y=\hat y-t=1$；
+      2. 输出层：$\partial L/\partial w_2=h\cdot1=(2,0)$，$\partial L/\partial b_2=1$；$\partial L/\partial h=w_2\cdot1=(1,3)$；
+      3. 经过 ReLU：导数为掩码 $\mathbb{1}[a>0]=(1,0)$，$\partial L/\partial a=(1,3)\odot(1,0)=(1,0)$；
+      4. 第一层：$\partial L/\partial W_1=x^\top(\partial L/\partial a)=\begin{pmatrix}1\\2\end{pmatrix}(1,0)=\begin{pmatrix}1&0\\2&0\end{pmatrix}$，$\partial L/\partial b_1=(1,0)$。
+
+      **观察**：第 2 个隐藏单元的预激活为 $-1$，ReLU 输出 0，它的输入权重（$W_1$ 第 2 列）、偏置以及 $w_2$ 的第 2 个分量，在这个样本上梯度全为 0。如果对所有样本都是这样，这个单元就「死」了，这就是死亡 ReLU 问题。结果已用 PyTorch 的 autograd 验证。
+
+  - id: FND-DL-005
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [反向传播, 计算图与自动微分]
+    question: |
+      请给一位没有学过机器学习的工程师讲清楚反向传播：它要解决什么问题，怎么做，为什么高效，需要付出什么代价？
+    answer: |
+      1. **要解决的问题**：训练就是调整参数让损失变小。梯度下降需要知道「每个参数改一点点，损失会变多少」，也就是损失对所有参数的偏导数（梯度）。参数动辄上亿，逐个去试（数值微分）要做上亿次前向计算，根本不可行。
+      2. **核心思想**：网络是一串简单运算的组合（矩阵乘、加偏置、激活函数……），每个运算的局部导数都很容易写出来。链式法则告诉我们：复合函数的导数等于各环节局部导数的乘积。
+      3. **怎么做**：
+         - **前向**：从输入算到损失，同时记下每一步的中间结果（计算图）；
+         - **反向**：从损失出发，$\partial L/\partial L=1$，按与前向相反的顺序，把「上游传来的梯度」乘以本步的局部导数，传给它的输入；同一个变量被多处使用时，各条路径传回的梯度相加；
+         - 遇到参数时，顺手得到参数的梯度（如线性层 $\partial L/\partial W=x^\top\cdot\partial L/\partial y$）。
+      4. **为什么高效**：每个中间结果的梯度只算一次、被所有依赖它的上游复用（动态规划的思想）。一次反向得到全部参数的梯度，计算量只是前向的常数倍（约 2 倍），与参数个数无关。这是「反向模式自动微分」，适合「输入（参数）很多、输出（损失）是一个标量」的情形。
+      5. **代价**：反向时要用到前向的中间结果（激活值），必须保存到反向结束，显存随层数、batch 和序列长度增长，这是训练比推理耗显存的主要原因之一；可以用激活重计算（以计算换显存）缓解。另外，连乘的局部导数可能导致梯度消失或爆炸。
+    rubric:
+      - '说清目标：高效计算损失对所有参数的梯度，数值微分不可行（2 分）'
+      - '说清链式法则、前向保存中间结果、反向逐层传播，分支处梯度相加（3 分）'
+      - '说明高效的原因：中间梯度复用、一次反向的代价约为前向的常数倍（2 分）'
+      - '说明代价：需要保存激活、显存开销，以及梯度消失或爆炸的风险（2 分）'
+      - '表达通俗，有类比或小例子（1 分）'
+    explanation: |
+      **常见失分点**：只说「用链式法则求导」，说不出为什么比逐个参数求导快；不知道反向需要保存前向的激活；把反向传播与梯度下降混为一谈（反向传播只负责**算梯度**，更新参数是优化器的事）；漏掉「同一变量多处使用时梯度相加」。可以用一个两三步的标量例子边写边讲，效果最好。
+
+  - id: FND-DL-006
+    type: coding
+    difficulty: 3
+    frequency: 3
+    points: [反向传播]
+    tags: [手撕反向传播, numpy]
+    question: |
+      用 numpy 手写一个单隐层二分类 MLP 的前向与反向传播（不能使用自动微分）：
+
+      ```python
+      def mlp_grads(X, y, W1, b1, W2, b2):
+          """返回 (L, dW1, db1, dW2, db2)"""
+      ```
+
+      - `X`：`(n, d)`；`y`：`(n,)`，取值 0/1；`W1`：`(d, h)`；`b1`：`(h,)`；`W2`：`(h,)`；`b2`：标量；
+      - 前向：$H=\tanh(XW_1+b_1)$，$z=HW_2+b_2$，$p=\sigma(z)$，$L$ 为 $n$ 个样本二元交叉熵的平均值；
+      - 损失和梯度都要数值稳定：logit $|z|$ 很大时不能出现 `inf` 或 `nan`。
+    answer: |
+      import numpy as np
+
+      def mlp_grads(X, y, W1, b1, W2, b2):
+          n = X.shape[0]
+          H = np.tanh(X @ W1 + b1)                    # (n, h)
+          z = H @ W2 + b2                             # (n,)
+          L = np.mean(np.logaddexp(0.0, z) - y * z)   # 稳定的 BCE：softplus(z) - y*z
+          p = np.exp(-np.logaddexp(0.0, -z))          # 稳定的 sigmoid(z)
+          dz = (p - y) / n                            # dL/dz
+          dW2 = H.T @ dz                              # (h,)
+          db2 = dz.sum()
+          dA = np.outer(dz, W2) * (1 - H ** 2)        # 经过 tanh：tanh' = 1 - tanh^2
+          dW1 = X.T @ dA                              # (d, h)
+          db1 = dA.sum(axis=0)
+          return L, dW1, db1, dW2, db2
+    test: |
+      rng = np.random.default_rng(0)
+      n, d, h = 6, 4, 5
+      X = rng.normal(size=(n, d)); y = rng.integers(0, 2, n).astype(float)
+      P = [rng.normal(size=(d, h)), rng.normal(size=h), rng.normal(size=h), float(rng.normal())]
+
+      def loss_only(W1, b1, W2, b2):
+          z = np.tanh(X @ W1 + b1) @ W2 + b2
+          p = 1 / (1 + np.exp(-z))
+          return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+      L, *grads = mlp_grads(X, y, *P)
+      assert np.isclose(L, loss_only(*P))
+      assert [np.shape(g) for g in grads] == [(d, h), (h,), (h,), ()]
+
+      eps = 1e-6
+      for k in range(4):                               # 中心差分逐元素检查
+          base = np.array(P[k], dtype=float)
+          num = np.zeros_like(base)
+          for idx in np.ndindex(base.shape):
+              for sgn in (1, -1):
+                  Q = list(P); t = base.copy(); t[idx] += sgn * eps
+                  Q[k] = t if t.shape else float(t)
+                  num[idx] += sgn * loss_only(*Q) / (2 * eps)
+          assert np.allclose(grads[k], num, rtol=1e-5, atol=1e-8), k
+
+      # 输出层 logit 很大时也不能出现 NaN / inf
+      L2, *g2 = mlp_grads(X * 50, y, P[0], P[1], P[2] * 50, P[3])
+      assert np.isfinite(L2) and all(np.all(np.isfinite(g)) for g in g2)
+    explanation: |
+      **推导**（记 $A=XW_1+b_1$）：
+      1. sigmoid 与 BCE 合并求导：$\partial L/\partial z_i=(p_i-y_i)/n$（平均损失要除以 $n$）；
+      2. 输出层：$\partial L/\partial W_2=H^\top\,dz$，$\partial L/\partial b_2=\sum_idz_i$，$\partial L/\partial H=dz\,W_2^\top$（外积，形状 $(n,h)$）；
+      3. tanh：$\partial H/\partial A=1-H^2$，逐元素相乘得 $dA$；
+      4. 第一层：$\partial L/\partial W_1=X^\top dA$，$\partial L/\partial b_1$ 为 $dA$ 沿样本维求和。
+
+      **数值稳定**：
+      - 损失用 $\mathrm{softplus}(z)-yz$，并用 `np.logaddexp(0, z)` 计算 softplus，不会溢出；
+      - sigmoid 写成 $\exp(-\mathrm{softplus}(-z))$，同样不会溢出。
+
+      **易错点**：
+      - 偏置被广播到每个样本上，梯度要**对样本维求和**，而不是取平均（$1/n$ 已经包含在 $dz$ 里）；
+      - tanh 的导数用前向保存的输出 $H$ 计算（$1-H^2$），不必重新计算 tanh；
+      - 梯度检查要用 float64 和中心差分，$\epsilon$ 取 $10^{-6}$ 左右。
+
+  - id: FND-DL-007
+    type: code_debug
+    difficulty: 2
+    frequency: 3
+    points: [反向传播]
+    question: |
+      下面是线性层 $P=XW+b$ 接均方误差损失 $L=\mathrm{mean}((P-Y)^2)$（对所有元素取平均）的手写反向传播。用数值梯度检查时，`dW` 正确，`db` 却总是比数值梯度小若干倍。请指出 bug 并修正。
+    code: |
+      import numpy as np
+
+      def linear_mse_backward(X, W, b, Y):
+          P = X @ W + b
+          dP = 2 * (P - Y) / P.size
+          dW = X.T @ dP
+          db = dP.mean(axis=0)
+          return dW, db
+    fixed_code: |
+      import numpy as np
+
+      def linear_mse_backward(X, W, b, Y):
+          P = X @ W + b
+          dP = 2 * (P - Y) / P.size
+          dW = X.T @ dP
+          db = dP.sum(axis=0)
+          return dW, db
+    test: |
+      rng = np.random.default_rng(0)
+      X = rng.normal(size=(4, 3)); W = rng.normal(size=(3, 2)); b = rng.normal(size=2); Y = rng.normal(size=(4, 2))
+      loss = lambda W, b: np.mean((X @ W + b - Y) ** 2)
+      dW, db = linear_mse_backward(X, W, b, Y)
+      eps = 1e-6
+      num_db = np.array([(loss(W, b + eps * e) - loss(W, b - eps * e)) / (2 * eps) for e in np.eye(2)])
+      num_dW = np.zeros_like(W)
+      for i in range(3):
+          for j in range(2):
+              E = np.zeros_like(W); E[i, j] = eps
+              num_dW[i, j] = (loss(W + E, b) - loss(W - E, b)) / (2 * eps)
+      assert np.allclose(dW, num_dW, atol=1e-7)
+      assert np.allclose(db, num_db, atol=1e-7), (db, num_db)
+    answer: |
+      **问题**：第 7 行 `db = dP.mean(axis=0)`。偏置 $b$ 被广播到了 batch 中的每一行，同一个 $b_j$ 影响了全部 $N$ 个样本的 $P_{ij}$，按链式法则应把这 $N$ 条路径的梯度**相加**：$\partial L/\partial b_j=\sum_i\partial L/\partial P_{ij}$。取平均相当于又除了一次 $N$（$1/\text{size}$ 已经包含在 `dP` 里），所以 `db` 恰好小了 $N$ 倍。
+
+      **修正**：
+
+      ```python
+      db = dP.sum(axis=0)
+      ```
+    explanation: |
+      **原理**：前向中的广播在反向中对应求和。$b$ 的形状为 `(2,)`，被「复制」成 `(N, 2)` 加到每个样本上；反向时，梯度要沿被复制的维度求和，还原成 `(2,)`。同理，$\partial L/\partial W=X^\top dP$ 中的矩阵乘法，本身已经对样本维做了求和。
+
+      **为什么常见**：很多人记得「损失要对 batch 取平均」，就在反向时到处用 `mean`。正确做法是：平均只在损失这一处做一次（体现在 `dP` 的 $1/\text{size}$ 中），之后的反向全部严格按链式法则求和。
+
+      **如何发现**：$N=1$ 时 `mean` 与 `sum` 结果相同，bug 会被掩盖，所以梯度检查一定要用 batch 大于 1 的数据。PyTorch 的 autograd 在广播的反向中自动做了这一步求和（`sum_to_size`）。
+
+  - id: FND-DL-008
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [激活函数, 梯度消失与爆炸]
+    tags: [sigmoid]
+    question: |
+      一个 10 层的全连接网络，每层都使用 sigmoid 激活。只考虑激活函数导数的影响，梯度从输出反向传回第 1 层时，最多保留原来的多少倍？
+    options:
+      A: '约 $0.5^{10}\approx1\times10^{-3}$'
+      B: '约 $0.25^{10}\approx9.5\times10^{-7}$'
+      C: '1 倍：sigmoid 的导数恒为 1，不影响梯度大小'
+      D: '约 $0.1^{10}=10^{-10}$'
+    answer: B
+    explanation: |
+      **结论**：$\sigma'(z)=\sigma(z)(1-\sigma(z))\le0.25$，在 $z=0$ 处取最大值；10 层连乘后最多是 $0.25^{10}\approx9.5\times10^{-7}$。
+
+      而且这还是最乐观的情况：输入一旦进入饱和区（$|z|$ 较大），导数会远小于 0.25，例如 $\sigma'(4)\approx0.018$。所以深层 sigmoid 网络的浅层几乎学不动，这是梯度消失的经典来源。
+
+      - A 错：把导数最大值误记成 0.5。
+      - C 错：导数恒为 1 的是恒等映射，ReLU 只在正半轴导数为 1。
+      - D 错：0.1 不是 sigmoid 导数的上界。
+
+      **对策**：隐藏层改用 ReLU 系激活（正半轴导数为 1）；配合合适的初始化、残差连接和归一化层。sigmoid 如今主要用在输出层（二分类概率）和门控结构中（如 LSTM 的门、SwiGLU 中 SiLU 的门控）。
+
+  - id: FND-DL-009
+    type: multiple
+    difficulty: 2
+    frequency: 3
+    points: [激活函数]
+    source: '论文：arXiv:1606.08415（https://arxiv.org/abs/1606.08415）'
+    tags: [ReLU, GELU]
+    question: |
+      关于常见的激活函数，下列说法**正确**的有：
+    options:
+      A: 'Leaky ReLU 在负半轴保留一个小斜率（如 0.01），可以缓解死亡 ReLU 问题'
+      B: 'sigmoid 的导数在 $x=0$ 处取最大值 1，所以只要预激活保持在 0 附近，梯度就不会因激活函数而衰减'
+      C: 'ReLU 负半轴梯度为 0，若某神经元对所有输入的预激活都为负，它会一直输出 0、不再更新，即「死亡 ReLU」'
+      D: 'tanh 以 0 为中心，满足 $\tanh(x)=2\sigma(2x)-1$，可以看作缩放平移后的 sigmoid'
+      E: 'GELU 即 $x\Phi(x)$，在负半轴不恒为 0，也不单调：在 $x\approx-0.75$ 处取最小值约 $-0.17$'
+    answer: [A, C, D, E]
+    explanation: |
+      **结论**：A、C、D、E 正确。
+
+      - A 对：负半轴有小梯度，神经元还有机会「复活」。PReLU 把这个斜率设为可学习参数。
+      - B 错：$\sigma'(x)=\sigma(x)(1-\sigma(x))$ 确实在 $x=0$ 处取最大值，但最大值只有 0.25，不是 1；即使预激活都在 0 附近，每经过一层梯度也至少缩小到 1/4，深层网络中连乘会导致梯度消失。
+      - C 对：ReLU 计算便宜、正半轴不饱和，但负半轴的梯度恒为 0。一个神经元若对所有样本都落在负半轴，就再也得不到梯度；常见诱因是学习率过大，一次更新把偏置推得很负。
+      - D 对：$2\sigma(2x)-1=\frac{1-e^{-2x}}{1+e^{-2x}}=\tanh(x)$。它把 sigmoid 的 $(0,1)$ 拉伸到 $(-1,1)$，导数最大值也从 0.25 变为 1（在 $x=0$ 处），但两端同样会饱和。以 0 为中心的输出能避免下一层权重梯度的符号总是相同，优化更顺畅。
+      - E 对：GELU（Hendrycks 与 Gimpel, 2016, arXiv:1606.08415）中的 $\Phi$ 是标准正态分布的累积分布函数，它可以理解为「按输入大小以概率保留」的平滑版 ReLU。数值上，最小值点约在 $x\approx-0.752$，函数值约 $-0.170$。BERT、GPT-2 等模型采用 GELU，Llama 系列的 SwiGLU 则使用 SiLU（$x\sigma(x)$），形状与 GELU 相近。
+  - id: FND-DL-010
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [激活函数, 计算图与自动微分]
+    question: |
+      下面的代码用 autograd 计算 4 种激活函数在 $x=-1,0,2$ 处的导数（保留 3 位小数）。输出是什么？
+    code: |
+      import torch
+      import torch.nn.functional as F
+
+      x = torch.tensor([-1.0, 0.0, 2.0], requires_grad=True)
+      for name, f in [("sigmoid", torch.sigmoid), ("tanh", torch.tanh),
+                      ("relu", torch.relu), ("gelu", F.gelu)]:
+          g, = torch.autograd.grad(f(x).sum(), x)
+          print(name, [round(v, 3) for v in g.tolist()])
+    answer: |
+      sigmoid [0.197, 0.25, 0.105]
+      tanh [0.42, 1.0, 0.071]
+      relu [0.0, 0.0, 1.0]
+      gelu [-0.083, 0.5, 1.085]
+    explanation: |
+      对 `f(x).sum()` 求梯度，得到的就是逐元素的导数 $f'(x_i)$。
+
+      - **sigmoid**：$\sigma'=\sigma(1-\sigma)$。$\sigma(-1)\approx0.269$，导数 $0.269\times0.731\approx0.197$；在 0 处为最大值 0.25；$\sigma(2)\approx0.881$，导数约 0.105。
+      - **tanh**：$1-\tanh^2$。在 0 处为 1；$\tanh(1)\approx0.762$，$1-0.580=0.42$；$\tanh(2)\approx0.964$，导数约 0.071，已经开始饱和。
+      - **relu**：负半轴为 0、正半轴为 1。在 0 处数学上不可导，PyTorch 规定该处导数取 0。
+      - **gelu**：$\frac{d}{dx}x\Phi(x)=\Phi(x)+x\varphi(x)$。$x=-1$：$0.159-0.242\approx-0.083$（导数为负，体现了 GELU 的非单调性）；$x=0$：$0.5$；$x=2$：$0.977+2\times0.054\approx1.085$，大于 1。
+
+      **启示**：sigmoid 与 tanh 的导数在 $|x|$ 增大时迅速变小（饱和），是梯度消失的来源；ReLU 系的导数在正半轴恒为 1 或接近 1，深层网络更容易训练。
+
+  - id: FND-DL-011
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [权重初始化]
+    source: '论文：arXiv:1502.01852（https://arxiv.org/abs/1502.01852）'
+    tags: [Kaiming初始化]
+    question: |
+      Kaiming（He）初始化建议，后接 ReLU 的层把权重方差设为 $2/n_{in}$，而不是 LeCun 初始化的 $1/n_{in}$。这个因子 2 的来源是：
+    options:
+      A: 'ReLU 网络通常比 sigmoid 网络更深，需要更大的初始权重，让早期梯度足够大、加快收敛'
+      B: '要同时兼顾前向传播的 $n_{in}$ 与反向传播的 $n_{out}$，于是取两者的平均'
+      C: 'ReLU 把约一半的输入置为 0，使输出的二阶矩减半；方差取 $2/n_{in}$ 正好抵消这次减半'
+      D: 'ReLU 的输出全部非负、均值大于 0，方差取 $2/n_{in}$ 是为了抵消这个正的均值偏移带来的影响'
+    answer: C
+    explanation: |
+      **推导**：设第 $l$ 层预激活 $y_l=W_lx_l$，权重独立、零均值，方差为 $\mathrm{Var}(w)$，则
+      $$\mathrm{Var}(y_l)=n_{in}\,\mathrm{Var}(w)\,E[x_l^2]$$
+      若 $y_{l-1}$ 关于 0 对称，ReLU 之后 $x_l=\max(0,y_{l-1})$，有 $E[x_l^2]=\frac12\mathrm{Var}(y_{l-1})$。代入得
+      $$\mathrm{Var}(y_l)=\tfrac12n_{in}\mathrm{Var}(w)\,\mathrm{Var}(y_{l-1})$$
+      要让各层方差保持不变，需要 $\frac12n_{in}\mathrm{Var}(w)=1$，即 $\mathrm{Var}(w)=2/n_{in}$（He 等, 2015, arXiv:1502.01852）。
+
+      - A 错：目标不是「加快收敛」，而是让信号在深层网络中既不衰减也不爆炸；初始权重过大同样会让信号逐层放大。
+      - B 错：这是 Xavier（Glorot）初始化的折中 $2/(n_{in}+n_{out})$，它针对的是 tanh 这类在 0 附近近似线性的对称激活。
+      - D 错：推导里用到的是二阶矩 $E[x^2]$，因子 2 来自「约一半输入被置 0」使二阶矩减半，与均值偏移无关。权重零均值时，下一层预激活的均值本来就是 0，不需要靠方差来「抵消」。
+
+      **对比**：若对 ReLU 网络使用方差为 $1/n_{in}$ 的初始化，每过一层二阶矩减半，20 层后约为 $0.5^{20}\approx10^{-6}$，信号几乎消失。
+
+  - id: FND-DL-012
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [权重初始化]
+    tags: [Xavier初始化, Kaiming初始化]
+    question: |
+      一个深层 MLP 的每个隐藏层都是 $1024\to1024$ 的全连接层，后接 ReLU。求：
+      (1) Xavier 均匀初始化 $U(-a,a)$ 的边界 $a$；
+      (2) Kaiming 正态初始化（fan_in 模式）的标准差；
+      (3) 若错误地使用 Xavier 初始化（方差 $2/(n_{in}+n_{out})$），每经过一层，激活的二阶矩约变为原来的几倍？经过 10 层后，激活的均方根（RMS）约变为原来的几倍？
+    answer: '(1) $a\approx0.0541$；(2) $\sigma\approx0.0442$；(3) 每层变为 0.5 倍，10 层后二阶矩约为 $0.5^{10}\approx9.8\times10^{-4}$，RMS 约为 0.031 倍'
+    explanation: |
+      1. **Xavier 均匀**：目标方差 $\frac{2}{n_{in}+n_{out}}=\frac{2}{2048}=\frac1{1024}$。$U(-a,a)$ 的方差为 $a^2/3$，所以 $a=\sqrt{6/(n_{in}+n_{out})}=\sqrt{6/2048}\approx0.0541$。
+      2. **Kaiming 正态**：$\sigma=\sqrt{2/n_{in}}=\sqrt{2/1024}\approx0.0442$。
+      3. **用错初始化的后果**：每层二阶矩的倍率为 $\frac12n_{in}\mathrm{Var}(w)=\frac12\times1024\times\frac1{1024}=0.5$。10 层后二阶矩为 $0.5^{10}\approx9.8\times10^{-4}$，RMS 为 $\sqrt{0.5^{10}}=0.5^5\approx0.031$ 倍。反向传播的梯度也会按类似的比例逐层衰减。
+
+      **结论**：Xavier 针对的是 tanh 这类在原点附近近似线性、关于 0 对称的激活；ReLU 网络要用 Kaiming 初始化。层数越多，初始化的误差被放大得越明显。现代网络中的归一化层（BN、LN）与残差连接，降低了对初始化精确程度的依赖，但初始化仍会影响训练初期的稳定性。
+
+  - id: FND-DL-013
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [权重初始化, 梯度消失与爆炸]
+    question: |
+      下面的代码让 1000 个样本通过 20 层 $512\to512$ 的「线性层 + ReLU」（无偏置），比较 3 种权重标准差下最后一层激活的均方根（RMS），输出其以 10 为底的对数并取整。输出是什么？
+    code: |
+      import math
+      import torch
+
+      torch.manual_seed(0)
+      x = torch.randn(1000, 512)
+      for name, std in [("std=0.01", 0.01), ("xavier", (1 / 512) ** 0.5), ("kaiming", (2 / 512) ** 0.5)]:
+          h = x
+          for _ in range(20):
+              h = torch.relu(h @ (torch.randn(512, 512) * std))
+          rms = h.pow(2).mean().sqrt().item()
+          print(name, round(math.log10(rms)))
+    answer: |
+      std=0.01 -16
+      xavier -3
+      kaiming 0
+    explanation: |
+      **估算**：每过一层「线性 + ReLU」，激活的二阶矩乘以 $\frac12n_{in}\sigma^2$。输入的二阶矩为 1，20 层后 RMS 约为 $\left(\frac12n_{in}\sigma^2\right)^{10}$。
+      - $\sigma=0.01$：$\frac12\times512\times10^{-4}=0.0256$，$0.0256^{10}\approx1.2\times10^{-16}$，$\log_{10}\approx-16$。信号几乎完全消失。
+      - Xavier（$n_{in}=n_{out}=512$ 时方差为 $1/512$）：倍率为 0.5，$0.5^{10}\approx9.8\times10^{-4}$，$\log_{10}\approx-3$。
+      - Kaiming（方差 $2/512$）：倍率为 1，RMS 保持在 1 左右，$\log_{10}\approx0$。
+
+      实际运行的数值分别约为 $-16.0$、$-3.1$、$-0.09$，取整后与估算一致。
+
+      **启示**：初始化差一个常数因子，经过 20 层就是数量级的差别。前向信号消失时，反向的梯度同样会消失（梯度要乘以同样的权重矩阵）；把 $\sigma$ 设得偏大，则会指数级爆炸。用小常数（如 0.01）初始化，在浅层网络中尚可，深层网络中就不行了。
+
+  - id: FND-DL-014
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [权重初始化]
+    question: |
+      把 MLP 隐藏层的所有权重都初始化为 0（或同一个常数）也可以训练，只是收敛会慢一些，最终效果与随机初始化相同。
+    answer: false
+    explanation: |
+      **错误**。全部相同的初始化会让同一层的所有隐藏单元保持**对称**：
+      - 它们的输入相同、权重相同，前向输出相同；
+      - 反向时收到的梯度也相同，更新后依然相同。
+
+      无论训练多久，一层里的 $h$ 个神经元都只相当于 1 个，网络容量严重退化。全零初始化更糟：对于 $y=W_2\,\mathrm{ReLU}(W_1x)$，$W_1=0$ 时隐藏层输出为 0，$W_2$ 的梯度为 0；$W_2=0$ 时传回隐藏层的梯度也为 0，参数可能完全不动。
+
+      **正确做法**：用随机初始化打破对称性（Xavier、Kaiming 等），并控制好尺度。偏置通常可以初始化为 0，因为权重的随机性已经打破了对称。一个相关的特例是 LoRA 中的 $B=0$：$A$ 是随机初始化的，$B$ 收到的梯度不为 0，所以不存在对称性问题。
+
+  - id: FND-DL-015
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [梯度消失与爆炸]
+    question: |
+      关于梯度消失与梯度爆炸的应对，下列说法正确的是：
+    options:
+      A: '梯度裁剪按全局范数重新缩放梯度：范数过大时等比例缩小、过小时等比例放大，因此对消失与爆炸都有效'
+      B: '梯度消失只出现在循环网络的长序列上；前馈网络层数有限，主要问题是梯度爆炸'
+      C: '梯度消失时，把学习率按浅层梯度衰减的倍数调大，就能让浅层恢复正常的更新幅度'
+      D: '裁剪只能对付梯度爆炸；梯度消失要靠 ReLU 类激活、残差连接、归一化与合适的初始化等手段缓解'
+    answer: D
+    explanation: |
+      **结论**：两者都源于反向传播时梯度要连乘很多个雅可比矩阵：连乘的因子普遍小于 1 就消失，大于 1 就爆炸。但对策不同。
+
+      - **梯度爆炸**：表现为 loss 突然跳高、出现 NaN，梯度范数骤增。梯度裁剪（把总范数限制在阈值以内）能直接挡住异常的大步长；同时可以降低学习率、改进初始化、加归一化。
+      - **梯度消失**：表现为靠近输入的层几乎不更新、loss 很早就停滞。梯度裁剪只会把梯度变小，帮不上忙；需要让梯度有不衰减的通路（残差、LSTM 的细胞状态）、避免饱和激活（ReLU 代替 sigmoid）、让每层尺度稳定（Kaiming 初始化、BN / LN）。
+
+      - A 错：裁剪只在范数超过阈值时等比例缩小，范数小时原样保留，不会放大，所以对消失无效。
+      - B 错：深层前馈网络（如不带残差的深层 sigmoid 网络）同样会梯度消失；几十层的连乘就足以让各层梯度相差几个数量级。
+      - C 错：学习率对所有层一视同仁，按浅层的衰减倍数调大，梯度正常的深层会先发散；统一调大学习率不能修复层间梯度量级的悬殊。
+
+  - id: FND-DL-016
+    type: multiple
+    difficulty: 1
+    frequency: 3
+    points: [梯度消失与爆炸, 残差连接]
+    question: |
+      下列措施中，主要用于缓解深层网络**梯度消失**的有：
+    options:
+      A: '对梯度按全局范数做裁剪'
+      B: '加入残差连接，为梯度提供恒等映射的直通路径'
+      C: '把学习率调大，让靠近输入的层的更新幅度恢复正常'
+      D: '在循环网络中把单向 RNN 换成双向 RNN，让每个位置都能同时看到两侧的上下文'
+      E: '用 ReLU 等在正半轴导数为 1 的激活函数代替 sigmoid'
+    answer: [B, E]
+    explanation: |
+      **结论**：B、E 正确。
+
+      - A 错：裁剪针对的是梯度爆炸，它只会把梯度变小。
+      - B 对：$y=x+F(x)$ 的雅可比为 $I+\partial F/\partial x$，恒等项保证梯度可以不经衰减地传回浅层。
+      - C 错：学习率对所有层一视同仁，浅层梯度比深层小几个数量级时，调大学习率会先让深层发散。分层的自适应步长（如 Adam）能部分缓解梯度尺度的差异，但不能替代结构上的改进。
+      - D 错：双向 RNN 解决的是「看不到右侧上下文」，不是梯度消失。它的每个方向仍是普通 RNN，相距 $k$ 步的两个位置之间，梯度照样要连乘 $k$ 次同一个权重矩阵和 tanh 的导数。循环网络中缓解梯度消失靠的是 LSTM / GRU：细胞状态按 $c_t=f_t\odot c_{t-1}+i_t\odot\tilde c_t$ 加法更新，梯度沿细胞状态传播时主要乘以遗忘门。
+      - E 对：sigmoid 的导数不超过 0.25，连乘后迅速衰减；ReLU 在正半轴导数为 1，不会因激活函数本身而衰减。
+
+      其他常用手段：合适的初始化（Xavier / Kaiming）、归一化层（BN / LN），以及深度监督（在中间层加辅助损失，如 GoogLeNet）。
+  - id: FND-DL-017
+    type: short
+    difficulty: 3
+    frequency: 3
+    points: [残差连接, 梯度消失与爆炸]
+    source: '论文：arXiv:1512.03385（https://arxiv.org/abs/1512.03385）、arXiv:1605.06431（https://arxiv.org/abs/1605.06431）、arXiv:1712.09913（https://arxiv.org/abs/1712.09913）'
+    tags: [ResNet]
+    question: |
+      残差连接（$y=x+F(x)$）为什么能让上百层的网络训练起来？请从优化难度、梯度传播、表示与集成等角度说明，并说明使用残差连接时，在初始化或结构上通常还要注意什么。
+    answer: |
+      1. **要解决的问题**：ResNet 论文（He 等, 2015, arXiv:1512.03385）观察到「退化」现象：不带残差时，56 层网络在 CIFAR-10 上的**训练**误差反而高于 20 层网络。这不是过拟合，而是深层网络难以优化。
+      2. **更容易学恒等映射**：如果某几层的最优变换接近恒等，普通网络要用一堆非线性层去逼近 $H(x)=x$，很难；残差网络只需把 $F(x)$ 推向 0。网络学的是相对于输入的「增量」，至少不会比浅层网络更差。
+      3. **梯度传播**：$\dfrac{\partial x_L}{\partial x_l}=\prod_k\Big(I+\dfrac{\partial F_k}{\partial x_k}\Big)$，展开后包含恒等项 $I$。即使各个 $\partial F/\partial x$ 都很小，梯度也能沿「跳连」原样传回浅层，不会随深度指数衰减。
+      4. **集成视角**：$L$ 个残差块展开后，相当于 $2^L$ 条长短不一的路径的叠加。Veit 等（2016, arXiv:1605.06431）发现，训练好的 ResNet 删掉单个块影响很小，起主要作用的是较短的路径，像是很多浅层网络的集成。
+      5. **损失面更平滑**：Li 等（2018, arXiv:1712.09913）的可视化显示，加了跳连后损失面明显更平滑，更容易优化。
+      6. **注意事项**：
+         - 主路径相加会让激活的方差随层数累积，需要控制每个残差分支的初始输出尺度：例如把每个残差块最后一个 BN 的 $\gamma$ 初始化为 0（Goyal 等, 2017），或者像 GPT-2 那样，把残差分支输出投影的初始化缩小 $1/\sqrt{N}$；
+         - 残差两端维度不同时，用 $1\times1$ 卷积或线性投影对齐；
+         - 归一化的位置（Pre-Norm / Post-Norm）影响深层的可训练性，Transformer 中普遍用 Pre-Norm。
+    rubric:
+      - '指出退化问题是优化问题而非过拟合（2 分）'
+      - '说明学习残差（推向 0）比学习恒等映射容易（2 分）'
+      - '写出雅可比中的恒等项并解释梯度直通（3 分）'
+      - '提到集成或损失面平滑等视角（1 分）'
+      - '说明初始化尺度、维度对齐或归一化位置等注意事项（2 分）'
+    explanation: |
+      **常见失分点**：把残差的作用说成「防止过拟合」；只会说「梯度有高速公路」却写不出 $I+\partial F/\partial x$；忽略残差相加带来的方差累积，不知道零初始化最后一层或缩小初始化等技巧。
+
+  - id: FND-DL-018
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [残差连接, 泛化与模型容量]
+    source: '论文：arXiv:1512.03385（https://arxiv.org/abs/1512.03385）'
+    question: |
+      ResNet 论文发现，不带残差连接时，56 层的普通网络在 CIFAR-10 上的训练误差反而高于 20 层的网络。这说明，此时深层网络效果差的主要原因是优化困难，而不是过拟合。
+    answer: true
+    explanation: |
+      **正确**。如果是过拟合，深层网络的**训练**误差应该更低、测试误差更高；而实验中 56 层网络的训练误差和测试误差都更高（He 等, 2015, arXiv:1512.03385, 图 1），说明它连训练集都拟合不好。
+
+      论证很巧妙：深层网络至少可以构造出和浅层网络一样好的解（多出的层取恒等映射即可），所以它的训练误差理论上不应该更高。实际更高，说明是优化器找不到这样的解，作者把这称为「退化」（degradation）问题。论文还指出，这些普通网络用了 BN，前向和反向的信号都没有消失，所以退化也不能简单归因于梯度消失。
+
+      残差连接让「多出的层取恒等」变得很容易（把 $F(x)$ 推向 0 即可），于是更深的网络能够取得更低的训练误差和测试误差，1000 层以上的网络也能训练。
+
+  - id: FND-DL-019
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [BatchNorm与LayerNorm]
+    question: |
+      一个带 BatchNorm 的图像分类 CNN 训练完成后，部署时忘了调用 `model.eval()`，以 batch size = 1 逐张图片推理。最可能出现的情况是：
+    options:
+      A: 'BN 会用这张图片自身各通道的空间均值与方差做归一化，预测变差，滑动平均统计量也会被测试数据改写'
+      B: '结果与 eval 模式完全相同：BN 的 $\gamma$、$\beta$ 和滑动平均统计量都已在训练中确定，推理时不会再变'
+      C: 'PyTorch 检测到 batch size 为 1 时，会自动改用训练期保存的滑动平均统计量，结果不受影响'
+      D: '只有 Dropout 层受影响：BN 的两种模式只在反向传播时有区别，前向计算完全相同'
+    answer: A
+    explanation: |
+      **结论**：BN 在训练模式与推理模式下的计算不同。
+
+      - **训练模式**：用当前 batch 的均值、方差归一化（卷积层按通道，在 $N\times H\times W$ 上统计），并按动量更新滑动平均 `running_mean` / `running_var`；
+      - **推理模式**：用训练期累积的滑动平均统计量，输出只取决于样本本身，与 batch 中的其他样本无关。
+
+      忘记 `eval()` 时，每张图片都用自己的统计量归一化：均值、方差来自单张图片，与训练时的总体统计差别很大，例如整张图偏暗或偏亮的信息会被「归一化」掉，预测质量明显下降。而且滑动平均统计量会被测试数据不断改写，之后即使再切到 eval 模式，结果也已经被污染。对全连接层后的 `BatchNorm1d`，训练模式下 batch 为 1 时 PyTorch 会直接报错（每个通道只有一个值，无法计算方差）。
+
+      - B 错：$\gamma$、$\beta$ 只是归一化之后的仿射变换，归一化所用的统计量才是问题所在；训练模式下 BN 不读取滑动平均，反而会用当前输入去更新它。
+      - C 错：框架不会根据 batch 大小自动切换，必须显式调用 `model.eval()`。
+      - D 错：Dropout 和 BN 都受 train / eval 模式影响。BN 的区别恰恰在前向：训练模式用当前 batch 的统计量，推理模式用滑动平均。
+
+  - id: FND-DL-020
+    type: code_output
+    difficulty: 2
+    frequency: 3
+    points: [BatchNorm与LayerNorm]
+    tags: [滑动平均]
+    question: |
+      下面的代码对一个新建的 `BatchNorm1d`（默认 momentum = 0.1、eps = 1e-5，$\gamma=1$、$\beta=0$，滑动均值初始为 0、滑动方差初始为 1）先在训练模式下前向一次，再切到推理模式对同一输入前向。输出是什么？
+    code: |
+      import torch
+
+      bn = torch.nn.BatchNorm1d(1)
+      x = torch.tensor([[1.0], [3.0]])
+      print([round(v, 3) for v in bn(x).flatten().tolist()])      # 训练模式
+      print(round(bn.running_mean.item(), 3), round(bn.running_var.item(), 3))
+      bn.eval()
+      print([round(v, 3) for v in bn(x).flatten().tolist()])      # 推理模式
+    answer: |
+      [-1.0, 1.0]
+      0.2 1.1
+      [0.763, 2.67]
+    explanation: |
+      **训练模式**：batch 均值为 2，归一化使用**有偏**方差 $\frac{(1-2)^2+(3-2)^2}{2}=1$，输出 $(x-2)/\sqrt{1+10^{-5}}\approx(-1,1)$。
+
+      **滑动统计量的更新**：$\text{running}=(1-m)\cdot\text{running}+m\cdot\text{batch}$，$m=0.1$：
+      - 均值：$0.9\times0+0.1\times2=0.2$；
+      - 方差：PyTorch 在这里用**无偏**方差 $\frac{(1-2)^2+(3-2)^2}{2-1}=2$，于是 $0.9\times1+0.1\times2=1.1$。
+
+      **推理模式**：用滑动统计量，$(1-0.2)/\sqrt{1.1}\approx0.763$，$(3-0.2)/\sqrt{1.1}\approx2.670$。
+
+      **启示**：
+      1. 同一输入，训练模式和推理模式的输出可以差很多。滑动统计量需要足够多的训练步才能逼近总体统计；训练步数太少、或者训练后期数据分布变化，都会造成训练与推理的不一致。
+      2. PyTorch 的 BN 中，「归一化用有偏方差、滑动平均用无偏方差」是一个容易被忽略的细节，手写 BN 与官方实现对拍时常因此出现微小差异。
+      3. 这里的 momentum 与优化器的动量含义不同：它是新 batch 统计量的权重。
+
+  - id: FND-DL-021
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [BatchNorm与LayerNorm]
+    source: '论文：arXiv:1803.08494（https://arxiv.org/abs/1803.08494）'
+    tags: [GroupNorm, SyncBN]
+    question: |
+      团队用 ImageNet 预训练的 ResNet-50（含 BatchNorm）作为骨干，微调一个高分辨率的目标检测模型。受显存限制，8 张 GPU 上每卡只能放 2 张图片。他们发现：训练 loss 抖动很大，验证集 mAP 远低于预期；把学习率调小后有所改善，但仍不理想。有人建议「用梯度累积凑出更大的 batch」。请分析原因，评价这个建议，并给出解决方案。
+    answer: |
+      **原因分析**：
+      1. **BN 统计量噪声大**：默认的 BN 在每张卡上独立计算统计量，每次只基于 2 张图片。均值、方差的估计非常不稳定，前向输出与梯度都被噪声污染，训练 loss 剧烈抖动。
+      2. **训练与推理不一致**：训练时用的是 2 张图的统计量，推理时用滑动平均；两者差距大时，验证效果明显下降。滑动平均本身也是由这些噪声很大的统计量累积出来的，并不准确。
+      3. **破坏了预训练统计量**：ImageNet 预训练得到的滑动统计量较为可靠，用小 batch 继续更新，反而把它们改坏了。
+
+      **评价「梯度累积」的建议**：它能让参数更新使用更大的「有效 batch」，降低梯度噪声，但**解决不了 BN 的问题**：BN 的统计量仍然是在每个 micro-batch（2 张图）内计算的，前向归一化的噪声一点没少。
+
+      **解决方案**：
+      1. **冻结 BN**（检测与分割中最常见的做法）：骨干中的 BN 层固定使用预训练的滑动统计量（对这些层调用 `eval()`），通常也冻结 $\gamma$、$\beta$，相当于把 BN 变成一个固定的仿射变换。
+      2. **SyncBN**：跨卡同步统计量，等效统计 batch 为 $8\times2=16$。代价是每个 BN 层都要做一次跨卡通信。
+      3. **换用与 batch 无关的归一化**：GroupNorm（Wu 与 He, 2018, arXiv:1803.08494）在每个样本内按通道分组统计，效果不随 batch 大小变化；新加的检测头可以直接用 GN。Transformer 类骨干本来就使用 LayerNorm，没有这个问题。
+      4. 其他：Batch Renormalization、适当降低分辨率以增大每卡 batch 等。
+
+      **验证**：对比冻结 BN、SyncBN、GN 三种方案的训练曲线和验证 mAP；检查推理时确实处于 eval 模式；监控训练模式与推理模式下同一批验证样本的输出差异。
+    rubric:
+      - '指出小 batch 导致 BN 统计量噪声大，以及训练与推理的不一致（3 分）'
+      - '正确评价梯度累积：不能改善 BN 统计量（2 分）'
+      - '给出冻结 BN、SyncBN、GroupNorm 等方案并说明代价（4 分）'
+      - '给出验证方法（1 分）'
+    explanation: |
+      **常见失分点**：认为梯度累积等价于大 batch，因而能解决问题（对没有 BN 的网络才近似成立）；只建议「加大 batch」而忽视显存约束；不知道检测、分割领域「冻结 BN」的常规做法；说不清 GroupNorm 为什么与 batch 大小无关。
+
+  - id: FND-DL-022
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [BatchNorm与LayerNorm, 反向传播]
+    question: |
+      不带仿射参数时，BatchNorm 与 LayerNorm 的前向公式都是 $\hat x=(x-\mu)/\sqrt{\sigma^2+\epsilon}$，只是统计的维度不同。关于两者反向传播的差异，下列说法正确的是：
+    options:
+      A: '两者前向公式相同，反向传播的计算与依赖关系也相同，区别只在推理时是否使用滑动平均统计量'
+      B: 'BN 的统计量来自整个 batch，一个样本的输入梯度依赖同 batch 的其他样本；LN 在每个样本内部统计，样本之间的梯度互不影响'
+      C: 'LN 在特征维上统计，梯度会在同一 batch 的样本之间传递；BN 对每个样本单独归一化，梯度只依赖样本自身'
+      D: 'BN 反向传播时把 $\mu$、$\sigma$ 当作常数（使用滑动平均统计量），所以每个样本的梯度与 batch 中其他样本无关'
+    answer: B
+    explanation: |
+      **结论**：反向的形式相同，但「耦合」发生在不同的维度上。
+
+      对一组被一起归一化的数 $x_1..x_m$，有
+      $$\frac{\partial L}{\partial x_i}=\frac{1}{\sigma}\left(g_i-\frac1m\sum_jg_j-\hat x_i\cdot\frac1m\sum_jg_j\hat x_j\right),\qquad g_i=\frac{\partial L}{\partial\hat x_i}$$
+      梯度被减去了组内均值和组内沿 $\hat x$ 方向的分量。所以组内输入梯度之和恒为 0：输出对「整组加同一个常数」不变，沿全 1 方向的导数为 0。
+      - **BN**：一组就是 batch 中同一特征的 $m$ 个样本。样本之间通过 $\mu$、$\sigma$ 耦合，某个样本的梯度会受同 batch 其他样本的影响，这也是 BN 带有一定正则效果、却在小 batch 下噪声很大的原因。
+      - **LN**：一组就是同一个样本的 $d$ 个特征，每个样本的梯度只依赖它自己。
+
+      用随机数据实测，BN 的输入梯度沿 batch 维求和约为 $10^{-7}$（浮点误差），沿特征维求和不为 0；LN 恰好相反。
+
+      - A 错：公式形式相同，但求和、耦合的维度不同，训练时的反向依赖关系并不一样。
+      - C 错：说反了。BN 在 batch 维上统计，样本之间耦合；LN 对每个样本单独归一化，梯度只依赖样本自身。
+      - D 错：训练时 BN 使用当前 batch 的统计量，反向也要对这些统计量求导；只有推理（或冻结 BN）时才使用滑动平均，此时统计量是常数。
+
+      **补充**：RMSNorm 不减均值，对「整体加常数」不具有不变性，因此没有「梯度之和为 0」的性质。
+
+  - id: FND-DL-023
+    type: judge
+    difficulty: 3
+    frequency: 1
+    points: [BatchNorm与LayerNorm]
+    source: '论文：arXiv:1502.03167（https://arxiv.org/abs/1502.03167）、arXiv:1805.11604（https://arxiv.org/abs/1805.11604）'
+    question: |
+      BatchNorm 有效的原因已经被实验证实：它减少了内部协变量偏移（Internal Covariate Shift）。如果在 BN 层之后人为注入随机噪声、重新制造出分布偏移，BN 带来的训练加速就会消失。
+    answer: false
+    explanation: |
+      **错误**。「减少内部协变量偏移」是 BN 原论文（Ioffe 与 Szegedy, 2015, arXiv:1502.03167）提出的动机，但后续研究并不支持这个解释。
+
+      Santurkar 等（2018, arXiv:1805.11604）做了正是题目中的实验：在 BN 之后注入随时间变化、均值和方差都不为 0 的随机噪声，人为制造严重的分布偏移。结果这种「带噪 BN」的网络训练表现与标准 BN 几乎一样，仍远好于不加 BN 的网络。他们还发现 BN 并不一定减少内部协变量偏移。
+
+      他们给出的解释是：BN 让损失函数及其梯度更加平滑（Lipschitz 常数更小），梯度方向更可靠，因此可以用更大的学习率、对初始化更不敏感。另一个常被提及的角度是 BN 带来的尺度不变性：权重整体放缩不改变输出，与权重衰减一起会影响有效学习率。
+
+      面试中谈到 BN 为什么有效时，应说明 ICS 是原始动机，并指出后来的研究更倾向于「平滑优化地形」的解释。
+
+  - id: FND-DL-024
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [Dropout]
+    question: |
+      PyTorch 的 `nn.Dropout(p)` 采用「反向 Dropout」（inverted dropout）：训练时以概率 $p$ 把元素置 0，并把保留下来的元素除以 $1-p$；推理（eval 模式）时直接原样输出。因此用它训练的模型，推理时不需要再对权重或输出做任何缩放。
+    answer: true
+    explanation: |
+      **正确**。Dropout 要保证训练和推理时每个神经元输出的**期望**一致：
+      - 训练时，元素以概率 $1-p$ 被保留，期望为 $(1-p)x$；
+      - 反向 Dropout 在训练时就把保留下来的元素乘以 $\frac1{1-p}$，期望恢复为 $x$，推理时什么都不用做。
+
+      Dropout 原始论文（Srivastava 等, 2014）的做法是反过来的：训练时不缩放，推理时把权重乘以保留概率 $1-p$。两种做法在期望意义上等价。现代框架普遍采用反向 Dropout，好处是推理代码与是否使用过 Dropout 无关，部署更简单。
+
+      **易错点**：自己实现 Dropout 时，如果训练时已经除以 $1-p$，推理时又乘一次 $1-p$，就会把输出缩小。另外，推理时一定要切到 eval 模式，否则 Dropout 仍在随机置零，预测结果会带有随机性且偏差更大。
+
+  - id: FND-DL-025
+    type: code_output
+    difficulty: 1
+    frequency: 2
+    points: [Dropout]
+    question: |
+      下面的代码对全 1 向量分别在训练模式和推理模式下应用 `Dropout(p=0.25)`。输出是什么？
+    code: |
+      import torch
+
+      torch.manual_seed(0)
+      drop = torch.nn.Dropout(p=0.25)
+      x = torch.ones(10000)
+      y = drop(x)                                   # 模块默认处于训练模式
+      print(sorted({round(v, 4) for v in y.tolist()}))
+      print(round(y.mean().item(), 1))
+      drop.eval()
+      print(torch.equal(drop(x), x))
+    answer: |
+      [0.0, 1.3333]
+      1.0
+      True
+    explanation: |
+      1. **训练模式**：每个元素以 0.25 的概率被置 0，其余元素除以 $1-0.25=0.75$，变成 $1/0.75\approx1.3333$。所以输出中只有 0 和 1.3333 两种值。
+      2. **均值**：期望为 $0.75\times1.3333+0.25\times0=1$。10000 个元素的样本均值的标准差约为 $\sqrt{0.25\times0.75}/0.75/100\approx0.006$，保留一位小数是 1.0，与输入的期望一致，这正是缩放的目的。
+      3. **推理模式**：Dropout 变成恒等映射，输出与输入完全相同，打印 `True`。
+
+      **注意**：不要把训练和推理时的行为混淆。训练时输出的单个元素会被放大（1.3333），但期望与输入一致；推理时不做任何操作。
+
+  - id: FND-DL-026
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [Dropout, 泛化与模型容量]
+    source: '论文：arXiv:2204.02311（https://arxiv.org/abs/2204.02311）'
+    question: |
+      关于 Dropout，下列说法**正确**的有：
+    options:
+      A: '很多大模型预训练时不用 Dropout，例如 PaLM 预训练不用、微调时多数情况下才用 0.1'
+      B: '推理时保持 Dropout 开启、对同一输入多次前向，用预测的方差粗略估计不确定性（MC Dropout）'
+      C: 'Dropout 率越高，正则效果越强、泛化就越好，因此应尽量把它设得接近 1，例如 0.9'
+      D: 'Dropout 迫使神经元不能依赖特定的其他神经元，减少它们之间的「共适应」'
+      E: 'Dropout 可以看作训练时随机采样大量共享权重的子网络，推理时近似对它们的预测做平均'
+    answer: [A, B, D, E]
+    explanation: |
+      **结论**：A、B、D、E 正确。
+
+      - A 对：PaLM 论文（Chowdhery 等, 2022, arXiv:2204.02311）明确写到预训练不使用 Dropout，微调时多数情况下使用 0.1。数据量巨大、通常只训练约一个 epoch 时，过拟合风险很低，Dropout 带来的噪声反而拖慢训练。
+      - B 对：Gal 与 Ghahramani（2016）把 Dropout 解释为贝叶斯近似推断，推理时保持随机丢弃、多次采样，预测的方差可以作为不确定性的粗略估计。它只是近似，代价是推理成本成倍增加。
+      - C 错：Dropout 率过高会让网络欠拟合，甚至无法训练（取 0.9 意味着每次只保留 10% 的神经元）。常见取值：全连接层 0.1～0.5，输入层更小。
+      - D 对：这是 Dropout 原始论文（Srivastava 等, 2014）的核心动机，可以让学到的特征更稳健。
+      - E 对：每次前向随机丢弃不同的神经元，相当于从 $2^n$ 个子网络中采样一个来训练；推理时用缩放后的完整网络，近似这些子网络的几何平均。
+
+      **延伸**：Dropout 给梯度引入了噪声，通常会让收敛**变慢**；被置零的元素在稠密矩阵乘法中照样参与计算，所以也不会减少计算量。
+  - id: FND-DL-027
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [卷积神经网络]
+    tags: [ResNet]
+    question: |
+      ResNet 的第一层卷积：输入为 $224\times224\times3$ 的图像，64 个 $7\times7$ 卷积核，步长 2，填充 3，带偏置。求：
+      (1) 输出特征图的尺寸；
+      (2) 该层的参数量；
+      (3) 前向的乘加次数（MACs）；
+      (4) 若改用全连接层实现「输入展平 → 与该卷积输出同样大小的展平向量」的映射，需要多少参数？
+    answer: '(1) $112\times112\times64$；(2) 9472；(3) 约 $1.18\times10^8$ 次乘加；(4) 约 $1.2\times10^{11}$ 个参数'
+    explanation: |
+      1. **输出尺寸**：$\left\lfloor\dfrac{H+2p-k}{s}\right\rfloor+1=\left\lfloor\dfrac{224+6-7}{2}\right\rfloor+1=111+1=112$，输出为 $112\times112\times64$。
+      2. **参数量**：每个卷积核为 $7\times7\times3=147$ 个权重加 1 个偏置，共 $64\times148=9472$。（实际的 ResNet 后接 BN，卷积通常不带偏置，此时为 9408。）
+      3. **乘加次数**：每个输出元素需要 147 次乘加，输出共 $112\times112\times64=802816$ 个元素，合计 $802816\times147=118013952\approx1.18\times10^8$ 次乘加，约 0.24 GFLOPs。
+      4. **全连接**：输入 $224\times224\times3=150528$ 维，输出 802816 维，权重为 $150528\times802816\approx1.2\times10^{11}$ 个，是卷积层的约 1300 万倍。
+
+      **启示**：卷积靠**局部连接**（每个输出只看 $7\times7$ 的邻域）和**权重共享**（同一个卷积核在所有位置复用），把参数量从千亿级降到不足一万。注意计算量并没有减少到同样的程度：卷积层的参数很少，但计算量仍然可观（与输出分辨率成正比）。
+
+  - id: FND-DL-028
+    type: fill
+    difficulty: 1
+    frequency: 2
+    points: [卷积神经网络]
+    tags: [感受野, VGG]
+    question: |
+      连续堆叠 3 个步长为 1 的 $3\times3$ 卷积层，最后一层每个输出位置在原始输入上的感受野为 ____（填边长，如 5 表示 $5\times5$）。设每层输入、输出通道数都是 $C$，不计偏置，这 3 层的参数量是单个 $7\times7$ 卷积层的 ____ 倍（填最简分数）。
+    answer: [['7', '7×7'], ['27/49']]
+    explanation: |
+      **感受野**：步长为 1 时，每多一层 $k\times k$ 卷积，感受野边长增加 $k-1$。三层：$1+2+2+2=7$。一般公式为 $r_l=r_{l-1}+(k_l-1)\prod_{i<l}s_i$，前面层的步长会放大后面层的感受野增量。
+
+      **参数量**：3 个 $3\times3$ 卷积为 $3\times(3\times3\times C\times C)=27C^2$；1 个 $7\times7$ 卷积为 $49C^2$。比值为 $27/49\approx0.55$。
+
+      **意义**（VGG 的设计思想）：用多层小卷积代替一层大卷积，感受野相同，但参数更少，而且中间多了两次非线性激活，表达能力更强。代价是层数更多、中间激活需要更多显存。另外，理论感受野不等于有效感受野：实际上中心区域的像素影响大得多，有效感受野近似高斯分布，比理论值小。
+
+  - id: FND-DL-029
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [卷积神经网络]
+    tags: [归纳偏置, 平移等变]
+    question: |
+      关于卷积神经网络的归纳偏置，下列说法正确的是：
+    options:
+      A: '卷积层具有平移不变性：输入图像平移后，输出的特征图保持不变，因此 CNN 的分类结果天然不受物体位置影响'
+      B: '卷积层天然具有旋转等变性和尺度等变性，物体旋转或缩放后，特征图也相应地旋转或缩放'
+      C: '卷积层具有平移等变性（忽略边界与步长）：输入平移，特征图随之平移；平移不变性要靠池化或全局汇聚'
+      D: '卷积的权重共享主要是为了扩大感受野，让深层的每个输出都能看到更大范围的输入'
+    answer: C
+    explanation: |
+      **结论**：卷积是平移**等变**的，分类所需的平移**不变**性来自后续的汇聚。
+
+      - **等变**：$f(T(x))=T(f(x))$。同一个卷积核在所有位置滑动，物体移到哪里，响应就出现在哪里。
+      - **不变**：$f(T(x))=f(x)$。全局平均汇聚把整张特征图汇成一个向量，位置信息被丢掉，分类结果就不再依赖物体的位置。
+
+      卷积的两个关键归纳偏置是**局部性**（每个输出只看一个小邻域）和**权重共享**（同一组参数用于所有位置），前者对应「相邻像素关系密切」，后者对应「同一模式可能出现在任何位置」，并由此带来平移等变性。
+
+      - A 错：混淆了等变与不变。卷积层的输出会随输入一起平移，分类结果对位置的（近似）不变性来自后面的汇聚。
+      - B 错：普通卷积对旋转和缩放没有等变性，需要数据增强或专门设计的结构（如群等变卷积）。
+      - D 错：权重共享减少了参数、带来了平移等变性；感受野由卷积核大小、步长、空洞率和层数决定，与参数是否共享无关。
+
+      **细节**：步长大于 1 的卷积与下采样会破坏严格的平移等变性（输入平移 1 个像素，输出可能明显变化），这是 CNN 对微小平移不够稳健的原因之一，可以用抗混叠的模糊下采样等方法缓解。ViT 去掉了大部分这类归纳偏置，因此通常需要更多的数据或更强的数据增强。
+
+  - id: FND-DL-030
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [循环神经网络, 梯度消失与爆炸]
+    tags: [LSTM, BPTT]
+    question: |
+      普通 RNN 的隐状态更新为 $h_t=\tanh(W_hh_{t-1}+W_xx_t+b)$，在长序列上很难学到长距离依赖。LSTM 能缓解这个问题，主要原因是：
+    options:
+      A: 'LSTM 把隐状态更新中的 tanh 都换成了 ReLU，正半轴导数恒为 1，避免了激活函数饱和'
+      B: 'LSTM 把循环权重矩阵约束为正交矩阵，连乘时范数保持为 1，梯度既不衰减也不爆炸'
+      C: 'LSTM 在每个时间步内置了梯度裁剪，把梯度范数限制在固定范围内，从而同时消除了梯度爆炸与梯度消失'
+      D: '细胞状态按加法更新，沿它反传时主要逐元素乘以遗忘门，而不是反复乘同一个权重矩阵和 tanh 的导数'
+    answer: D
+    explanation: |
+      **结论**：LSTM 给梯度开了一条「加法」通路。
+
+      **普通 RNN**：时间反向传播（BPTT）中，$\dfrac{\partial h_T}{\partial h_t}=\prod_{k=t+1}^{T}\mathrm{diag}(\tanh'(\cdot))\,W_h$。同一个矩阵 $W_h$ 被反复相乘，梯度的量级大致按其最大奇异值的幂次变化：小于 1 就指数衰减（消失），大于 1 就指数增长（爆炸）。tanh 的导数不超过 1，进一步加剧了衰减。
+
+      **LSTM**：细胞状态的更新是加法形式，$\partial c_t/\partial c_{t-1}=\mathrm{diag}(f_t)$（忽略经由门控的间接路径）。遗忘门由网络根据输入自适应地控制：需要记住时 $f_t\approx1$，梯度几乎无损地向前传递。这与残差连接的思想相同。
+
+      - A 错：LSTM 的门使用 sigmoid，候选值和输出使用 tanh，并没有换成 ReLU；它缓解梯度消失靠的是细胞状态的加法通路，而不是换激活函数。
+      - B 错：把循环矩阵约束为正交（或酉）矩阵是 uRNN 等另一类方法的思路，LSTM 的权重没有这种约束。LSTM 有 4 组权重（3 个门加候选值），参数约为同尺寸普通 RNN 的 4 倍。
+      - C 错：LSTM 没有内置梯度裁剪；训练 LSTM 时仍常常配合梯度裁剪来防止爆炸。裁剪也只能压住过大的梯度，对消失无效。
+
+  - id: FND-DL-031
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [循环神经网络]
+    tags: [LSTM, 参数量]
+    question: |
+      单层 LSTM，输入维度为 128，隐藏维度为 256。按教科书公式（每个门只有一组偏置）计算，参数量为 ____；PyTorch 的 `nn.LSTM(128, 256)` 实际的参数量为 ____。
+    answer: ['394240', '395264']
+    explanation: |
+      LSTM 有 4 组变换：输入门、遗忘门、输出门和候选值，每组都把 $[h_{t-1},x_t]$ 映射到 256 维。
+
+      - **教科书公式**：$4\times\big(256\times(256+128)+256\big)=4\times(98304+256)=394240$。
+      - **PyTorch**：输入权重 `weight_ih` 为 $(4\times256)\times128=131072$，循环权重 `weight_hh` 为 $(4\times256)\times256=262144$，并且有 `bias_ih` 和 `bias_hh` 两组偏置，各 $4\times256=1024$。合计 $131072+262144+2048=395264$，比公式多出一组偏置（1024 个）。两组偏置在数学上可以合并成一组，PyTorch 保留两组是为了与 cuDNN 的实现保持一致。
+
+      **对比**：同样配置的 GRU 只有 3 组变换，PyTorch 中为 $3\times(256\times128+256\times256+2\times256)=296448$ 个参数，约为 LSTM 的 3/4。
+
+  - id: FND-DL-032
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [循环神经网络]
+    tags: [LSTM, GRU]
+    question: |
+      请写出 LSTM 的计算公式，说明每个门的作用，以及它为什么能缓解长序列上的梯度消失；遗忘门的偏置为什么常被初始化为 1？再简要对比 GRU，并说明 RNN 类模型的主要局限。
+    answer: |
+      1. **公式**（$[h_{t-1},x_t]$ 表示拼接）：
+         - 遗忘门 $f_t=\sigma(W_f[h_{t-1},x_t]+b_f)$：决定旧的细胞状态保留多少；
+         - 输入门 $i_t=\sigma(W_i[h_{t-1},x_t]+b_i)$：决定写入多少新信息；
+         - 候选值 $\tilde c_t=\tanh(W_c[h_{t-1},x_t]+b_c)$：本步提出的新内容；
+         - 细胞状态 $c_t=f_t\odot c_{t-1}+i_t\odot\tilde c_t$；
+         - 输出门 $o_t=\sigma(W_o[h_{t-1},x_t]+b_o)$，隐状态 $h_t=o_t\odot\tanh(c_t)$：决定对外暴露多少。
+      2. **为什么缓解梯度消失**：细胞状态是加法更新，沿 $c$ 反传时每一步主要乘以遗忘门 $f_t$（逐元素），而不是像普通 RNN 那样反复乘同一个权重矩阵和 tanh 导数。遗忘门接近 1 时，信息与梯度都能跨越很长的距离。
+      3. **遗忘门偏置初始化为 1**：初始时 $\sigma(1)\approx0.73$，默认倾向于「记住」，训练初期梯度就能沿时间传得更远，有利于学习长依赖。若初始化为 0，$f\approx0.5$，每步都打五折，几十步后梯度就消失了。Jozefowicz 等（2015）的大规模实验也建议这样做。
+      4. **GRU**：只有更新门和重置门，没有独立的细胞状态；更新门在旧状态与候选状态之间做插值，重置门控制计算候选状态时使用多少旧状态。参数约为 LSTM 的 3/4，很多任务上效果相近。
+      5. **局限**：时间步之间存在依赖，无法沿序列并行计算，训练慢、难以扩展到很大规模；超长依赖仍然困难；仍可能梯度爆炸（需要裁剪）。这些是 Transformer 取代 RNN 的主要原因。
+    rubric:
+      - '写对 LSTM 的门与状态更新公式（3 分）'
+      - '解释细胞状态加法更新为何缓解梯度消失（2 分）'
+      - '解释遗忘门偏置初始化为 1 的原因（2 分）'
+      - '说明 GRU 的结构差异（1 分）'
+      - '说明 RNN 的局限（不能并行等）（2 分）'
+    explanation: |
+      **常见失分点**：把遗忘门的作用说反（$f_t$ 越大，保留的旧信息越多）；混淆细胞状态 $c_t$ 与隐状态 $h_t$；说 LSTM「彻底解决了梯度消失和爆炸」；只背公式，讲不出为什么加法更新有帮助。
+
+  - id: FND-DL-033
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [损失函数]
+    question: |
+      某回归任务的标签中混有少量严重离群的值（如录入错误）。希望损失函数既不被这些离群点主导，又在误差较小时梯度平滑、便于优化。最合适的选择是：
+    options:
+      A: '均方误差（MSE）：误差小时梯度平滑；离群点虽然误差大，但只占少数样本，对平均损失影响有限'
+      B: 'Huber 损失：误差小于阈值 $\delta$ 时按平方计算，超过阈值后按线性计算'
+      C: '平均绝对误差（MAE）：对离群点稳健，而且处处可导，梯度随误差减小而平滑地减小'
+      D: '分位数损失（pinball loss），取 $\tau=0.9$：对正、负误差施加不同的线性权重'
+    answer: B
+    explanation: |
+      **结论**：Huber 损失兼顾了 MSE 与 MAE 的优点。
+      $$\ell_\delta(r)=\begin{cases}\frac12r^2,&|r|\le\delta\\ \delta\big(|r|-\frac12\delta\big),&|r|>\delta\end{cases}$$
+      误差小时与 MSE 相同，梯度 $r$ 平滑地趋于 0，便于精细收敛；误差大时梯度被限制在 $\pm\delta$，离群点的影响有上界。
+
+      - A 错：少数离群点的平方误差就可能超过其余所有样本的总和。MSE 的梯度与误差成正比，一个误差为 100 的离群点产生的梯度是误差为 1 的样本的 100 倍，会主导训练。从概率角度看，MSE 对应高斯噪声假设，而高斯分布的尾部很轻。
+      - C 错：MAE 对离群点确实稳健（梯度大小恒为 1），但在 0 处不可导，梯度也不会随误差减小而变小，接近最优时容易来回振荡。
+      - D 错：分位数损失同样是分段线性的，在 0 处不可导，梯度不会随误差减小而变小；取 $\tau=0.9$ 时估计的是条件 0.9 分位数，预测会系统性偏高，并不是对中心趋势的稳健估计。
+
+      **延伸**：Huber 损失与目标检测中常用的 Smooth L1 损失（Fast R-CNN 提出，用于边框回归）本质相同，两者只差一个与 $\delta$ 有关的缩放系数。
+
+  - id: FND-DL-034
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [损失函数]
+    source: '论文：arXiv:1906.02629（https://arxiv.org/abs/1906.02629）'
+    tags: [多标签分类, 标签平滑, VAE]
+    question: |
+      关于损失函数的选择，下列说法**正确**的有：
+    options:
+      A: 'Focal Loss 增大易分样本的权重，让模型更多地关注简单样本，从而加快收敛、减少难样本带来的噪声'
+      B: '使用 softmax 交叉熵时，应先对模型输出做 softmax，再把得到的概率传给 PyTorch 的 `F.cross_entropy`'
+      C: '标签平滑把 one-hot 目标改为 $(1-\epsilon)\cdot\text{onehot}+\epsilon/K$，可以抑制过度自信，通常还能改善校准'
+      D: '多标签分类（一个样本可以同时属于多个类别）应对每个类别分别使用 sigmoid + 二元交叉熵，而不是对所有类别做 softmax'
+      E: 'VAE 的损失（负 ELBO）由两部分组成：重构项，以及近似后验 $q(z\mid x)$ 与先验 $p(z)$ 之间的 KL 散度'
+    answer: [C, D, E]
+    explanation: |
+      **结论**：C、D、E 正确。
+
+      - A 错：恰好相反，Focal Loss（Lin 等, 2017）用 $(1-p_t)^\gamma$ **降低**易分样本的权重，让训练聚焦难样本，常用于正负样本极不平衡的目标检测。
+      - B 错：`F.cross_entropy` 内部已经包含 log_softmax，要求输入原始 logits。先做一次 softmax 再传入，相当于做了两次 softmax，梯度被压扁，loss 也降不到 0。
+      - C 对：标签平滑（Szegedy 等, 2016）让最优的 logits 保持有限，防止 logits 无限增大；Müller 等（2019, arXiv:1906.02629）发现它能改善校准，但用它训练的教师模型做知识蒸馏效果会变差。
+      - D 对：softmax 让各类别的概率之和为 1，相互竞争，适合「恰好属于一类」的多分类；多标签任务中各标签相互独立，应对每个标签做独立的二分类（PyTorch 中用 `BCEWithLogitsLoss`）。
+      - E 对：$-\mathrm{ELBO}=-E_{q(z\mid x)}[\log p(x\mid z)]+\mathrm{KL}(q(z\mid x)\Vert p(z))$。前一项让重构尽量准确，后一项让潜变量的分布贴近先验（通常为标准正态），使潜空间平滑、可以采样生成。
+
+      **补充**：大语言模型的预训练损失就是对每个位置的下一个 token 做多分类交叉熵，再对所有有效 token 取平均。
+  - id: FND-DL-035
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [损失函数]
+    tags: [交叉熵]
+    question: |
+      下面的代码比较 `F.cross_entropy` 的正确用法（传入 logits）与常见的错误用法（传入 softmax 之后的概率），最后一项相当于模型给出了「完美」的概率输出。输出是什么？
+    code: |
+      import torch
+      import torch.nn.functional as F
+
+      y = torch.tensor([0])
+      logits = torch.tensor([[10.0, 0.0, 0.0]])
+      right = F.cross_entropy(logits, y)
+      wrong = F.cross_entropy(logits.softmax(-1), y)      # 误把概率当作 logits 传入
+      perfect = F.cross_entropy(torch.tensor([[1.0, 0.0, 0.0]]), y)
+      print(round(right.item(), 4), round(wrong.item(), 4), round(perfect.item(), 4))
+    answer: |
+      0.0001 0.5515 0.5514
+    explanation: |
+      `F.cross_entropy(z, y)` 计算的是 $-\log\mathrm{softmax}(z)_y$，内部自带 softmax。
+
+      - **right**：$-\log\dfrac{e^{10}}{e^{10}+2}=\log(1+2e^{-10})\approx9.1\times10^{-5}$，保留 4 位小数为 0.0001。
+      - **wrong**：先 softmax 得到概率 $(0.99991,0.00005,0.00005)$，再被当作 logits 做一次 softmax：$\log(1+2e^{0.00005-0.99991})\approx0.5515$。
+      - **perfect**：即使「概率」已经是完美的 $(1,0,0)$，loss 仍为 $\log(1+2e^{-1})\approx0.5514$。
+
+      **启示**：把概率传进 `cross_entropy`，等于把输入限制在 $[0,1]$ 内，再做一次 softmax，最大概率也只能到 $e/(e+K-1)$。三分类时 loss 的下界约为 0.551，类别越多下界越高；而且梯度被压得很小，模型训练得又慢又差，代码却不会报任何错。这是实践中最常见的 bug 之一。正确做法：模型输出原始 logits，直接传给 `cross_entropy`；需要概率时，在推理时另外做 softmax。
+
+  - id: FND-DL-036
+    type: fill
+    difficulty: 3
+    frequency: 1
+    points: [损失函数]
+    tags: [标签平滑]
+    question: |
+      10 分类任务使用标签平滑，系数 $\epsilon=0.1$，平滑后的目标分布为 $(1-\epsilon)\cdot\text{onehot}+\epsilon/K$。正确类别的目标概率为 ____；如果模型能使交叉熵达到最小（输出分布恰好等于目标分布），正确类别与任意一个错误类别的 logit 之差为 ____（保留两位小数）。
+    answer: [['0.91'], ['4.51', 'ln 91', 'ln91']]
+    explanation: |
+      **目标分布**：正确类别 $0.9+0.1/10=0.91$，每个错误类别 $0.1/10=0.01$。
+
+      **最优 logits**：对软标签 $q$，交叉熵 $H(q,p)=H(q)+\mathrm{KL}(q\Vert p)$ 在 $p=q$ 时取最小值。softmax 输出的概率之比等于 logit 之差的指数：$\dfrac{p_{正确}}{p_{错误}}=e^{z_{正确}-z_{错误}}=\dfrac{0.91}{0.01}=91$，所以 logit 之差为 $\ln91\approx4.51$。
+
+      **对比**：不做标签平滑时，目标是 one-hot，只有 logit 之差趋于无穷大时 loss 才趋于 0。模型会不断放大 logits，变得过度自信，泛化和校准都可能变差。标签平滑把最优的 logit 之差限制在有限值，起到正则化作用。代价是模型永远不会输出很尖锐的分布，且最小 loss 不再是 0，而是 $H(q)$；在本题中 $H(q)=-0.91\ln0.91-9\times0.01\ln0.01\approx0.50$ nat。
+
+  - id: FND-DL-037
+    type: code_output
+    difficulty: 2
+    frequency: 3
+    points: [计算图与自动微分, 反向传播]
+    question: |
+      下面的计算图中，`x` 被使用了两次。输出是什么？
+    code: |
+      import torch
+
+      x = torch.tensor(2.0, requires_grad=True)
+      y = torch.tensor(3.0, requires_grad=True)
+      a = x * y
+      b = a + x
+      c = b * b
+      c.backward()
+      print(c.item(), x.grad.item(), y.grad.item())
+    answer: |
+      64.0 64.0 32.0
+    explanation: |
+      **前向**：$a=6$，$b=8$，$c=64$。
+
+      **反向**（从 $c$ 出发，按逆拓扑序）：
+      1. $\partial c/\partial b=2b=16$；
+      2. $b=a+x$：$\partial c/\partial a=16$，并且有一条到 $x$ 的直接路径，贡献 $16\times1=16$；
+      3. $a=xy$：$\partial c/\partial y=16\times x=32$；到 $x$ 的另一条路径贡献 $16\times y=48$；
+      4. $x$ 的两条路径**相加**：$16+48=64$。
+
+      **验证**：$c=(xy+x)^2=x^2(y+1)^2$，$\partial c/\partial x=2x(y+1)^2=2\times2\times16=64$，$\partial c/\partial y=2x^2(y+1)=2\times4\times4=32$。
+
+      **要点**：多元链式法则中，一个变量通过多条路径影响输出时，梯度等于各条路径贡献之和。自动微分在计算图的分叉处把回传的梯度累加起来，这也是参数共享（如 Embedding 与输出层共享权重、RNN 在各个时间步共用同一组权重）时梯度自然相加的原因。
+
+  - id: FND-DL-038
+    type: multiple
+    difficulty: 3
+    frequency: 2
+    points: [计算图与自动微分]
+    tags: [前向模式, 反向模式]
+    question: |
+      关于自动微分的前向模式与反向模式，下列说法**正确**的有：
+    options:
+      A: '反向模式要保存前向的中间结果（或反向时重算），显存随深度增长；前向模式可与原计算同步推进，不必保存整条路径'
+      B: '损失是标量、参数很多，所以训练用反向模式：一次反向就得到全部参数的梯度，代价是前向的常数倍'
+      C: '前向模式每次得到一个雅可比-向量积，反向模式每次得到一个向量-雅可比积；求完整雅可比分别约需输入维数次与输出维数次'
+      D: '自动微分就是符号微分：先在计算图上推导出导数的完整表达式，再代入数值求值，因此会有表达式膨胀'
+      E: '反向模式本质上是数值近似：用相邻计算节点之间的差分估计局部导数，精度不如中心差分'
+    answer: [A, B, C]
+    explanation: |
+      **结论**：A、B、C 正确。
+
+      - A 对：反向时需要前向的中间结果来计算局部导数，这是训练比推理占显存多的原因，激活重计算就是用计算换显存。前向模式在每一步同时计算原值和导数，用完即可丢弃，内存开销与深度无关。
+      - B 对：$m=1$ 时反向模式一次就能得到完整的梯度。反向传播就是反向模式自动微分在神经网络上的应用，其计算量约为前向的 2～3 倍，与参数个数无关。
+      - C 对：前向模式沿计算方向传播「方向导数」$\dot x$，一次得到 $J\dot x$；反向模式从输出往回传播「伴随」$\bar y$，一次得到 $\bar y^\top J$，即雅可比-向量积（JVP）与向量-雅可比积（VJP）。对 $f:\mathbb{R}^n\to\mathbb{R}^m$，逐个代入单位向量，前向模式约需 $n$ 次得到完整雅可比，反向模式约需 $m$ 次。
+      - D 错：自动微分不构造导数的完整表达式，而是在每个基本运算上应用已知的局部导数规则，按计算图传播数值。它避免了符号微分的表达式膨胀，也能处理带循环、分支的程序。
+      - E 错：自动微分不做差分，而是对每个基本运算套用解析的局部导数，结果在浮点误差范围内是精确的；有限差分才有截断误差与舍入误差，只适合用来做梯度检查。
+
+      **应用**：前向模式适合输入维度小、输出维度大的情形，例如对少数几个超参数求灵敏度，或计算海森-向量积时的「前向套反向」组合。
+  - id: FND-DL-039
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [泛化与模型容量]
+    source: '论文：arXiv:1611.03530（https://arxiv.org/abs/1611.03530）'
+    tags: [随机标签, 记忆]
+    question: |
+      Zhang 等（2017）在《Understanding deep learning requires rethinking generalization》中，把 CIFAR-10 的标签全部随机打乱后训练标准的 CNN。他们的发现与结论是：
+    options:
+      A: '网络无法拟合随机标签，训练误差停留在 90% 左右，说明深度网络只会学习数据中真实存在的规律'
+      B: '网络能记住随机标签，但加上 Dropout 与权重衰减后就记不住了，说明显式正则化是深度网络泛化的关键'
+      C: '网络能把随机标签拟合到接近零训练误差，说明仅凭参数量、VC 维等容量度量，解释不了深度网络的泛化'
+      D: '网络能记住随机标签，而且比拟合真实标签更快，因为随机标签中没有需要学习的结构'
+    answer: C
+    explanation: |
+      **结论**：深度网络有足够的容量死记硬背，泛化好不能简单归因于「模型容量小」。
+
+      论文（arXiv:1611.03530）发现：
+      1. 标签完全随机时，CNN 仍能把训练误差降到接近 0，测试准确率则是随机水平（约 10%）。同一个网络既能在真实数据上泛化，也能记住纯噪声，所以只依赖模型类本身的容量度量（参数量、VC 维、Rademacher 复杂度）无法区分这两种情况。
+      2. 显式正则化（Dropout、权重衰减、数据增强）有帮助，但既不是泛化的必要条件，也不能阻止网络记住随机标签。
+      3. 拟合随机标签比拟合真实标签更慢，但只慢一个不大的常数倍。
+
+      - A 错：网络能拟合随机标签。
+      - B 错：加了 Dropout、权重衰减等正则化，网络照样能记住随机标签；论文据此认为显式正则化有帮助，但既不是泛化的必要条件，也阻止不了记忆。
+      - D 错：随机标签需要更长的训练时间，因为必须逐个记住样本，而不能利用共享的规律。
+
+      **影响**：这项工作促使人们从优化算法的隐式正则化（如 SGD 偏好平坦极小值）、数据本身的结构、基于范数或间隔的复杂度等角度重新研究泛化，也与后来的双下降现象相呼应。
+
+  - id: FND-DL-040
+    type: scenario
+    difficulty: 2
+    frequency: 2
+    points: [泛化与模型容量, Dropout]
+    tags: [过拟合, 数据增强, 迁移学习]
+    question: |
+      团队用 ResNet-50 从零训练一个 10 类工业缺陷图像分类器，训练集约 2 万张图片。训练 100 个 epoch 后，训练准确率 99.8%，验证准确率只有 76%；验证 loss 在第 15 个 epoch 左右开始持续上升。请诊断问题，按优先级给出改进方案，并说明如何验证改进确实有效。
+    answer: |
+      **诊断**：训练准确率接近 100%，验证准确率低得多，验证 loss 先降后升，这是典型的过拟合（高方差）：约 2500 万参数的模型从零训练，只有 2 万张图片，容量远超数据能约束的范围。
+
+      **先排除数据问题**（往往性价比最高）：
+      - 训练集与验证集的分布是否一致（不同产线、相机、光照）；
+      - 标签噪声（抽样复查错分样本）、各类别是否严重不平衡；
+      - 训练集与验证集之间是否存在近重复图片（会让验证结果虚高，这里不是主要矛盾，但影响结论的可信度）。
+
+      **改进方案（按优先级）**：
+      1. **迁移学习**：用 ImageNet 预训练权重初始化再微调，小数据场景下通常是提升最大的一步；数据很少时可以先冻结前几层。
+      2. **数据增强**：随机裁剪、翻转、旋转、颜色抖动，以及针对缺陷场景的增强（模拟光照、噪声、模糊）；进一步可用 Mixup / CutMix。注意增强不能破坏缺陷特征（如有方向性的划痕不宜随意翻转）。
+      3. **正则化**：权重衰减（如 SGD 用 $5\times10^{-4}$，或改用 AdamW）、标签平滑、在分类头前加 Dropout、随机深度。
+      4. **早停与选模型**：按验证指标保存最佳检查点；用余弦等学习率调度，避免在过拟合区长时间训练。
+      5. **模型容量**：尝试更小的模型（ResNet-18 或更轻量的网络）。
+      6. **数据**：针对混淆严重的类别补充标注；也可以用主动学习挑选最有价值的样本。
+
+      **验证**：
+      - 画训练与验证的 loss、准确率曲线，看差距是否缩小、验证 loss 是否不再反弹；
+      - 看各类别的召回率与混淆矩阵，确认提升不是只来自多数类；
+      - 数据较少时用 k 折交叉验证或多个随机种子，确认提升超出随机波动；
+      - 最后在一个从未参与调参的测试集（最好来自新的批次或产线）上确认。
+    rubric:
+      - '正确诊断为过拟合（高方差），并用曲线现象作为依据（2 分）'
+      - '提到先排查数据分布、标签噪声与重复样本（2 分）'
+      - '给出迁移学习、数据增强、正则化、早停等方案，并有合理的优先级（4 分）'
+      - '给出验证方案：学习曲线、分类别指标、多次实验或交叉验证、独立测试集（2 分）'
+    explanation: |
+      **常见失分点**：只列一串正则化方法，没有优先级；忽略迁移学习这个在小数据场景中最有效的手段；不检查数据问题就开始调模型；只看总体准确率，不看各类别的表现与实验波动。

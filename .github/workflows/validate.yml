@@ -1,0 +1,24 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"   # 代码题的标准输出按此版本核对（不同版本的报错文本可能不同）
+      - name: Install dependencies
+        run: |
+          pip install pyyaml numpy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Validate questions
+        run: python scripts/validate.py
+      - name: Check generated files are up to date
+        run: |
+          python scripts/build.py
+          git diff --exit-code -- docs dist README.md || (echo "生成文件不是最新的，请运行 python scripts/build.py 并提交结果" && exit 1)

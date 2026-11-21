@@ -1,0 +1,1150 @@
+domain: INF
+subcategory: BASE
+questions:
+
+  - id: INF-BASE-001
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [Prefill与Decode, 算术强度与Roofline]
+    question: |
+      关于大模型推理中 Prefill 与 Decode 两个阶段的计算特征，下列说法正确的是：
+    options:
+      A: 'Prefill 的线性层强度约等于提示词长度，通常受算力限制、主要决定 TTFT；Decode 的强度约等于 batch 大小，通常受带宽限制、主要决定 TPOT'
+      B: 'Prefill 要把整段提示词的激活读写一遍、数据量大，所以受显存带宽限制、决定 TTFT；Decode 每步只算 1 个 token、数据量小，所以受算力限制、决定 TPOT'
+      C: '两个阶段通常都受算力限制；Decode 慢是因为每生成一个 token 都要为此前的每个 token 重新计算 K、V 和注意力'
+      D: 'Decode 的主要开销在输出层：每一步都要对十几万大小的词表做 LM Head 投影、Softmax 和采样，词表越大越慢'
+    answer: A
+    explanation: |
+      **结论**：Prefill 卡算力、决定 TTFT；Decode 卡带宽、决定 TPOT。
+
+      以一个 $d\times d$ 的线性层为例：BF16 权重占 $2d^2$ 字节，一次处理 $n$ 个 token 要做 $2nd^2$ 次浮点运算，算术强度约为 $n$ FLOP/B。H100 的拐点约为 295 FLOP/B：
+      - Prefill 的 $n$ 是提示词长度（几百到几万），远超拐点，算力被打满；
+      - Decode 的 $n$ 是 batch 大小，batch = 1 时强度约为 1，绝大部分时间在等权重和 KV 从显存读进来。
+
+      - B 错：把两个阶段说反了。决定瓶颈的不是「数据量」，而是「每读 1 字节做多少计算」：Prefill 读一遍权重就能服务整段提示词，激活的读写量也远小于计算量；Decode 每步计算量虽小，却要把全部权重读一遍。
+      - C 错：有了 KV Cache，历史 token 的 K、V 不会重算；Decode 每步的计算量很小，慢在要把全部权重和 KV 读一遍。
+      - D 错：采样和输出层只占一小部分。以 Llama-3-8B 为例，LM Head 权重约 1.05 GB（128256 × 4096 × 2 字节），只占约 16 GB 权重的 6.5% 左右，不是主因。
+
+  - id: INF-BASE-002
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [Prefill与Decode]
+    question: |
+      同一个模型部署在同一张 GPU 上，Prefill 阶段平均每个 token 的耗时，通常远小于 batch = 1 时 Decode 阶段生成一个 token 的耗时。
+    answer: true
+    explanation: |
+      **正确**。以 Llama-3-8B（BF16）在单张 H100 上的理论下界为例：
+      - Prefill 4096 个 token 约 71 ms，平均每个 token 约 17 µs；
+      - batch = 1 的 Decode 每步约 4.95 ms，即每个 token 约 4.95 ms。
+
+      两者相差近 300 倍。原因是 Prefill 把整段提示词放在一次前向里并行计算，读一遍权重就服务了几千个 token，算力利用率高；Decode 每步为 1 个 token 把约 16 GB 的权重完整读一遍，绝大部分时间在等显存。
+
+      这也是很多大模型 API 的输出单价是输入单价数倍的原因之一：生成一个输出 token 占用 GPU 的时间远多于处理一个输入 token。批处理能把 Decode 的权重读取分摊给多条序列，缩小这个差距，但无法完全消除。
+
+  - id: INF-BASE-003
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [Prefill与Decode, 延迟估算]
+    source: 'NVIDIA H100 规格 https://www.nvidia.com/en-us/data-center/h100/（H100 SXM：80 GB、3.35 TB/s，BF16 1979 TFLOPS 为含稀疏值，稠密约 989）；Llama 3 config.json（Hugging Face meta-llama/Meta-Llama-3-8B：32 层、8 个 KV 头、头维度 128，约 8.03B 参数）'
+    question: |
+      Llama-3-8B（BF16）部署在单张 H100 上：batch = 1 时 Decode 每步约 5 ms；一段 4096 token 的提示词 Prefill 约 71 ms（均为理论下界的量级）。现在来了一个只有 16 个 token 的短提示词（单独处理，batch = 1），它的 Prefill 耗时最接近：
+    options:
+      A: '约 0.28 ms：Prefill 受算力限制，按 71 ms × 16 / 4096 线性折算'
+      B: '约 80 ms：16 个 token 要逐个前向，相当于串行做 16 步 Decode'
+      C: '约 71 ms：Prefill 一次前向只读一遍权重，耗时不随提示词长度变化'
+      D: '约 5 ms：算术强度只有约 16，仍受带宽限制，耗时约等于读一遍权重'
+    answer: D
+    explanation: |
+      **结论**：很短的 Prefill 和一步 Decode 一样受带宽限制，耗时约等于「读一遍权重」的时间。
+
+      耗时下界 = max（读数据时间，计算时间）：
+      - 读权重：$16.06\ \text{GB}\div3.35\ \text{TB/s}\approx4.8$ ms；
+      - 计算：$2\times8.03\times10^9\times16\div989\ \text{TFLOPS}\approx0.26$ ms。
+
+      取较大者，约 5 ms。只有当提示词长到算术强度超过拐点（H100 上约 300 token）时，Prefill 耗时才开始随长度近似线性增长。
+
+      - A 错：只有长提示词的 Prefill 才受算力限制，线性折算只在这一区间成立；16 个 token 远在拐点之下。
+      - B 错：Prefill 的 16 个 token 在一次前向里并行计算，只读一遍权重，不是串行的 16 步。
+      - C 错：「只读一遍权重」只决定了耗时下界中的读数据部分；长提示词的 Prefill 受算力限制，耗时随长度增长，只是在很短的区间里近似不变。
+
+      工程含义：短的 Prefill 与正在进行的 Decode 放在同一步里几乎「免费」，这也是 Chunked Prefill 把 Prefill 块和 Decode 混在一起执行能提高利用率的原因。
+
+  - id: INF-BASE-004
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [Prefill与Decode, 算术强度与Roofline, 带宽瓶颈与批处理]
+    question: |
+      请从 Roofline（算术强度）的角度解释：为什么 Prefill 通常是算力瓶颈、Decode 通常是显存带宽瓶颈？请以 H100 + 8B 模型为例给出数量级，并说明两个阶段各自的主要优化手段。
+    answer: |
+      1. **Roofline**：可达性能 $P=\min(\pi,\ I\cdot\beta)$，拐点 $I^*=\pi/\beta$。H100 SXM 的 BF16 稠密算力约 989 TFLOPS、带宽约 3.35 TB/s，拐点约 295 FLOP/B：强度低于它卡带宽，高于它卡算力。
+      2. **线性层的强度**：$d\times d$ 的 BF16 权重占 $2d^2$ 字节，一次处理 $n$ 个 token 做 $2nd^2$ 次运算，强度约为 $n$。模型的绝大部分计算和权重都在线性层上。
+      3. **Prefill**：$n$ 是提示词长度，几千 token 时远超 295，算力打满。8B 模型 4096 token 约需 $2\times8\times10^9\times4096\approx6.6\times10^{13}$ FLOPs，加上注意力，下界约 71 ms。
+      4. **Decode**：$n$ 是 batch 大小，batch = 1 时强度约 1。每步要把约 16 GB 权重读一遍，下界约 4.8 ms，算力利用率不到 1%；每条序列的 KV 还要各读一遍，注意力部分的强度约等于 GQA 的组大小，与 batch 无关。
+      5. **Prefill 的优化**：FlashAttention（减少显存读写）、前缀缓存（跳过重复的 Prefill）、FP8 W8A8（用更高的低精度算力）、张量并行、Chunked Prefill（调度层面避免阻塞 Decode）。
+      6. **Decode 的优化**：连续批处理与更大的 batch（摊薄权重读取）、PagedAttention（放下更多序列）、权重与 KV 量化（少读字节）、GQA / MLA（减少 KV）、投机解码（一次前向产出多个 token）、张量并行（每卡少读）。
+    rubric:
+      - '写出 Roofline 公式与拐点，并给出 H100 约 295 FLOP/B 的量级（2 分）'
+      - '推导线性层强度约等于一次处理的 token 数（3 分）'
+      - '给出两个阶段的数量级估算，并指出 KV 读取无法被 batch 摊薄（2 分）'
+      - '两个阶段的优化手段各举出至少 3 个且对应正确（3 分）'
+    explanation: |
+      **常见失分点**：说「Decode 慢是因为注意力计算量大」（主要成本是读权重和 KV）；说「Prefill 数据量大所以卡带宽」（混淆数据量与强度）；只讲结论不给数字；把投机解码、量化等写成 Prefill 的优化；忽略了很短的提示词也会处于带宽瓶颈区间。
+
+  - id: INF-BASE-005
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [TTFT与TPOT]
+    question: |
+      某流式请求在发出后 1.0 s 收到第 1 个 token，3.0 s 时收到最后一个 token，共输出 41 个 token。按 TPOT 的常用定义，该请求的 TPOT 与用户感受到的出字速度分别约为：
+    options:
+      A: '73.2 ms，约 13.7 token/s'
+      B: '50 ms，约 20 token/s'
+      C: '48.8 ms，约 20.5 token/s'
+      D: '75 ms，约 13.3 token/s'
+    answer: B
+    explanation: |
+      **结论**：TPOT =（端到端时延 − TTFT）÷（输出 token 数 − 1）$=(3.0-1.0)\div(41-1)=50$ ms，出字速度为 $1/0.05=20$ token/s。
+
+      第 1 个 token 的时间已经算在 TTFT 里，之后的 40 个 token 对应 40 个间隔。端到端时延因此可以写成 $\text{TTFT}+\text{TPOT}\times(N-1)$。
+
+      - A 错：用 $3.0\div41$，把 TTFT 也摊进了每个 token，混淆了「平均每 token 端到端时间」与 TPOT。
+      - C 错：用 $2.0\div41$，分母忘了减 1。
+      - D 错：用 $3.0\div40$，没有扣除 TTFT。
+
+      注意：只输出 1 个 token 的请求没有 TPOT，压测统计时要单独处理；不同工具的口径略有差异，报告时要写明定义。
+
+  - id: INF-BASE-006
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [TTFT与TPOT, 性能分析方法]
+    tags: [ITL]
+    question: |
+      一次压测中只有两个流式请求：
+      - 请求 A 输出 11 个 token，相邻 token 的间隔都是 20 ms；
+      - 请求 B 输出 101 个 token，其中 99 个间隔是 40 ms，另有 1 个间隔因为一个长提示词的 Prefill 插队，变成了 1040 ms。
+
+      (1) A、B 各自的 TPOT 是多少？按请求取平均的 mean TPOT 是多少？
+      (2) 把两个请求的全部 token 间隔放在一起统计，mean ITL 是多少？最大 ITL 是多少？
+      (3) 这组数字说明报告延迟指标时要注意什么？
+    answer: '(1) A 为 20 ms，B 为 50 ms，mean TPOT 为 35 ms；(2) mean ITL 约 47.3 ms，最大 ITL 为 1040 ms；(3) 按请求平均会低估长请求的权重，均值会掩盖卡顿，应同时报告 ITL 分布的高分位数或最大值'
+    explanation: |
+      **(1) TPOT**：
+      - A：10 个间隔都是 20 ms，TPOT = 20 ms；
+      - B：$(99\times40+1040)\div100=5000\div100=50$ ms；
+      - 按请求平均：$(20+50)\div2=35$ ms。
+
+      **(2) ITL**：共 $10+100=110$ 个间隔，
+      $$\text{mean ITL}=\frac{10\times20+99\times40+1040}{110}=\frac{5200}{110}\approx47.3\ \text{ms}$$
+      最大 ITL 为 1040 ms：用户在 B 的输出中途看到了约 1 秒的停顿。
+
+      **(3) 启示**：
+      - 按请求平均（35 ms）和按 token 平均（47.3 ms）差别很大：前者让只输出 10 个 token 的 A 与输出 100 个 token 的 B 权重相同，低估了长请求的体验；
+      - B 的 TPOT 只有 50 ms，看起来不错，但其中包含一次 1 秒的卡顿，均值把它摊平了；
+      - 因此 SLO 与报告要写明口径，并同时给出 ITL 的 P99 或最大值。长提示词插队造成的卡顿正是 Chunked Prefill 要解决的问题。
+
+  - id: INF-BASE-007
+    type: judge
+    difficulty: 1
+    frequency: 3
+    points: [TTFT与TPOT, 请求生命周期]
+    question: |
+      高负载时，TTFT 的上涨往往主要来自请求在调度队列中的等待，而不是 Prefill 计算本身变慢；这种情况下，增加实例或限制进入系统的请求速率，通常比优化 Prefill 的 kernel 更有效。
+    answer: true
+    explanation: |
+      **正确**。TTFT = 网络 + 分词 + **排队** + Prefill（+ 首个 token 的采样与反分词）。低负载时 Prefill 是大头；负载接近系统容量时，排队时间会急剧增长（利用率越接近 100%，队列越长），很快成为 TTFT 的主要部分。
+
+      这时优化 kernel 只能让每个请求的服务时间缩短一点；如果到达速率仍然超过系统的处理能力，队列会持续变长。更直接的办法是扩容、限流或对低优先级流量降级，把负载拉回容量以内。
+
+      排查时先看排队指标（如 vLLM 的 `num_requests_waiting`）和单请求追踪中排队与 Prefill 各占多少，再决定是加机器还是做 Prefill 优化（前缀缓存、FP8、调整 Chunked Prefill 预算等）。
+
+  - id: INF-BASE-008
+    type: single
+    difficulty: 1
+    frequency: 3
+    points: [TTFT与TPOT]
+    question: |
+      下列优化手段中，**主要**降低 TTFT、对稳定状态下的 TPOT 帮助很小的是：
+    options:
+      A: 'KV Cache 从 BF16 改为 FP8 存储，长上下文时每步读取的 KV 字节减半'
+      B: '权重量化为 INT4（W4A16），读取权重的字节数降为 BF16 的约 1/4'
+      C: '开启前缀缓存，系统提示词和对话历史命中后跳过重复的 Prefill'
+      D: '启用投机解码，用小模型起草、大模型一次前向验证多个 token'
+    answer: C
+    explanation: |
+      **结论**：前缀缓存减少的是需要 Prefill 的 token 数，直接缩短 TTFT；之后每一步 Decode 的工作量不变。
+
+      - A 错：FP8 KV 让 Decode 每步读取的 KV 字节减半，主要改善 TPOT（长上下文时尤其明显），同时让显存放下更多序列。
+      - B 错：W4A16 减少的是 Decode 读权重的字节数，主要改善低并发下的 TPOT；Prefill 受算力限制，计算前还要反量化，帮助有限甚至可能变慢。
+      - C 对：命中的部分直接复用已有的 KV，Prefill 只需计算未命中的部分。省下的算力还能服务更多请求，间接减少排队。
+      - D 错：投机解码让一次前向产出多个 token，降低的是 TPOT，对 TTFT 基本没有帮助。
+
+      回答「怎么优化 TTFT / TPOT」时，先把每项技术对应到它节省的资源（算力、带宽还是显存），再对应到指标，思路就不会乱。
+
+  - id: INF-BASE-009
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [TTFT与TPOT, Prefill与Decode]
+    question: |
+      TTFT 和 TPOT 分别由哪些因素决定？各有哪些主要优化手段？两者之间存在哪些冲突，工程上如何权衡？
+    answer: |
+      1. **TTFT 的构成**：网络 + 分词 + 排队 + Prefill（+ 首 token 的采样与反分词）。高负载时排队是大头，低负载时 Prefill 是大头，Prefill 时间随提示词长度增长。
+      2. **TTFT 的优化**：扩容、限流或按优先级调度以减少排队；前缀缓存跳过重复的 Prefill；FP8 W8A8、张量并行、FlashAttention 缩短 Prefill；精简上下文；调整 Chunked Prefill 的预算；规模大时用 PD 分离。
+      3. **TPOT 的构成**：Decode 每步耗时 ≈（权重字节 + batch 内全部 KV 字节）÷ 带宽 + kernel 发射、调度与采样开销，受 batch 大小、上下文长度、模型尺寸与精度影响。
+      4. **TPOT 的优化**：权重与 KV 量化、选用 GQA / MLA 模型、张量并行、低负载时用投机解码、CUDA Graph 与算子融合降低开销、限制 batch 上限。
+      5. **冲突**：
+         - Prefill 插队会让同一步里所有 Decode 请求变慢（ITL 尖刺）；Chunked Prefill 用略高的 TTFT 换取平稳的 TPOT；
+         - batch 越大吞吐越高，但每步越慢；多接纳请求能减少排队（TTFT），却抬高 TPOT；
+         - Prefill 优先的调度压低 TTFT，但会造成生成卡顿；Decode 优先则相反；
+         - PD 分离把两者解耦，代价是 KV 传输与系统复杂度。
+      6. **权衡方法**：按场景写出 SLO（如 P99 TTFT ≤ 1 s、P99 TPOT ≤ 50 ms），在 SLO 约束内最大化 goodput；通过压测扫描 batch 上限、token 预算等参数确定配置。
+    rubric:
+      - '说清 TTFT 的构成（含排队）与至少 3 个对应的优化手段（3 分）'
+      - '说清 TPOT 的决定因素与至少 3 个对应的优化手段（3 分）'
+      - '指出 Prefill 插队、batch 大小、调度优先级等冲突中的至少两点（2 分）'
+      - '提出以 SLO / goodput 为目标、压测确定参数的权衡方法（2 分）'
+    explanation: |
+      **常见失分点**：把 TTFT 等同于 Prefill 时间、忘了排队；把所有优化手段混在一起说，不区分各自针对哪个指标；不知道加大 batch 会让 TPOT 变差；只说「两者有冲突」而说不出具体机制，也给不出以 SLO 为约束的取舍方法。
+
+  - id: INF-BASE-010
+    type: multiple
+    difficulty: 2
+    frequency: 3
+    points: [吞吐与goodput, TTFT与TPOT]
+    question: |
+      关于推理服务的吞吐（throughput）与 goodput，下列说法正确的有：
+    options:
+      A: 'PD 分离即使不提高峰值吞吐，也可能通过消除 Prefill 对 Decode 的干扰来提高 goodput'
+      B: '加大 batch 摊薄了每步的权重读取、提高了吞吐，goodput 也会随之提高'
+      C: '同一个系统在更严格的 SLO 下，goodput 只会更低或不变'
+      D: 'goodput 只统计满足 SLO（如 TTFT 与 TPOT 都达标）的请求'
+      E: '不断提高请求速率时，吞吐通常先升后趋于饱和，满足 SLO 的请求速率却可能在过载后下降'
+    answer: [A, C, D, E]
+    explanation: |
+      **结论**：goodput 是「有效」的吞吐，衡量的是在满足 SLO 的前提下系统能服务多少请求，A、C、D、E 正确。
+
+      - A 对：这正是 DistServe 的出发点。混部时 Prefill 插队拖慢 Decode，为了守住 TPOT 只能压低负载；分离后两阶段互不干扰，并按 TTFT、TPOT 各自的 SLO 配置资源。论文报告，在 90% 以上的请求满足时延约束的前提下，可承受的请求速率最高提升到 7.4 倍。
+      - B 错：例如加大 batch 后吞吐上升，但每步变慢、TPOT 超过 SLO 的请求变多，goodput 反而可能下降。batch 是吞吐与延迟之间的旋钮，要在 SLO 内取最大值，而不是越大越好。
+      - C 对：goodput 与 SLO 的设定有关。SLO 收紧后，原本达标的请求可能不再达标，能承受的请求速率不会变高。
+      - D 对：这是 goodput 的核心含义，吞吐再高，超出 SLO 的请求也不计入。DistServe（Zhong 等, 2024）用它作为推理服务的优化目标。
+      - E 对：过载后排队急剧变长，大量请求的 TTFT 超标，吞吐维持在饱和值附近，满足 SLO 的请求却越来越少。
+
+      实践中常把 goodput 定义为「SLO 达标率不低于目标（如 90%）时的最大请求速率」，它也是容量规划的基本单位。
+    source: 'DistServe arXiv:2401.09670'
+
+  - id: INF-BASE-011
+    type: fill
+    difficulty: 2
+    frequency: 2
+    points: [吞吐与goodput]
+    tags: [DistServe, SLO]
+    question: |
+      DistServe 把 goodput 定义为「SLO 达标率不低于目标值时，系统能承受的最大请求速率」。对某推理服务压测得到：
+
+      | 请求速率（req/s） | 2 | 4 | 6 | 8 | 10 |
+      |---|---|---|---|---|---|
+      | SLO 达标率 | 99% | 96% | 91% | 78% | 55% |
+
+      只看表中的测量点，按 90% 的达标率目标，该服务的 goodput 为 ____ req/s。若改用「每秒满足 SLO 的请求数」衡量有效吞吐，请求速率为 10 req/s 时它只有 ____ req/s。
+    answer: ['6', '5.5']
+    explanation: |
+      - **goodput**：6 req/s 时达标率 91% ≥ 90%，8 req/s 时 78% < 90%，所以 goodput 为 **6** req/s（在 6～8 之间加密测量可以得到更精确的值）。
+      - **10 req/s 时的有效吞吐**：$10\times55\%=$ **5.5** req/s，比 8 req/s 时的 $8\times78\%=6.24$ 还低。
+
+      含义：
+      1. 过载之后，「完成」的请求越来越多，但达标的请求反而减少，因为排队让大量请求的 TTFT 超标；
+      2. 容量规划要用 goodput，而不是压测中能跑出的最大吞吐：按 10 req/s 规划，线上将有接近一半请求不达标；
+      3. 网关的限流与准入控制要把实际负载压在 goodput 附近，超出部分排队或拒绝，比让所有请求一起变慢更好。
+
+  - id: INF-BASE-012
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [吞吐与goodput]
+    question: |
+      两份压测报告使用的负载相同（平均每个请求输入 3000 token、输出 300 token）。系统 X 报告吞吐 12000 token/s，系统 Y 报告吞吐 3000 token/s。进一步了解到：X 统计的是输入加输出的 token 总数，Y 只统计输出 token。下列判断正确的是：
+    options:
+      A: 'X 的吞吐是 Y 的 4 倍，明显更好：输入 token 同样要经过模型计算，计入吞吐是合理的'
+      B: '两者口径不同，输入与输出 token 的处理成本差异很大，无法换算，需要统一口径重新压测'
+      C: '按输出 token 计，X 约 1091 token/s，Y 约为 X 的 2.75 倍'
+      D: '按输出 token 计两者相当：输入 token 只在 Prefill 阶段处理，不占用 Decode 的时间'
+    answer: C
+    explanation: |
+      **结论**：负载相同就可以换算。X 每个请求共 3300 个 token，$12000\div3300\approx3.64$ req/s，输出 $3.64\times300\approx1091$ token/s；Y 为 $3000\div300=10$ req/s。Y 约是 X 的 2.75 倍。
+
+      - A 错：直接比较两个口径不同的数字。输入 token 的处理（Prefill）比输出 token 便宜得多，输入占比高时，「总 token/s」会显得很高。
+      - B 错：输入、输出 token 的成本确实不同，但只要负载的输入、输出长度已知，口径之间就可以换算，不必重新压测。
+      - D 错：输入 token 要做 Prefill，会占用算力并与 Decode 争抢每一步的时间，同样的硬件上输入越长，输出吞吐越低。
+
+      报告吞吐时应写明口径（输出 token/s、总 token/s 或 req/s），并附上负载的长度分布与延迟分位数；只有同口径、同负载、同 SLO 的数字才能直接比较。
+
+  - id: INF-BASE-013
+    type: fill
+    difficulty: 1
+    frequency: 3
+    points: [算术强度与Roofline]
+    tags: [H100, A100]
+    question: |
+      Roofline 模型中，可达性能 $P=\min(\pi,\ I\cdot\beta)$，拐点 $I^*=\pi/\beta$。H100 SXM 的 BF16 稠密算力约 989 TFLOPS、显存带宽约 3.35 TB/s，拐点约为 ____ FLOP/B；A100 80GB 的 BF16 稠密算力约 312 TFLOPS、带宽约 2.039 TB/s，拐点约为 ____ FLOP/B。在 H100 上，算术强度为 50 FLOP/B 的 kernel 最多只能跑到约 ____ TFLOPS。
+    answer: [['295', '约295'], ['153', '约153'], ['167.5', '约167.5', '167', '168']]
+    explanation: |
+      - H100：$989\div3.35\approx$ **295** FLOP/B；
+      - A100 80GB：$312\div2.039\approx$ **153** FLOP/B；
+      - 强度 50 的 kernel 位于拐点左侧，受带宽限制：$P=50\times3.35=$ **167.5** TFLOPS，只有峰值的约 17%。
+
+      两点启示：
+      1. 新一代 GPU 的算力增长快于带宽增长，拐点越来越高。同样是 Decode，在 H100 上要用约两倍于 A100 的 batch 才能把算力用起来，带宽瓶颈问题反而更突出。
+      2. 判断一个 kernel 是否值得优化计算，先算它的强度：在拐点左侧，减少读写字节（融合、量化、复用）才是正道；在右侧，才轮到提高计算效率。
+
+  - id: INF-BASE-014
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [算术强度与Roofline, 带宽瓶颈与批处理]
+    tags: [GQA]
+    question: |
+      Decode 阶段，注意力部分（读取 KV Cache，计算 $QK^\top$ 与「权重乘 V」）的算术强度主要由什么决定？（KV 用 BF16 存储）
+    options:
+      A: 'batch 大小：同一批请求共用一次 KV 读取，batch 越大强度越高，与线性层同理'
+      B: '上下文长度：上下文越长，每个 Query 要对更多 key 打分，每读 1 字节 KV 做的计算越多'
+      C: '头维度 $d_h$：$d_h$ 越大，每个 key 的点积乘加越多，强度随 $d_h$ 线性提高'
+      D: '每个 KV 头被多少个 Query 头共享（即 GQA 的组大小）：强度约为 $n_q/n_{kv}$'
+    answer: D
+    explanation: |
+      **结论**：Decode 注意力的强度约等于 GQA 的组大小。
+
+      对一条序列、一层、上下文长度 $T$：
+      - 读取 KV：$2\times T\times n_{kv}\times d_h\times2$ 字节；
+      - 计算：每个 Query 头对 $T$ 个 key 打分、再对 $T$ 个 value 加权，共 $4\times T\times n_q\times d_h$ FLOPs；
+      - 强度 $=\dfrac{4Tn_qd_h}{4Tn_{kv}d_h}=\dfrac{n_q}{n_{kv}}$。
+
+      Llama-3-8B 为 $32/8=4$，MHA 为 1，远低于 H100 约 295 的拐点。
+
+      - A 错：KV 是每条序列私有的，batch 再大也不能共享，这正是它与权重的根本区别。
+      - B 错：读取量和计算量都与 $T$ 成正比，$T$ 被约掉。
+      - C 错：$d_h$ 同时出现在读取量和计算量中，和 $T$ 一样被约掉；强度只与 Query 头和 KV 头的比例有关，与 batch 大小、上下文长度基本无关。
+
+      所以长上下文 Decode 无论 batch 多大都卡在带宽上；要提高强度只能让每份 KV 被更多计算复用，例如 GQA、MLA 的矩阵吸收，或投机解码一次验证多个 token。
+
+  - id: INF-BASE-015
+    type: calc
+    difficulty: 3
+    frequency: 2
+    points: [算术强度与Roofline, 带宽瓶颈与批处理]
+    tags: [W4A16, FP8, H100]
+    question: |
+      只考虑 Decode 阶段的线性层（以读取权重为主，忽略激活与 KV 的读写），batch 为 $B$ 时每个权重参数参与 $2B$ 次浮点运算。H100 SXM：BF16 稠密算力 989 TFLOPS，FP8 稠密算力 1979 TFLOPS，显存带宽 3.35 TB/s。
+      (1) BF16 权重、BF16 计算时，$B$ 约为多少时线性层从带宽瓶颈转为算力瓶颈？
+      (2) W4A16（权重以 4 bit 存储，计算前反量化为 BF16；忽略 scale 的存储与反量化耗时）时，这个 $B$ 约为多少？
+      (3) FP8 W8A8（权重与激活都为 FP8，用 FP8 Tensor Core 计算）时，又约为多少？
+      (4) 据此说明：相对 BF16，W4A16 与 FP8 W8A8 的加速比如何随 $B$ 变化？
+    answer: '(1) 约 295；(2) 约 74；(3) 约 295；(4) W4A16 的加速比约为 min(4, 295/B)，B 超过约 74 后快速下降，B ≥ 295 时消失；FP8 W8A8 在各种 batch 下都约为 2 倍'
+    explanation: |
+      **公式**：强度 $I=\dfrac{2B}{\text{每个参数的字节数}}$，令 $I$ 等于拐点 $\pi/\beta$ 求 $B$。
+
+      **(1) BF16**：$I=2B/2=B$，拐点 $989\div3.35\approx295$，所以 $B\approx295$。
+
+      **(2) W4A16**：每个参数 0.5 字节，$I=2B/0.5=4B$；计算仍是 BF16，拐点仍为 295，$B\approx295/4\approx74$。
+
+      **(3) FP8 W8A8**：每个参数 1 字节，$I=2B$；FP8 的拐点为 $1979\div3.35\approx591$，$B\approx591/2\approx295$。算力和字节都翻倍，转折点不变。
+
+      **(4) 加速比**（设权重参数量为 $N$）：
+      - $B\le74$：两者都受带宽限制，W4A16 读的字节是 BF16 的 1/4，加速约 4 倍；
+      - $74<B<295$：W4A16 已受算力限制，耗时 $2BN/\pi$；BF16 仍受带宽限制，耗时 $2N/\beta$；加速比 $=\dfrac{\pi}{\beta B}\approx\dfrac{295}{B}$，例如 $B=148$ 时只剩约 2 倍；
+      - $B\ge295$：两者都受 BF16 算力限制，加速比约为 1，算上反量化开销甚至更慢。
+      - FP8 W8A8：带宽区间字节减半，算力区间峰值翻倍，各种 batch 下都约 2 倍。
+
+      **结论**：W4A16 适合低并发、端侧等小 batch 场景；高吞吐服务更适合 FP8 W8A8 这类「计算也用低精度」的方案。这与「只量化权重的方案在大 batch 下收益很小」的经验一致。
+
+  - id: INF-BASE-016
+    type: multiple
+    difficulty: 3
+    frequency: 2
+    points: [算术强度与Roofline]
+    question: |
+      关于 Roofline 模型与算术强度，下列说法正确的有：
+    options:
+      A: '对强度远高于拐点的 kernel，换一张带宽更高、算力相同的 GPU，几乎不会变快'
+      B: 'batch 足够大时，RMSNorm、激活函数等逐元素 kernel 也能像矩阵乘一样达到峰值算力'
+      C: '算术强度也取决于实现：把多个逐元素算子融合进一个 kernel、减少中间结果读写，就能提高强度'
+      D: '拐点 $I^*=\pi/\beta$ 由算法决定：矩阵乘的拐点高、逐元素算子的拐点低，与运行的硬件无关'
+      E: '把 Decode 线性层的权重从 BF16 量化为 INT4，算术强度约提高到原来的 4 倍'
+    answer: [A, C, E]
+    explanation: |
+      **结论**：A、C、E 正确。
+
+      - A 对：它已受算力限制，带宽不是瓶颈。
+      - B 错：逐元素算子（激活函数、残差加法、RMSNorm 等）每读一个数只做几次运算，强度与 batch 无关，永远受带宽限制；Decode 注意力的强度约等于 GQA 组大小，也不随 batch 增长。batch 只能提高「权重被多个 token 复用」类算子的强度。
+      - C 对：强度 = FLOPs ÷ 实际读写的字节数。朴素实现把每个中间结果写回显存再读出来，融合后中间结果留在寄存器或共享内存里，FLOPs 不变、字节变少。FlashAttention 也是同样的道理。
+      - D 错：拐点是**硬件**的属性（峰值算力 ÷ 带宽）；**算术强度**才由算法与实现决定。矩阵乘与逐元素算子的差别在于算术强度，而不在拐点。
+      - E 对：读同样多参数所需的字节数降为 1/4，FLOPs 不变，强度约为原来的 4 倍（忽略 scale 开销）。
+  - id: INF-BASE-017
+    type: calc
+    difficulty: 3
+    frequency: 1
+    points: [算术强度与Roofline]
+    tags: [MLA, DeepSeek-V3, 数据并行注意力]
+    question: |
+      DeepSeek-V3 使用 MLA：每层 128 个注意力头，每个 token 只缓存 512 维的 KV 潜向量和 64 维带 RoPE 的共享 key，共 576 个数（BF16）。Decode 时采用「矩阵吸收」：每个头的 query 先变换到潜空间，与缓存的 576 维向量做点积得到打分，再在 512 维潜空间里对潜向量加权求和（之后的上投影并入输出矩阵，不计入本题）。
+      (1) 单层中，每读取一个 token 的缓存，注意力部分要做多少 FLOPs？算术强度约为多少 FLOP/B？
+      (2) 对比 Llama-3-8B（32 个 Query 头、8 个 KV 头）Decode 注意力的强度。
+      (3) 若 KV 缓存改用 FP8（每个数 1 字节），MLA 的强度变为多少？结合 H100 约 295 FLOP/B 的拐点说明含义。
+      (4) 若用张量并行把 128 个头切到 8 张卡上（每卡 16 个头），而每张卡仍要读取完整的潜向量缓存，单卡的强度变为多少？这对部署方式有什么启示？
+    answer: '(1) 278528 FLOPs，约 242 FLOP/B；(2) GQA 约 4 FLOP/B，MLA 高出约 60 倍；(3) 约 484 FLOP/B，超过拐点，注意力转为算力瓶颈；(4) 约 30 FLOP/B，且每张卡都要存一份完整缓存，MLA 的注意力更适合按请求做数据并行而不是按头切分'
+    explanation: |
+      **(1)** 每个头、每个缓存 token：
+      - 打分：576 维点积，$2\times576=1152$ FLOPs；
+      - 加权求和：在 512 维上累加，$2\times512=1024$ FLOPs；
+      - 128 个头：$128\times(1152+1024)=278{,}528$ FLOPs。
+
+      读取 $576\times2=1152$ 字节，强度 $278528\div1152\approx$ **242** FLOP/B。
+
+      **(2) GQA**：强度约为 $n_q/n_{kv}=32/8=4$ FLOP/B。MLA 让 128 个头共用同一份 576 维缓存，每读一个字节做的计算多了约 60 倍。
+
+      **(3) FP8 缓存**：字节减半，强度约 **484** FLOP/B，超过 H100 的拐点，Decode 注意力从带宽瓶颈变成了算力瓶颈。这解释了为什么 MLA 专用的 Decode kernel（如 FlashMLA）既要优化带宽利用，也要优化 Tensor Core 的利用率。
+
+      **(4) 按头切 8 份**：单卡 FLOPs 降为 $2\times16\times(576+512)=34{,}816$，读取量仍是 1152 字节，强度约 **30** FLOP/B；而且潜向量没有「头」这个维度可切，8 张卡各存一份完整缓存，显存被浪费 8 倍。所以 MLA 模型的大规模部署倾向于让注意力部分做数据并行（不同的卡处理不同的请求、各自保存自己请求的缓存），专家部分再用专家并行：DeepSeek 在 2025 年公开的 V3 / R1 推理系统介绍中，Prefill 与 Decode 阶段的 MLA 都采用数据并行，SGLang 等框架也为这类模型提供了 DP Attention。
+    source: 'DeepSeek-V3 技术报告 arXiv:2412.19437'
+
+  - id: INF-BASE-018
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [算术强度与Roofline, 带宽瓶颈与批处理]
+    source: 'NVIDIA H200 规格 https://www.nvidia.com/en-us/data-center/h200/（141 GB HBM3e、4.8 TB/s，BF16 1979 TFLOPS 为含稀疏值）；NVIDIA H100 规格 https://www.nvidia.com/en-us/data-center/h100/'
+    tags: [H200, H100]
+    question: |
+      H200 与 H100 SXM 的 BF16 稠密算力相同（约 989 TFLOPS），但显存从 80 GB 增至 141 GB、带宽从 3.35 TB/s 增至 4.8 TB/s。把同一个 Llama-3-8B 对话服务从 H100 迁到 H200，下列预期最合理的是：
+    options:
+      A: 'Prefill 与 Decode 都提速约 1.43 倍：两个阶段每次前向都要把权重从显存读一遍，而带宽提高了约 1.43 倍'
+      B: 'Decode 单步耗时下界约降为原来的 70%，并能容纳更大的 batch；长提示词的 Prefill 基本不变'
+      C: '两者算力相同，Prefill 与 Decode 的单步耗时都基本不变，迁移的收益主要是能部署更大的模型'
+      D: '长提示词的 Prefill 要读写大量激活，会提速约 1.43 倍；Decode 受算力限制，基本不变'
+    answer: B
+    explanation: |
+      **结论**：带宽和容量的提升都落在 Decode 上。
+
+      - **Decode**：受带宽限制，单步下界与带宽成反比，$3.35\div4.8\approx0.70$。
+      - **容量**：按 90% 可用、扣除约 16 GB 权重，留给 KV 的空间从约 56 GB 增至约 111 GB，能容纳的并发序列约翻倍，吞吐还能进一步提高。
+      - **Prefill**：长提示词受算力限制，算力不变，耗时基本不变。
+      - **拐点**：$989\div4.8\approx206$ FLOP/B，比 H100 的 295 低，较小的 batch 就能把算力用满。
+
+      - A 错：两个阶段确实都要读一遍权重，但 Prefill 读一遍权重就服务整段提示词，瓶颈在算力，带宽提升帮不上忙。
+      - C 错：只看算力，忽略了 Decode 受带宽限制；多出的显存也不只用来放更大的模型，还能放更多 KV、提高并发。
+      - D 错：把两个阶段的瓶颈说反了。长提示词 Prefill 的激活读写量远小于它的计算量，瓶颈在算力。
+
+  - id: INF-BASE-019
+    type: calc
+    difficulty: 2
+    frequency: 3
+    points: [带宽瓶颈与批处理, 延迟估算]
+    source: 'NVIDIA H100 规格 https://www.nvidia.com/en-us/data-center/h100/；Llama 3 config.json（Hugging Face meta-llama/Meta-Llama-3-8B：32 层、8 个 KV 头、头维度 128，约 8.03B 参数）'
+    tags: [Llama-3-8B, H100, SLO]
+    question: |
+      Llama-3-8B（约 8.03B 参数，BF16 权重约 16.06 GB；每个 token 的 KV 为 128 KiB）部署在 H100 SXM（80 GB，带宽 3.35 TB/s）上，所有序列的上下文都按 4096 token 计。假设 Decode 每步耗时 ≈（权重字节 + batch × 每条序列的 KV 字节）÷ 带宽，忽略计算与其他开销。
+      (1) 写出单步耗时 $t(B)$ 的表达式，并求 $B=1$ 时的值；
+      (2) 若要求 TPOT ≤ 15 ms，最大 batch 是多少？此时吞吐约多少 token/s？
+      (3) 按 90% 的显存可用，最多能容纳多少条序列的 KV？两个约束中哪个先起作用？
+      (4) 若上下文缩短为 2048，(2)(3) 的结果如何变化？
+    answer: '(1) t(B) ≈ 4.79 ms + 0.160 ms × B，B = 1 时约 4.95 ms；(2) B = 63，约 4231 token/s；(3) 约 104 条，TPOT 约束先起作用；(4) TPOT 约束下 B = 127（约 8483 token/s），显存约可容纳 208 条，仍是 TPOT 约束先起作用'
+    explanation: |
+      **(1)** 每条序列的 KV：$4096\times131072=536{,}870{,}912$ 字节 ≈ 0.537 GB。
+      $$t(B)=\frac{16.06\ \text{GB}+B\times0.537\ \text{GB}}{3.35\ \text{TB/s}}\approx4.79\ \text{ms}+0.160\ \text{ms}\times B$$
+      $B=1$ 时约 **4.95 ms**。
+
+      **(2)** $4.79+0.160B\le15$，即 $B\le(15\times10^{-3}\times3.35\times10^{12}-16.06\times10^9)\div(0.537\times10^9)\approx63.7$，取 **63**。此时 $t\approx14.89$ ms，吞吐 $63\div14.89\ \text{ms}\approx$ **4231** token/s。
+
+      **(3)** $(80\times0.9-16.06)\ \text{GB}\div0.537\ \text{GB}\approx104.2$，最多 **104** 条。$63<104$，**TPOT 约束先起作用**：显存还有富余，但再加 batch 就会超出时延要求。
+
+      **(4)** 每条序列的 KV 减半为 0.268 GB：TPOT 约束下 $B\le127.4$，取 **127**，$t\approx14.97$ ms，吞吐约 **8483** token/s；显存约可容纳 **208** 条，仍是 TPOT 先起作用。
+
+      **校验假设**：$B=63$ 时每步 FLOPs 约 $63\times(2\times8.03\times10^9+2.1\times10^9)\approx1.15\times10^{12}$，在 H100 上只需约 1.2 ms，远小于 14.9 ms，确实是带宽瓶颈。
+
+      **启示**：每多加一条序列，就要多付一份「读它的 KV」的时间。上下文越长，这份代价越高，SLO 允许的 batch 越小，吞吐越低。这些是理论下界，真实系统还要压测。
+
+  - id: INF-BASE-020
+    type: judge
+    difficulty: 2
+    frequency: 3
+    points: [带宽瓶颈与批处理]
+    question: |
+      对 Llama-3-8B 这类 GQA 模型，在 H100 上做 4K 上下文的 Decode 时，batch 增大到足够大之后，Decode 就会从显存带宽瓶颈转为算力瓶颈，因为 batch 越大，每个 token 分摊到的显存读取越少。
+    answer: false
+    explanation: |
+      **错误**。batch 只能摊薄**权重**的读取，摊不薄 **KV** 的读取：每条序列都要读自己的 KV Cache，batch 翻倍，KV 的读取量也翻倍。
+
+      Decode 一步的总强度为
+      $$I(B)=\frac{B\times(2N+4Ln_qd_hT)}{2N+B\times T\times m_{kv}}$$
+      其中 $N$ 为参数量，$m_{kv}$ 为每 token 的 KV 字节数。$B\to\infty$ 时趋于 $\dfrac{2N+4Ln_qd_hT}{T\,m_{kv}}$，与 batch 无关。
+
+      代入 Llama-3-8B（$N=8.03\times10^9$，$L=32$，$n_q=32$，$d_h=128$，$m_{kv}=128$ KiB）：
+      - $T=4096$：极限强度约 34 FLOP/B，远低于 H100 约 295 的拐点，batch 再大也卡在带宽上；
+      - $T=256$：极限强度约 483 FLOP/B，batch 足够大时才可能变成算力瓶颈；
+      - 临界上下文约 420 token：超过它，batch 再大也到不了算力瓶颈（何况显存也装不下那么多序列）。
+
+      所以「batch 够大 Decode 就变成算力瓶颈」只在短上下文时成立。长上下文推理要靠 GQA / MLA、KV 量化、稀疏注意力等减少每个 token 的 KV 读取量。
+
+  - id: INF-BASE-021
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [带宽瓶颈与批处理, 吞吐与goodput]
+    source: 'NVIDIA H100 规格 https://www.nvidia.com/en-us/data-center/h100/；Llama 3 config.json（Hugging Face meta-llama/Meta-Llama-3-8B：32 层、8 个 KV 头、头维度 128，约 8.03B 参数）'
+    question: |
+      Decode 阶段，在显存允许的范围内把 batch 从 8 增大到 64（上下文长度不变，仍处于带宽瓶颈），下列变化正确的有：
+    options:
+      A: '吞吐与 batch 成正比，增大到原来的 8 倍'
+      B: '每一步的耗时变长，用户看到的 TPOT 变大'
+      C: '每条序列每步要读取的 KV 字节被 batch 内的其他序列分摊，因而变少'
+      D: '每步耗时中，读取 KV 所占的比例上升'
+      E: '每个输出 token 分摊到的权重读取字节变为原来的 1/8'
+    answer: [B, D, E]
+    explanation: |
+      **结论**：batch 摊薄的是权重，摊不薄 KV；吞吐上升、TPOT 也上升。
+
+      以 Llama-3-8B、H100、上下文 4096 为例，每步下界 $t(B)\approx4.79\ \text{ms}+0.160\ \text{ms}\times B$：
+      - $B=8$：约 6.08 ms，吞吐约 1317 token/s，KV 读取约占 21%；
+      - $B=64$：约 15.05 ms，吞吐约 4252 token/s，KV 读取约占 68%。
+
+      - A 错：吞吐只增长到约 3.2 倍，因为单步耗时也变长了。
+      - B 对：每步要多读 56 条序列的 KV，单步从约 6 ms 变为约 15 ms。
+      - C 错：KV 是每条序列私有的，读取量只与该序列的上下文长度有关。
+      - D 对：权重项不变、KV 项随 $B$ 线性增长，KV 的占比越来越高；上下文越长，这个趋势越明显。
+      - E 对：整批共享一次权重读取，每个 token 分摊 $W/B$，从 $W/8$ 降为 $W/64$。
+  - id: INF-BASE-022
+    type: calc
+    difficulty: 3
+    frequency: 2
+    points: [带宽瓶颈与批处理]
+    tags: [MoE, Mixtral]
+    question: |
+      Mixtral 8×7B 共 32 层，每层 8 个专家，每个 token 选 2 个（top-2）；每个专家每层的 FFN 有 $3\times4096\times14336\approx1.76\times10^8$ 个参数，专家之外的参数（注意力、嵌入等）合计约 1.6B；总参数约 46.7B，激活参数约 12.9B，权重为 BF16。假设每个 token 独立、均匀地随机选择 2 个不同的专家。
+      (1) Decode 时 batch 为 $B$，每层被至少一个 token 选中的专家数的期望是多少？写出公式并计算 $B=1$、4、16 的值。
+      (2) $B=1$ 与 $B=16$ 时，每步大约要读多少 GB 权重？折算到每个输出 token 各是多少？
+      (3) 与一个 46.7B 的稠密模型相比，这说明了什么？
+    answer: '(1) 期望为 8×[1−(3/4)^B]，B = 1、4、16 时约为 2、5.47、7.92；(2) B = 1 时每步约 25.8 GB（每 token 25.8 GB），B = 16 时每步约 92.5 GB（每 token 约 5.8 GB）；(3) 小 batch 时 MoE 只需读激活参数，带宽优势明显；batch 稍大几乎每步都要读全部专家，每 token 的权重读取量与同尺寸稠密模型相当，MoE 的优势主要剩下每 token 的计算量'
+    explanation: |
+      **(1)** 一个 token 没有选中某个专家的概率为 $\binom{7}{2}/\binom{8}{2}=21/28=3/4$；$B$ 个 token 都没选中它的概率为 $(3/4)^B$。由期望的线性性：
+      $$E[k]=8\times\left[1-(3/4)^B\right]$$
+      $B=1$：2；$B=4$：$8\times(1-0.316)\approx5.47$；$B=16$：$8\times(1-0.010)\approx7.92$。
+
+      **(2)** 每个专家 32 层合计 $1.76\times10^8\times32\approx5.64\times10^9$ 个参数。每步要读的参数 ≈ $1.6\text{B}+5.64\text{B}\times E[k]$：
+      - $B=1$：$1.6+5.64\times2\approx12.9$B，即激活参数，约 25.8 GB，全部摊在 1 个 token 上；
+      - $B=16$：$1.6+5.64\times7.92\approx46.3$B，约 92.5 GB，每 token 约 5.8 GB。
+
+      **(3)** 46.7B 的稠密模型在 $B=16$ 时每步读 93.4 GB，每 token 约 5.8 GB，与 MoE 几乎一样。所以：
+      - MoE 的「读得少」只在小 batch 时成立，batch 稍大，被激活的专家就覆盖了几乎全部专家；
+      - MoE 不变的优势是每个 token 只**计算**激活参数，大 batch、算力瓶颈时这一点才重要；
+      - 真实路由并不均匀，热门专家更集中，被覆盖的专家数会略少，但趋势相同。这也是 MoE 大规模部署要用专家并行、并在很大的 batch 下运行的原因：让每个专家每步都能分到足够多的 token。
+    source: 'Mixtral 论文 arXiv:2401.04088'
+
+  - id: INF-BASE-023
+    type: fill
+    difficulty: 1
+    frequency: 3
+    points: [延迟估算]
+    source: 'NVIDIA H100 规格 https://www.nvidia.com/en-us/data-center/h100/；Llama 3 config.json（Hugging Face meta-llama/Meta-Llama-3-8B 约 8.03B 参数、Meta-Llama-3-70B 约 70.55B 参数）'
+    question: |
+      batch = 1，忽略 KV 读取与卡间通信，按显存带宽的理论峰值估算：Llama-3-8B（BF16 权重约 16.06 GB）在单张 H100（3.35 TB/s）上，每步 Decode 至少约 ____ ms；Llama-3-70B（约 70.6B 参数，BF16）用 4 张 H100 做张量并行、每张卡读 1/4 的权重，每步至少约 ____ ms。（均保留 1 位小数）
+    answer: ['4.8', '10.5']
+    explanation: |
+      Decode 时延下界 ≈ 每张卡要读的字节数 ÷ 单卡带宽：
+      - 8B：$16.06\ \text{GB}\div3.35\ \text{TB/s}\approx$ **4.8** ms，单条序列最多约 208 token/s；
+      - 70B、TP = 4：每卡 $70.6\times10^9\times2\div4\approx35.3$ GB，$35.3\div3.35\approx$ **10.5** ms，约 95 token/s。
+
+      这是「白板估算」最常用的公式：**权重字节 ÷ 带宽**。实际值通常是下界的 1.3～2 倍：kernel 很难跑满峰值带宽，还有 KV 读取、kernel 发射、采样与调度开销；张量并行每层还要做 2 次 all-reduce，80 层每步就是 160 次小消息通信，累计可达毫秒级。
+
+  - id: INF-BASE-024
+    type: calc
+    difficulty: 3
+    frequency: 2
+    points: [延迟估算, Prefill与Decode]
+    source: 'NVIDIA H100 规格 https://www.nvidia.com/en-us/data-center/h100/；Llama 3 config.json（Hugging Face meta-llama/Meta-Llama-3-70B：80 层、64 个 Query 头、8 个 KV 头、词表 128256，约 70.55B 参数）'
+    tags: [Llama-3-70B, 张量并行, MFU, MBU]
+    question: |
+      Llama-3-70B（约 70.6B 参数，BF16）用 4 张 H100 SXM（每张 BF16 稠密算力 989 TFLOPS、带宽 3.35 TB/s）做张量并行，处理单个请求（无排队）：提示词 3000 token，输出 500 token。假设 Prefill 能达到 50% 的算力利用率（MFU），Decode 能达到 70% 的带宽利用率（MBU）；忽略注意力打分的计算、KV 的读取与卡间通信。
+      (1) 估算 TTFT（只算 Prefill）；
+      (2) 估算 TPOT、端到端时延，以及 Decode 占端到端时延的比例；
+      (3) 若把张量并行度提高到 8，TPOT 的理想值是多少？实际为什么达不到？
+    answer: '(1) 约 0.21 s；(2) TPOT 约 15.1 ms，端到端约 7.7 s，Decode 约占 97%；(3) 理想约 7.5 ms；实际受每层两次 all-reduce 的通信、矩阵变小后 kernel 效率下降与固定开销影响，提升达不到 2 倍'
+    explanation: |
+      **(1) Prefill**：FLOPs $\approx2N T=2\times70.6\times10^9\times3000\approx4.24\times10^{14}$；有效算力 $4\times989\times0.5\approx1.98$ PFLOPS；TTFT $\approx4.24\times10^{14}\div1.98\times10^{15}\approx$ **0.21 s**。（注意力打分约 $2Ln_qd_hT^2\approx1.2\times10^{13}$，只占约 3%，可以忽略。）
+
+      **(2) Decode**：每卡权重 $70.6\times10^9\times2\div4\approx35.3$ GB，有效带宽 $3.35\times0.7\approx2.35$ TB/s，TPOT $\approx$ **15.1 ms**。端到端 $\approx0.21+499\times0.0151\approx$ **7.7 s**，Decode 约占 **97%**。（3500 个 token 的 KV 约 1.15 GB，分到每卡不足 0.3 GB，不到权重的 1%，batch = 1 时可以忽略。）
+
+      **(3) TP = 8**：每卡权重减半，理想 TPOT $\approx17.65\div2.35\approx$ **7.5 ms**。实际达不到 2 倍：
+      - 每层 2 次 all-reduce，80 层每步 160 次，单次只有几到十几微秒，累计也可达毫秒级，而且不随 TP 增大而减少；
+      - 每卡的矩阵更小，kernel 更难跑满带宽；
+      - kernel 发射、采样、调度等固定开销不变。
+
+      **启示**：交互式场景中 Decode 往往占端到端时延的绝大部分，TPOT 每降 1 ms，500 token 的回答就快 0.5 s；而 TP 是用更多的卡换更低的单请求时延，吞吐 / 成本要另算。
+
+  - id: INF-BASE-025
+    type: coding
+    difficulty: 3
+    frequency: 2
+    points: [延迟估算, 带宽瓶颈与批处理, 算术强度与Roofline]
+    tags: [手撕, Roofline]
+    question: |
+      实现一个 Decode 批大小估算器：
+
+      ```python
+      def max_decode_batch(model: dict, gpu: dict, ctx: int, tpot_slo: float, util: float = 0.9) -> tuple[int, str]: ...
+      ```
+
+      - `model`：`params`（参数量）、`w_bytes`（每个权重的字节数）、`kv_per_token`（每 token 的 KV 字节数）、`attn_flops`（每条序列每步、每个上下文位置的注意力 FLOPs，即 $4Ln_qd_h$）；
+      - `gpu`：`mem`（显存字节数）、`bw`（带宽，字节/秒）、`flops`（峰值算力，FLOP/s）；
+      - 所有序列的上下文长度都为 `ctx`，`tpot_slo` 的单位为秒。batch 为 $B$ 时需同时满足三个约束：
+        - 显存：权重字节 $+B\times$ 每条序列的 KV 字节 $\le$ `mem * util`；
+        - 带宽：（权重字节 $+B\times$ 每条序列的 KV 字节）÷ `bw` $\le$ `tpot_slo`；
+        - 算力：$B\times(2\times$`params`$+$`attn_flops`$\times$`ctx`$)$ ÷ `flops` $\le$ `tpot_slo`；
+      - 返回满足全部约束的最大整数 $B$（不会为负，最小为 0），以及最先卡住的约束名：`'memory'`、`'bandwidth'` 或 `'compute'`（上限相同时按这个顺序取前者）。
+    answer: |
+      import math
+
+      def max_decode_batch(model, gpu, ctx, tpot_slo, util=0.9):
+          w = model["params"] * model["w_bytes"]                  # 权重字节：整批共享
+          kv_seq = ctx * model["kv_per_token"]                    # 每条序列的 KV 字节：各自私有
+          flops_seq = 2 * model["params"] + model["attn_flops"] * ctx   # 每条序列每步的 FLOPs
+          bounds = {                                              # 每个约束允许的 B 上限（实数）
+              "memory": (gpu["mem"] * util - w) / kv_seq,
+              "bandwidth": (tpot_slo * gpu["bw"] - w) / kv_seq,
+              "compute": tpot_slo * gpu["flops"] / flops_seq,
+          }
+          reason = min(bounds, key=bounds.get)                    # 并列时取插入顺序靠前的
+          return max(0, math.floor(bounds[reason])), reason
+    test: |
+      llama = dict(params=8.03e9, w_bytes=2, kv_per_token=131072, attn_flops=4 * 32 * 32 * 128)
+      h100 = dict(mem=80e9, bw=3.35e12, flops=989e12)
+
+      # 长上下文、TPOT 15 ms：带宽先卡住
+      assert max_decode_batch(llama, h100, 4096, 15e-3) == (63, "bandwidth")
+      # 放宽 SLO：显存先卡住
+      assert max_decode_batch(llama, h100, 4096, 25e-3) == (104, "memory")
+      # 短上下文：算力先卡住
+      assert max_decode_batch(llama, h100, 256, 20e-3) == (1221, "compute")
+      # FP8 权重 + FP8 KV
+      fp8 = dict(llama, w_bytes=1, kv_per_token=65536)
+      assert max_decode_batch(fp8, h100, 4096, 15e-3) == (157, "bandwidth")
+      assert max_decode_batch(fp8, h100, 4096, 25e-3) == (238, "memory")
+      # 边界：权重放不下 / 只读权重就已超时
+      big = dict(llama, params=70.6e9, kv_per_token=327680)
+      assert max_decode_batch(big, h100, 4096, 50e-3) == (0, "memory")
+      assert max_decode_batch(llama, h100, 4096, 4e-3) == (0, "bandwidth")
+      b, _ = max_decode_batch(llama, h100, 2048, 15e-3)
+      assert isinstance(b, int) and b == 127
+    explanation: |
+      **思路**：三个约束对 $B$ 都是线性的，各自解出上限后取最小值。
+      1. 显存：$W+B\cdot T\cdot m_{kv}\le M\cdot u$，得 $B\le(Mu-W)/(Tm_{kv})$；
+      2. 带宽：$(W+B\cdot T\cdot m_{kv})/\beta\le t_{slo}$，得 $B\le(t_{slo}\beta-W)/(Tm_{kv})$；
+      3. 算力：$B\cdot(2N+aT)/\pi\le t_{slo}$，得 $B\le t_{slo}\pi/(2N+aT)$；
+      4. 取最小者向下取整；上限为负说明权重本身就放不下或已超时，返回 0。
+
+      **测试中的现象**：
+      - 上下文 4096、SLO 15 ms：每多一条序列就多读 0.537 GB 的 KV，带宽先卡住（63）；
+      - SLO 放宽到 25 ms：显存先满（104）；
+      - 上下文 256：每条序列的 KV 很小，batch 可以开到上千，算力反而先成为瓶颈（1221）；
+      - FP8 权重 + FP8 KV：两项字节都减半，同样的 SLO 下 batch 从 63 增至 157。
+
+      **易错点**：权重只算一次而 KV 要乘 $B$；`floor` 之前先判断是否为负；把 `tpot_slo` 的单位当成毫秒。真实系统还要加上激活、CUDA Graph 等显存余量和 kernel 效率，估算结果要用压测校准。
+
+  - id: INF-BASE-026
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [负载特征]
+    question: |
+      下列四种负载中，Prefill（而不是 Decode）在端到端耗时中占比最高的是：
+    options:
+      A: 'Agent 的一步工具调用：上下文 3 万 token，只输出约 60 token 的调用参数'
+      B: '小说续写：提示词 500 token，输出 3000 token'
+      C: '推理模型解数学题：提示词 300 token，输出约 1 万 token 的思维链'
+      D: '闲聊：提示词 800 token，输出 200 token'
+    answer: A
+    explanation: |
+      **结论**：输入远长于输出的负载由 Prefill 主导，Agent 的中间步骤是典型。
+
+      粗略估算（设 Prefill 约 10000 token/s、TPOT 约 25 ms）：
+      - A：Prefill 约 3 s，Decode 约 1.5 s，Prefill 占约三分之二；
+      - B：Prefill 0.05 s，Decode 约 75 s；
+      - C：Prefill 0.03 s，Decode 约 250 s；
+      - D：Prefill 0.08 s，Decode 约 5 s。
+
+      B、C、D 的耗时几乎全在 Decode，优化重点是 TPOT；A 则必须盯住 Prefill：Agent 每一步都要把系统提示词、工具定义和全部历史重新发一遍，前缀缓存（每步只算新增部分）、Prefill 的算力效率、PD 分离等手段的价值远大于聊天场景。
+
+  - id: INF-BASE-027
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [负载特征, 延迟估算]
+    tags: [Agent, 前缀缓存]
+    question: |
+      某服务的 Prefill 有效速度约 12500 token/s，Decode 的 TPOT 约 25 ms（视为常数，忽略排队与网络）。
+      (1) 聊天请求：提示词 1000 token、输出 400 token，端到端时延是多少？Prefill 占多少？
+      (2) Agent 的一步：上下文 20000 token、输出 80 token，端到端时延是多少？Prefill 占多少？
+      (3) 若 Agent 这一步的前 19000 token 命中前缀缓存，端到端时延降为多少？降低了百分之几？
+    answer: '(1) 约 10.06 s，Prefill 约占 0.8%；(2) 约 3.58 s，Prefill 约占 45%；(3) 约 2.06 s，降低约 42.5%'
+    explanation: |
+      **公式**：端到端时延 ≈ TTFT + TPOT ×（输出数 − 1），TTFT ≈ 需要 Prefill 的 token 数 ÷ Prefill 速度。
+
+      **(1) 聊天**：TTFT $=1000\div12500=0.08$ s；端到端 $=0.08+0.025\times399\approx$ **10.06 s**；Prefill 占 $0.08\div10.06\approx$ **0.8%**。
+
+      **(2) Agent**：TTFT $=20000\div12500=1.6$ s；端到端 $=1.6+0.025\times79\approx$ **3.58 s**；Prefill 占 $1.6\div3.575\approx$ **45%**。
+
+      **(3) 命中前缀缓存**：只需 Prefill 1000 token，TTFT 降为 0.08 s；端到端 $=0.08+1.975\approx$ **2.06 s**，降低 $1-2.055\div3.575\approx$ **42.5%**。
+
+      **结论**：同样的服务，聊天的优化重点在 TPOT，Agent 却有近一半时间花在 Prefill 上。一条轨迹有几十步，每步省下 1.5 s，整条轨迹就能快上几十秒，所以 Agent 场景要优先保证前缀缓存命中（上下文只追加、稳定内容在前、按会话亲和路由）。
+
+  - id: INF-BASE-028
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [负载特征]
+    tags: [推理模型]
+    question: |
+      与普通聊天相比，服务推理模型（每个回答常带有数千到上万 token 的思维链）时，下列判断正确的有：
+    options:
+      A: '端到端时延主要由 Decode 决定，降低 TPOT 的手段（量化、投机解码等）收益更大'
+      B: '每条请求的 KV 在生成过程中持续增长，只按提示词长度估算显存会严重低估占用，更容易触发抢占'
+      C: '由于输出很长，Prefill 侧的优化（如前缀缓存）完全没有价值'
+      D: '同时在跑的请求数只由请求速率决定：请求速率不变时，每个请求停留得再久也不会增加并发数，KV 需求只因单条请求变长而增加'
+      E: '思维链 token 用户通常看不到，所以 TPOT 对用户体验和成本都没有影响'
+    answer: [A, B]
+    explanation: |
+      **结论**：推理模型的负载以 Decode 为主，并且 KV 随生成不断变长，A、B 正确。
+
+      - A 对：1 万 token 的输出，TPOT 每降 10 ms，端到端就快 100 s。
+      - B 对：一条请求开始时只有几百 token 的 KV，结束时可能有上万 token。调度器若按当前占用接纳请求，生成过程中显存会被逐渐挤满，触发抢占；需要预留余量、限制并发或使用 FP8 KV。
+      - C 错：前缀缓存在多轮对话、RL 训练中对同一道题的多次采样等场景仍然有用，只是在端到端时延中的占比变小了。
+      - D 错：由 Little 定律，系统中的平均请求数 = 到达速率 × 平均停留时间。请求速率不变、停留时间变长 10 倍，并发数也变为约 10 倍；每条请求的 KV 又更大，两者叠加，容量压力成倍增加。
+      - E 错：看不见的思维链照样要逐 token 生成，计入端到端时延，也按输出 token 计费；TPOT 越高，用户等最终答案的时间越长。
+  - id: INF-BASE-029
+    type: short
+    difficulty: 2
+    frequency: 2
+    points: [负载特征]
+    question: |
+      如何刻画一个 LLM 推理服务的负载？请列出关键维度，说明这些维度分别如何影响瓶颈判断与优化方向，并对比聊天、RAG / Agent、推理模型、离线批处理几类负载。
+    answer: |
+      1. **输入 / 输出长度分布**（看 P50、P99 与二者之比）：输入长 → Prefill 算力与 TTFT 是重点，前缀缓存、FP8 计算、PD 分离价值大；输出长 → Decode 带宽、TPOT 与 KV 增长是重点，量化、投机解码、KV 管理价值大。长尾决定 `max_model_len`、显存余量与抢占风险。
+      2. **到达过程**：平均请求速率、峰值、突发程度与日内波动，决定排队、扩缩容与限流策略，容量要按峰值而不是均值规划。
+      3. **前缀共享程度**：系统提示词、工具定义、多轮历史、RL 同题多采样的重复比例，决定前缀缓存命中率与是否需要按会话亲和路由。
+      4. **会话结构**：轮数、轮间间隔（如等待工具返回的时间），决定 KV 保留、卸载与淘汰策略。
+      5. **SLO 与优先级**：交互式（看 TTFT、TPOT 分位数）还是离线（看吞吐与成本），能否混部、是否需要优先级调度。
+      6. **请求特性**：并行采样（n > 1）、结构化输出、多 LoRA、多模态输入等，影响调度、缓存键与 kernel 选择。
+      7. **几类负载对比**：
+         - 聊天：输入中等、输出数百 token，TTFT 与 TPOT 都重要；
+         - RAG / Agent：输入很长、输出很短、前缀复用高，Prefill 与 TTFT 主导，前缀缓存最重要；
+         - 推理模型：输入短、输出极长，Decode 主导，KV 随生成增长，易触发抢占；
+         - 离线批处理：不看单请求时延，用大 batch 最大化吞吐、压低成本，可放到低峰时段。
+      8. **数据来源**：从线上日志统计 token 数、时间戳与前缀哈希，构造可回放的负载轨迹用于压测。
+    rubric:
+      - '列出长度分布、到达过程、前缀共享、SLO 等至少 4 个关键维度（4 分）'
+      - '说明各维度如何对应到 Prefill / Decode 瓶颈与具体优化手段（3 分）'
+      - '正确对比至少 3 类负载的特点（2 分）'
+      - '提到用线上日志构造负载轨迹或按峰值规划（1 分）'
+    explanation: |
+      **常见失分点**：只说「QPS 多少」而不看输入输出长度分布；用平均长度代替分布，忽略长尾；不区分输入重与输出重的负载，给出千篇一律的优化建议；忽略前缀共享与会话结构，而这两点决定了前缀缓存能发挥多大作用。
+
+  - id: INF-BASE-030
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [请求生命周期, TTFT与TPOT]
+    question: |
+      描述一个流式请求在 vLLM 一类推理服务中的完整生命周期（从客户端发出到连接关闭），说明 TTFT、TPOT 各覆盖了哪些阶段，以及每个阶段可能的瓶颈与打点位置。
+    answer: |
+      1. **接入**：客户端发起 HTTP 请求（`stream=true`）→ 网关鉴权、限流 → API 服务套用对话模板并分词。瓶颈：高并发下分词等 CPU 工作、网络。打点：到达时间、分词完成时间。
+      2. **排队与调度**：请求进入等待队列；调度器每一步决定接纳谁、为它分配 KV 块，并查询前缀缓存。瓶颈：过载时的排队、KV 容量不足。打点：被调度的时刻（排队时间 = 调度时刻 − 到达时刻）、命中的缓存 token 数。
+      3. **Prefill**：对未命中缓存的提示词做前向（长提示词可能被 Chunked Prefill 切成多步），写入 KV，采样出第 1 个 token。瓶颈：算力、提示词长度、分块预算。
+      4. **首 token 返回**：增量反分词，通过 SSE 推给客户端。到此为止是 **TTFT**：网络 + 分词 + 排队 + Prefill + 首 token 的反分词与推送。
+      5. **Decode 循环**：每一步与其他请求组成 batch，读一遍权重与本序列的 KV，产出 1 个 token，反分词、检查停止条件、推送。瓶颈：显存带宽、batch 大小、长 Prefill 插队造成的卡顿、KV 不足时被抢占。打点：每个 token 的产出时刻，得到 ITL 分布；平均间隔即 **TPOT**。
+      6. **结束**：遇到 EOS、停止词或 `max_tokens`，返回结束原因（如 `stop`、`length`）并释放 KV 块（满块可能留在前缀缓存里供后续命中）；客户端中途断开时要立即中止请求。
+      7. **指标对照**：客户端测到的 TTFT 包含网络与中间代理的延迟，服务端指标（如 vLLM 的 TTFT、TPOT、排队时间直方图）只覆盖服务内部，两者要分开打点才能定位问题。
+    rubric:
+      - '按顺序说清接入、排队调度、Prefill、Decode 循环、结束释放等阶段（4 分）'
+      - '正确说明 TTFT 覆盖到首 token 返回为止（含排队），TPOT 对应 Decode 的平均间隔（3 分）'
+      - '每个阶段给出合理的瓶颈与打点位置，提到断连取消或 KV 释放（3 分）'
+    explanation: |
+      **常见失分点**：把 TTFT 等同于 Prefill；漏掉排队与分词；不提 KV 块的分配与释放；不知道客户端与服务端的 TTFT 口径不同；忽略客户端断开后要中止请求。
+
+  - id: INF-BASE-031
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [请求生命周期, 性能分析方法]
+    question: |
+      高并发压测时，GPU 上每步的 batch 一直上不去、时间线上有明显的空闲间隙，而 API 服务进程的某个 CPU 核长期占满 100%。最可能的瓶颈与对策是：
+    options:
+      A: 'GPU 算力不足、每步计算太慢，请求在队列里积压，应换用算力更高的 GPU'
+      B: 'API 进程里的分词、反分词与序列化成了 CPU 瓶颈，应拆到独立进程或部署多个 API 进程'
+      C: 'KV Cache 不足导致频繁抢占和重算，应把 gpu_memory_utilization 调到 1.0，腾出更多 KV 空间'
+      D: '大量 SSE 长连接占满了网卡带宽，应把 SSE 换成 WebSocket 并开启压缩'
+    answer: B
+    explanation: |
+      **结论**：GPU 有空闲、CPU 单核打满，说明 GPU 在等 CPU 喂数据。
+
+      高并发时每秒有成千上万次分词、增量反分词和 JSON 序列化，Python 进程又受 GIL 限制，单核很容易成为瓶颈，调度器来不及把请求送进 batch。常见对策：把 API 服务（分词、反分词、流式推送）与引擎核心（调度 + GPU 执行）放在不同进程中流水线化（vLLM 的 V1 引擎就是这样设计的），或部署多个 API 进程、多个副本；同时用 CUDA Graph 降低 kernel 发射开销。
+
+      - A 错：GPU 明明有空闲，换更强的卡只会让它闲得更多。
+      - C 错：抢占频繁时 GPU 依然忙碌，并能在抢占计数等指标上看到；把显存利用率调到 1.0 还会挤掉激活与运行时需要的余量，有 OOM 风险。
+      - D 错：现象指向 CPU 计算而不是网络。token 流的数据量很小，SSE 足以承载，换协议也解决不了单核打满。
+
+  - id: INF-BASE-032
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [请求生命周期, 流式输出]
+    question: |
+      在流式接口中，如果客户端中途断开、而服务端没有及时检测并中止（abort）该请求，它会继续占用 KV 块和 batch 名额，直到生成结束；因此推理服务需要在检测到断连时主动取消请求。
+    answer: true
+    explanation: |
+      **正确**。推理引擎并不知道「没人在听」：只要请求没被取消，调度器就会继续为它分配 KV 块、每步把它放进 batch，直到 EOS 或 `max_tokens`。这既浪费算力，也挤占了其他请求的显存与 batch 名额；若用户刷新页面后重发，还会出现同一问题被算两遍的情况。
+
+      工程上：API 服务监听连接断开事件并调用引擎的 abort 接口（vLLM 的 OpenAI 兼容服务会这样做）；网关和业务后端也要把取消逐层向上游传递，否则中间某一层断开了，模型那一层仍在生成；非流式请求同样需要超时与取消机制。Agent 框架中途放弃某个分支时，也应取消对应的推理请求。
+
+  - id: INF-BASE-033
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [流式输出]
+    tags: [停止词]
+    question: |
+      用户设置了停止词 `</answer>`。流式生成时，某一步新 token 解码后，已生成文本的末尾是 `</ans`。服务端此时最合理的处理是：
+    options:
+      A: '立即把 `</ans` 推送给客户端，等之后确认匹配停止词，再发一条消息让客户端撤回这几个字符'
+      B: '在服务端把停止词动态加入词表、变成单独的 token，这样它就不会跨越多个 token'
+      C: '先缓存这段可能是停止词前缀的文本，等后续 token 确认：若匹配则截断并结束，不匹配再一起推送'
+      D: '流式过程中照常推送，生成结束后再在完整文本里查找停止词，把它及之后的内容截掉'
+    answer: C
+    explanation: |
+      **结论**：停止词可能跨越多个 token，流式输出时要「压住」可能构成停止词前缀的那一小段文本。
+
+      停止词按字符串匹配，而模型按 token 生成：`</answer>` 可能被切成 `</`、`ans`、`wer>` 等多个 token。已推送的内容无法收回，所以服务端在每一步检查已生成文本的末尾：若它是某个停止词的前缀，就先缓存不发；确认匹配后截断（默认不返回停止词本身）并结束请求，确认不匹配再继续推送。
+
+      - A 错：SSE 是单向追加的数据流，没有标准的「撤回」机制，客户端可能已经把内容显示给用户或交给下游解析。
+      - B 错：停止词由用户任意指定，不可能为每个请求修改词表和模型；新加的 token 没有训练过的嵌入，模型也不会按停止词的语义生成它。
+      - D 错：用户会先看到停止词及其之后多生成的内容，也白白浪费了后续的生成算力。
+
+      同样的「延迟推送」思路也用于增量反分词：半个 UTF-8 字符要等凑齐后再发。
+
+  - id: INF-BASE-034
+    type: code_output
+    difficulty: 2
+    frequency: 2
+    points: [流式输出]
+    tags: [增量反分词, UTF-8]
+    question: |
+      字节级 BPE 中，一个汉字的 UTF-8 字节可能被拆进相邻的两个 token。下面的代码模拟「你好!」被切成 4 个字节级 token 后的两种流式反分词方式。输出是什么？
+    code: |
+      import codecs
+
+      tokens = [b"\xe4\xbd", b"\xa0\xe5", b"\xa5\xbd", b"!"]   # "你好!" 的 UTF-8 字节被切成 4 个 token
+      naive = "".join(t.decode("utf-8", errors="replace") for t in tokens)
+      dec = codecs.getincrementaldecoder("utf-8")()
+      pieces = [dec.decode(t) for t in tokens]
+      print(naive.count(chr(0xFFFD)), len(naive))   # 统计替换字符 U+FFFD 的个数
+      print(pieces)
+      print("".join(pieces) == "你好!")
+    answer: |
+      5 6
+      ['', '你', '好', '!']
+      True
+    explanation: |
+      「你」的 UTF-8 是 `E4 BD A0`，「好」是 `E5 A5 BD`，这里被切成了 `E4 BD | A0 E5 | A5 BD | 21`。
+
+      - **逐 token 独立解码**：`E4 BD` 是不完整的字符，替换成 1 个 U+FFFD；`A0 E5` 中 `A0` 是孤立的后续字节、`E5` 又不完整，得到 2 个；`A5 BD` 是两个孤立的后续字节，得到 2 个；最后是 `!`。共 5 个替换字符加 1 个 `!`，长度 6，用户看到的就是乱码。
+      - **增量解码**：解码器把不完整的字节留在缓冲区里。第 1 次返回空串；第 2 次凑齐 `E4 BD A0`，输出「你」并留下 `E5`；第 3 次输出「好」；第 4 次输出 `!`。拼起来与原文一致。
+
+      推理服务的增量反分词也是这个思路：新 token 解出的文本若以不完整字符结尾，就先不推送，等下一个 token 补齐。直接对每个 token 单独 decode 后拼接，是流式输出出现乱码的常见原因；同样的问题也会出现在业务后端按字节块转发、再逐块解码的时候。
+
+  - id: INF-BASE-035
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [流式输出, 请求生命周期]
+    source: 'OpenAI API Reference：Create chat completion（stream、stream_options.include_usage）https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create'
+    tags: [SSE, OpenAI 兼容接口]
+    question: |
+      关于大模型服务的流式输出，下列说法正确的有：
+    options:
+      A: '开启 `include_usage` 后，`[DONE]` 前的最后一个数据块会带上整个请求的 token 用量'
+      B: '流式输出把等待时间缩短到 TTFT：首个 token 返回时整段回答已生成完毕，后续只是传输'
+      C: '流式输出基本不改变生成的总耗时，主要改善的是感知延迟'
+      D: 'OpenAI 兼容接口的流式输出基于 SSE，以 `data: [DONE]` 结束'
+      E: '流式输出逐个推送 token，已推送部分的 KV 可以提前释放，因此 TPOT 会明显下降'
+    answer: [A, C, D]
+    explanation: |
+      **结论**：流式输出改变的是「何时开始看到结果」，不改变「生成要花多久」，A、C、D 正确。
+
+      - A 对：流式模式下默认不返回用量；请求中把 `stream_options` 的 `include_usage` 设为 `true` 后，会在 `data: [DONE]` 之前多发一个 `choices` 为空、带 `usage` 字段的数据块，便于计费与监控。
+      - B 错：首个 token 返回时，后面的 token 还没有生成；读完整个回答仍需 TTFT + TPOT ×（输出数 − 1），只是用户不必干等。
+      - C 对：用户在 TTFT 之后就能开始阅读。聊天场景中 TPOT 只要快于阅读速度，用户几乎感觉不到等待；Agent 的中间步骤用户看不到，流式对它意义不大，它更关心端到端时延。
+      - D 对：每个增量以 `data: ` 开头的一行 JSON 推送，最后以 `data: [DONE]` 结束。这是 OpenAI 兼容接口的约定，vLLM、SGLang 等框架都遵循它。
+      - E 错：每个 token 的计算完全相同，流式只是逐个推送，还多了少量序列化与网络开销；已推送 token 的 KV 仍要留给后续 token 做注意力，不能提前释放。
+  - id: INF-BASE-036
+    type: judge
+    difficulty: 1
+    frequency: 3
+    points: [性能分析方法]
+    tags: [nvidia-smi, GPU-Util]
+    question: |
+      nvidia-smi 显示 Decode 阶段的 GPU-Util 长期接近 100%，说明 GPU 的算力已被充分利用，继续加大 batch 不会再提升吞吐。
+    answer: false
+    explanation: |
+      **错误**。nvidia-smi 的 GPU-Util 表示采样周期内「至少有一个 kernel 在运行」的时间占比，不反映有多少 SM 在工作，更不反映 FLOPs 利用率。Decode 每步连续执行几百个小 kernel，GPU-Util 很容易接近 100%，而实际的算力利用率（MFU）只有个位数百分比，瓶颈在显存带宽。
+
+      此时加大 batch 往往能显著提高吞吐（只要 TPOT 和显存允许）。判断 GPU 是否「真忙」要看：
+      - MBU / MFU：实际带宽、实际 FLOPs 与峰值之比；
+      - DCGM 的性能指标，如 SM 活跃度、SM 占用率、Tensor Core 活跃度、显存带宽占用；
+      - Nsight Systems / Nsight Compute 的时间线与单 kernel 分析。
+
+      同理，扩缩容也不应依据 GPU-Util，而应依据排队长度、KV 使用率与延迟分位数。
+
+  - id: INF-BASE-037
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [性能分析方法, 带宽瓶颈与批处理]
+    tags: [MBU, MFU]
+    question: |
+      MBU（Model Bandwidth Utilization）=（每步需要读取的权重与 KV 字节数 ÷ TPOT）÷ 峰值带宽。在 H100（带宽 3.35 TB/s，BF16 峰值 989 TFLOPS）上测 Llama-3-8B（BF16 权重 16.06 GB，每 token 的 KV 为 128 KiB）：
+      (1) batch = 1、上下文 512 时实测 TPOT 为 7.0 ms，MBU 是多少？
+      (2) batch = 32、平均上下文 2048 时实测 TPOT 为 12.5 ms，理论下界与 MBU 各是多少？
+      (3) 场景 (2) 的 MFU 约是多少？（每条序列每步 FLOPs 按 $2N+4Ln_qd_hT$ 计，$N=8.03\times10^9$，$L=n_q=32$，$d_h=128$）据此说明 Decode 应该用哪个指标衡量效率。
+    answer: '(1) 约 69%；(2) 理论下界约 7.36 ms，MBU 约 59%；(3) 约 4.4%；Decode 受带宽限制，应看 MBU 以及与理论下界的差距，MFU 天然很低'
+    explanation: |
+      **(1)** 读取字节 $=16.06\ \text{GB}+512\times131072\ \text{B}\approx16.13$ GB；实际带宽 $16.13\ \text{GB}\div7.0\ \text{ms}\approx2.30$ TB/s；MBU $\approx2.30\div3.35\approx$ **69%**。
+
+      **(2)** 读取字节 $=16.06+32\times2048\times131072\div10^9\approx16.06+8.59=24.65$ GB；
+      - 理论下界 $24.65\div3.35\approx$ **7.36 ms**；
+      - 实际带宽 $24.65\ \text{GB}\div12.5\ \text{ms}\approx1.97$ TB/s，MBU $\approx$ **59%**。
+
+      **(3)** 每条序列每步 $2\times8.03\times10^9+4\times32\times32\times128\times2048\approx1.71\times10^{10}$ FLOPs，32 条共 $5.48\times10^{11}$；除以 12.5 ms 约 43.9 TFLOPS，MFU $\approx$ **4.4%**。
+
+      **结论**：Decode 的 MFU 天生只有几个百分点，用它衡量会得出「GPU 很闲」的误导结论；MBU 才反映离带宽上限还有多远。batch 增大后 MBU 下降，说明除了读权重与 KV，还有别的开销在拖后腿（如注意力 kernel 对变长、分页 KV 的访存效率、调度与采样开销），值得用 Nsight 等工具继续分析。反过来，Prefill 受算力限制，应看 MFU。
+    source: 'Databricks LLM Inference Performance Engineering（2023）'
+
+  - id: INF-BASE-038
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [性能分析方法, 负载特征]
+    tags: [压测, 开环, 闭环]
+    question: |
+      团队用「固定 32 个并发连接、每收到一个完整响应就立即发下一个请求」的方式压测，得到 P99 TTFT 只有 300 ms。上线后平均 QPS 与压测时相当，但流量突发时 P99 TTFT 超过 5 s。最可能的原因是：
+    options:
+      A: '闭环压测的发压会随系统变慢而自动放缓，测不出突发到达时的排队；应改用开环压测'
+      B: '线上请求的输出普遍更长，Decode 阶段拖得更久，而 TTFT 主要由 Decode 速度决定'
+      C: '压测时 32 并发已让 GPU 满载，测得的是偏悲观的上限；线上突发时的超时应来自网关或网络抖动'
+      D: '线上开启了前缀缓存，突发时每个请求都要先做前缀哈希匹配，这部分 CPU 开销拉长了 TTFT 长尾'
+    answer: A
+    explanation: |
+      **结论**：固定并发的闭环压测天然「限流」，测不到真实到达过程下的排队。
+
+      闭环模式下，系统里最多只有 32 个请求，前一个没回来，后一个就不会发出，因此不会出现「几十个请求同时涌入、在队列里干等」的情况。线上用户的请求是独立到达的，突发时瞬时到达速率可能远超系统容量，排队时间直接推高 TTFT。这类测量偏差也被称为「协同遗漏」（coordinated omission）。
+
+      正确做法：按目标速率用泊松过程（或带突发的分布、线上轨迹回放）开环发压，逐步提高速率，记录 TTFT / TPOT 的分位数，找出满足 SLO 的最大速率；闭环压测只适合测「最大吞吐」这类指标。
+
+      - B 错：TTFT 只到首 token 为止，与输出长度无关（输出长会占用 batch 名额，但那是通过排队间接影响）。
+      - C 错：方向说反了，闭环的结果往往偏乐观；突发时 P99 TTFT 飙升是请求排队的典型表现，不必归因于网关或网络抖动。
+      - D 错：前缀缓存命中会缩短 Prefill，降低 TTFT；前缀哈希与块查找的 CPU 开销相对 Prefill 很小，造不成秒级的长尾。
+
+  - id: INF-BASE-039
+    type: short
+    difficulty: 3
+    frequency: 2
+    points: [性能分析方法, 算术强度与Roofline]
+    question: |
+      线上推理服务「慢」或「吞吐上不去」时，如何系统地判断瓶颈在哪里（排队、显存容量、显存带宽、算力、CPU 与调度）？请给出分析步骤、要看的指标与工具。
+    answer: |
+      1. **先拆延迟**：把问题落到 TTFT、TPOT / ITL 还是端到端；用单请求追踪把 TTFT 拆成排队、Prefill 等阶段，把客户端与服务端的口径分开。
+      2. **排队**：等待队列长度、排队时间随负载上升而急剧增加，说明到达速率接近或超过容量。对策是扩容、限流、准入控制，而不是先优化 kernel。
+      3. **显存容量**：KV 使用率长期接近 100%、正在运行的 batch 被 KV 卡住、抢占次数上升。对策：FP8 KV、限制 `max_model_len` 与并发、增加卡数。
+      4. **带宽还是算力**：用 Roofline 估算理论下界（字节 ÷ 带宽、FLOPs ÷ 算力），计算 MBU 与 MFU。Decode 应接近带宽下界，MBU 偏低说明 kernel 访存效率、发射开销或调度有问题；Prefill 应看 MFU，偏低可能是分块太小、注意力 kernel 效率低。
+      5. **CPU 与调度**：GPU 时间线上有空隙、某个 CPU 核长期占满，说明分词、反分词、调度或 kernel 发射跟不上。对策：CUDA Graph、API 服务与引擎分进程、多副本。
+      6. **工具**：推理引擎的 Prometheus 指标（TTFT / TPOT / 排队时间直方图、KV 使用率、命中率、抢占次数）；Nsight Systems 看 CPU 与 GPU 的时间线和空隙；Nsight Compute 看单个 kernel 的带宽、占用率与 Roofline 位置；PyTorch Profiler；DCGM 的 SM 活跃度、显存带宽占用等指标；开环压测工具。
+      7. **验证**：一次只改一个变量（batch 上限、分块预算、精度），看指标是否按 Roofline 的预测变化，确认瓶颈判断正确。
+    rubric:
+      - '先拆分延迟、区分 TTFT 与 TPOT 及排队与执行（2 分）'
+      - '分别给出排队、显存容量、带宽 / 算力、CPU 调度等瓶颈的判断依据（4 分）'
+      - '用 Roofline 理论下界与 MBU / MFU 判断离上限的距离（2 分）'
+      - '列出合适的指标与剖析工具（2 分）'
+    explanation: |
+      **常见失分点**：只看 nvidia-smi 的 GPU-Util；一上来就优化 kernel，没有先排除排队与容量问题；对 Decode 用 MFU 衡量效率；不会用理论下界判断「还有多少优化空间」；分析时同时改多个参数，无法归因。
+
+  - id: INF-BASE-040
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [流式输出, 性能分析方法]
+    tags: [SSE, Nginx, 代理缓冲]
+    question: |
+      某团队自建推理服务（vLLM，OpenAI 兼容接口），请求链路为：浏览器 → 公司网关（Nginx）→ 业务后端（Python，把模型的流式结果转发给前端）→ vLLM。vLLM 的监控显示 P50 TTFT 约 200 ms、TPOT 约 25 ms；但前端埋点显示首字平均要 3～4 s 才出现，文字「一大段一大段」地蹦出来，偶尔还会出现乱码字符。请分析可能的原因，给出排查步骤与修复方案。
+    answer: |
+      **1. 初步判断**：服务端 TTFT、TPOT 都正常，问题出在把 token 送到浏览器的链路上。「首字晚 + 成段到达」是典型的缓冲现象；乱码说明有人按字节块解码，把多字节的 UTF-8 字符切断了。
+
+      **2. 可能原因（逐层）**：
+      - **网关缓冲**：Nginx 反向代理默认开启响应缓冲，会攒满缓冲区再转发。SSE 需要关闭（`proxy_buffering off`，或由上游返回 `X-Accel-Buffering: no` 响应头），并避免对 `text/event-stream` 做压缩；同时调大读超时，防止长回答被切断。
+      - **业务后端没有真正流式**：用了非流式的 HTTP 客户端（读完整个响应再返回），或框架的压缩、日志等中间件读取并缓冲了响应体；应逐块读取上游、逐块写给下游并立即 flush。
+      - **前端读取方式**：用 `response.text()` 之类的方法会等到结束才处理；应使用 EventSource 或 ReadableStream 逐事件解析。
+      - **乱码**：后端或前端把收到的字节块直接解码，一个汉字的字节恰好被切在两块之间。应按完整的 SSE 事件（以空行分隔）解析 JSON，或使用增量 UTF-8 解码（如浏览器 TextDecoder 的流式模式）。
+
+      **3. 排查步骤（逐跳对比）**：
+      - 在 vLLM 所在机器上用 `curl -N` 直连，确认 token 逐个到达；
+      - 依次经业务后端、经网关、在浏览器里测，记录每一跳的首字节时间与到达节奏，定位是哪一跳引入了缓冲；
+      - 检查各跳的响应头（`Content-Type`、`Transfer-Encoding`、`Content-Encoding`）与网关配置；必要时抓包看数据包的到达时间。
+
+      **4. 修复与防回归**：关闭网关缓冲与压缩，后端端到端流式转发，前端流式解析并增量解码；在前端埋点上报客户端 TTFT 与 ITL，与服务端指标对比告警；回答很长或思考很久时可定期发送 SSE 注释行作为心跳，防止中间设备因空闲超时断开连接。
+    rubric:
+      - '判断服务端正常、问题出在交付链路的缓冲上（3 分）'
+      - '逐层给出网关缓冲、后端非流式转发、前端读取方式等原因，并解释乱码成因（3 分）'
+      - '给出逐跳对比的排查方法（2 分）'
+      - '给出修复方案与客户端侧监控（2 分）'
+    explanation: |
+      **常见失分点**：看到 TTFT 高就去调模型或加 GPU；只想到网关缓冲，漏掉业务后端与前端；把乱码归因于模型「生成了错字」；没有提出逐跳对比的方法，只能猜原因；修复后不建立客户端侧的 TTFT 监控，问题容易复发。
+
+  - id: INF-BASE-041
+    type: scenario
+    difficulty: 3
+    frequency: 3
+    points: [TTFT与TPOT, 性能分析方法, 负载特征]
+    question: |
+      某 8B 对话服务（单实例 vLLM，H100，开启前缀缓存与 Chunked Prefill）。每天 14:00～16:00，P99 TTFT 从 0.6 s 涨到 4 s 以上，而 P99 TPOT 基本不变；该时段 GPU 的 KV 使用率接近 100%，等待队列显著变长，前缀缓存命中率从 70% 降到 35%，抢占次数也有上升。请分析原因，给出排查思路与短期、长期优化方案。
+    answer: |
+      **1. 定位**：
+      - TTFT 暴涨而 TPOT 不变，说明问题出在「开始生成之前」：排队或 Prefill，而不是 Decode 变慢。
+      - 等待队列变长 + KV 使用率接近 100%：正在运行的请求已占满 KV 块，新请求分不到块只能排队，**容量（KV）是瓶颈**，排队时间推高了 TTFT。
+      - 命中率下降：KV 池被活跃请求占满，已结束请求留下的可复用块很快被淘汰；也可能该时段的负载本身变了（例如批量任务带来大量各不相同的长提示词）。命中率下降又让每个请求的 Prefill 变长，进一步加剧排队。
+      - 抢占上升：被抢占的请求恢复时要重算，额外占用 Prefill 算力，形成恶性循环。
+
+      **2. 排查思路**：
+      - 按小时对比请求速率、输入 / 输出长度分布（P50、P99），以及按租户或应用拆分的流量，找出该时段新增的负载；
+      - 用单请求追踪拆分排队时间与 Prefill 时间；
+      - 查看 KV 使用的构成、并发上限（`max_num_seqs`）、抢占次数、各租户的命中率。
+
+      **3. 短期方案**：
+      - 扩容或按排队长度、KV 使用率自动扩缩，而不是按 GPU-Util；
+      - 把批量 / 离线任务隔离到独立实例或设为低优先级、限流；
+      - 降低默认 `max_tokens` 或 `max_model_len`，启用 FP8 KV，让同样的显存容纳约两倍的 token；
+      - 适当收紧并发上限、设置准入控制，避免抢占抖动；排队过长时直接拒绝或降级。
+
+      **4. 长期方案**：
+      - 多副本 + 按会话 / 前缀亲和路由，提高命中率；
+      - 在线与离线分级调度，按峰值时段的 goodput 做容量规划；
+      - 长提示词占比高时评估 PD 分离；引入 CPU 内存一级的 KV 缓存，减少可复用前缀被淘汰；
+      - 规范提示词结构（稳定内容在前），提高可复用前缀的比例。
+
+      **5. 验证**：用该时段的线上流量回放压测，确认 P99 TTFT 回到 SLO 内，观察排队时间、命中率、抢占次数与 SLO 达标率。
+    rubric:
+      - '由 TTFT 涨、TPOT 不变推断出瓶颈在排队，并指出 KV 容量是排队的根因（3 分）'
+      - '解释命中率下降与抢占上升如何加剧 TTFT 恶化（2 分）'
+      - '给出按时段、按租户分析流量与拆分排队 / Prefill 时间的排查思路（2 分）'
+      - '给出合理的短期与长期方案（2 分）'
+      - '说明如何验证（1 分）'
+    explanation: |
+      **常见失分点**：看到 TTFT 涨就去优化 Prefill kernel；只说「加机器」而不分析为什么是这个时段、哪类流量；忽略 KV 容量与排队的关系；不知道命中率下降与抢占会形成恶性循环；以 GPU-Util 作为扩容依据。
+
+  - id: INF-BASE-042
+    type: design
+    difficulty: 3
+    frequency: 2
+    points: [性能分析方法, 负载特征, 吞吐与goodput]
+    question: |
+      你负责为公司的 LLM 推理平台建立一套性能评测与瓶颈分析体系：既要对比不同引擎与配置（如 vLLM / SGLang、BF16 / FP8、batch 上限、Chunked Prefill 预算），也要为容量规划提供依据。请给出设计：指标体系、负载构造、压测方法、实验设计、剖析与瓶颈定位方法、报告形式，以及常见陷阱。
+    answer: |
+      **1. 指标体系**：
+      - 延迟：TTFT、TPOT、ITL、端到端时延的 P50 / P90 / P99（客户端与服务端分别统计）、排队时间；
+      - 吞吐：输出 token/s、req/s，以及在给定 SLO 下的 goodput（达标率不低于目标时的最大请求速率）；
+      - 资源与效率：MBU、MFU、KV 使用率、前缀缓存命中率、抢占次数、每步 batch 大小；
+      - 成本：每百万输出 token 成本。
+
+      **2. 负载构造**：
+      - 线上轨迹回放：从日志抽取到达时间、输入 / 输出长度、前缀结构（脱敏后），最贴近真实；
+      - 合成负载：固定长度组合（如 输入 / 输出 = 128 / 1024、2048 / 128、8192 / 256）做受控对比；
+      - 按场景分组：聊天、RAG / Agent（长输入、高前缀复用）、推理模型（长输出）、离线批处理；
+      - 解码参数一致；需要固定输出长度时可忽略 EOS，但要注明这会偏离真实分布。
+
+      **3. 压测方法**：
+      - 开环：按泊松过程或带突发的到达过程，从低到高扫描请求速率，测各速率下的分位数，得到「延迟 - 吞吐」曲线与 goodput；
+      - 闭环：固定并发，只用于测最大吞吐；
+      - 预热（编译、CUDA Graph 录制、缓存冷热状态要明确）、每档运行足够长、重复多次报告波动；发压端自身不能成为瓶颈。
+
+      **4. 实验设计**：一次只改一个变量（引擎、精度、batch 上限、分块预算、TP 度）；每个配置先用 Roofline 估算理论下界，再看实测与下界的差距。
+
+      **5. 剖析与瓶颈定位**：
+      - 引擎指标判断排队、KV 容量、抢占、命中率；
+      - Nsight Systems 看 CPU 与 GPU 的时间线与空隙（发射开销、CPU 瓶颈）；
+      - Nsight Compute 看关键 kernel 的带宽、占用率与 Roofline 位置；
+      - DCGM 采集 SM 活跃度、显存带宽占用等，用于长期监控。
+
+      **6. 报告形式**：每个场景给出延迟 - 吞吐曲线、给定 SLO 下的 goodput、成本、MBU / MFU、资源指标与配置清单（版本、参数、硬件、驱动），结论写明适用的负载范围。
+
+      **7. 常见陷阱**：
+      - 闭环压测的协同遗漏，低估排队；
+      - 只报平均值，不报分位数；只报吞吐，不报对应的延迟；
+      - token 计数口径不一（输入是否计入、不同分词器）；
+      - 前缀缓存的冷热状态不一致，导致对比失真；
+      - 发压客户端成为瓶颈；GPU 频率、温度、同机其他负载造成的干扰；
+      - 用固定长度的合成负载结论去推断真实长尾负载。
+    rubric:
+      - '指标体系完整：分位数延迟、吞吐、goodput、MBU / MFU 与资源指标（2 分）'
+      - '负载构造兼顾线上轨迹回放与受控合成，并按场景区分（2 分）'
+      - '采用开环扫描请求速率得到延迟 - 吞吐曲线与 goodput，说明预热与重复（2 分）'
+      - '给出单变量实验、理论下界对比与剖析工具的瓶颈定位方法（2 分）'
+      - '报告形式清晰并列出至少 3 个常见陷阱（2 分）'
+    explanation: |
+      **常见失分点**：只用一个固定长度、固定并发的压测得出结论；不报分位数与 goodput；不区分场景；不做预热和重复；看不出发压端或网络成为瓶颈；只给出数字而不解释瓶颈，结论无法指导容量规划与配置选择。
+
+  - id: INF-BASE-043
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [带宽瓶颈与批处理, 请求生命周期]
+    tags: [padding, Hugging Face generate]
+    question: |
+      用 Hugging Face 的 `generate` 对一批长度不同的提示词做批量生成（静态批处理，需要补齐）时，官方文档建议把 Decoder-only 模型分词器的 `padding_side` 设为 `'left'`。主要原因是：
+    options:
+      A: '左侧补齐需要的 pad token 比右侧补齐少，可以减少整批前向的计算量和 KV Cache 显存占用'
+      B: '右侧补齐时 attention mask 会失效，模型会把 pad token 当成正常内容参与注意力计算'
+      C: 'vLLM 等推理引擎内部也会把一批请求左对齐补齐后再计算，左侧补齐便于与它们的结果保持一致'
+      D: '新 token 追加在末尾；右侧补齐时短提示词末尾是 pad，模型要接在 pad 后面续写，而它没学过这种情况'
+    answer: D
+    explanation: |
+      **结论**：生成是在序列末尾续写，补齐用的 pad 不能挡在「提示词」和「新生成的 token」之间。
+
+      批处理张量要求每条序列一样长，`generate` 每一步都在所有序列的末尾追加一个新 token。右侧补齐时，短提示词后面跟着一串 pad，新 token 接在 pad 之后，模型没有学过「从 pad 后面续写」；Hugging Face 文档的例子中，右侧补齐会生成「1, 2, 33333333333」这样的错误输出。左侧补齐后，所有序列的真实内容右对齐，最后一个位置都是提示词的最后一个 token。左侧补齐仍然需要 attention mask 屏蔽 pad，并据此计算位置编号。文档还提到，右侧补齐对状态空间模型和混合架构的影响更大：它们的循环状态会被末尾的 pad 继续更新。
+
+      - A 错：两种补齐方式补的 pad 数量相同，计算量一样；要减少浪费，得靠按长度分桶或不补齐的变长批处理。
+      - B 错：两种方式都可以用 attention mask，问题不在掩码，而在续写的起点。
+      - C 错：vLLM 等引擎把各请求的 token 拼接成一维序列，用变长注意力和块表区分不同请求，根本不做补齐；左侧补齐是静态补齐的批处理接口（如 `generate`）才有的要求。
+    source: 'Hugging Face Transformers 文档 Text generation（Pitfalls：Padding side）https://huggingface.co/docs/transformers/llm_tutorial；vLLM 文档 Basic Model（输入为拉平的 input_ids 与 positions）'
+
+  - id: INF-BASE-044
+    type: calc
+    difficulty: 2
+    frequency: 2
+    points: [带宽瓶颈与批处理, 负载特征]
+    tags: [padding, 分桶, packing]
+    question: |
+      一批 8 个请求做静态批处理的 Prefill，提示词长度分别为 120、150、200、260、300、350、400、4000 token，按批内最长者补齐。
+
+      (1) 线性层的计算量与 token 位置数成正比。整批实际处理多少个 token 位置？其中 padding 有多少、占比多少？
+      (2) 先按长度排序，把前 7 条和最后 1 条分成两批，各自补齐。padding 占比变为多少？这样做有什么代价？
+      (3) 若引擎把各请求的 token 直接拼成一维序列，用变长注意力 kernel 保证请求之间互不可见（不补齐），padding 为多少？注意力打分的元素数与 $L^2$ 成正比（忽略因果掩码），它是「全部补齐到 4000」时的几分之一？
+    answer: '(1) 32,000 个位置，其中 padding 26,220 个，约 81.9%；(2) 6,800 个位置，padding 1,020 个，约 15.0%，代价是批次变多、要等同长度的请求凑批；(3) 没有 padding，注意力元素数约 1,652 万，是补齐时 1.28 亿的约 1/7.75'
+    explanation: |
+      **(1)** 有效 token：$120+150+200+260+300+350+400+4000=5780$；补齐后共 $8\times4000=32000$ 个位置；padding 为 $32000-5780=26220$，占 $1-5780/32000\approx81.9\%$。一条长请求让整批白算了八成。
+
+      **(2)** 前 7 条补到 400：$7\times400=2800$ 个位置，其中有效 1780 个；最后 1 条 4000，不用补齐。合计 6800 个位置，padding 1020 个，占 $1020/6800=15.0\%$。代价：批次变多、每批变小，GPU 利用率可能下降；要等同一长度区间的请求凑批，增加排队时延；桶的边界需要按长度分布调整。
+
+      **(3)** 拼接（packing）加变长注意力：padding 为 0，线性层只算 5780 个位置。注意力打分：补齐时 $8\times4000^2=1.28\times10^8$；变长时 $\sum L_i^2=16{,}517{,}000\approx1.65\times10^7$，约为补齐时的 $1/7.75$，其中 $4000^2$ 一项就占 97%。
+
+      **结论**：长度分布越分散，补齐的浪费越严重。vLLM、SGLang 等推理引擎用连续批处理加一维拼接，每个请求只算自己的 token，从根本上避免了 padding；SFT 训练中也常用 packing 配合变长注意力来减少浪费（要保证样本之间互不可见）。
+    source: 'vLLM 文档 Basic Model（输入为拉平的 input_ids 与 positions）'

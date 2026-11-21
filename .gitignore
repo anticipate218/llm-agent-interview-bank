@@ -1,0 +1,6 @@
+drafts/
+__pycache__/
+*.pyc
+.venv/
+# 网站数据由 scripts/build_site.py 生成，部署时在 GitHub Actions 中构建
+site/data/

@@ -1,0 +1,889 @@
+domain: LLM
+subcategory: MODEL
+questions:
+
+  - id: LLM-MODEL-001
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [GPT系列演进]
+    tags: [GPT-2, 零样本]
+    question: |
+      与 GPT-1 相比，GPT-2（2019 年，论文名为《Language Models are Unsupervised Multitask Learners》）最核心的主张是：
+    options:
+      A: '改用编码器—解码器结构，把各类任务统一成文本到文本的格式，从而兼顾理解与生成'
+      B: '在更大、更多样的 WebText 上训练更大的语言模型，不做任务微调即可零样本完成多种任务'
+      C: '提出上下文学习：在提示中给几个示例即可完成新任务，并系统评测了 1750 亿参数的模型'
+      D: '先做有监督微调，再用人类偏好训练奖励模型并做强化学习（RLHF），让输出更符合人类意图'
+    answer: B
+    explanation: |
+      **结论**：GPT-2 的关键词是「零样本多任务」：语言模型足够大、数据足够多样时，下游任务可以直接用自然语言描述出来，不必再为每个任务微调。
+
+      - GPT-1（2018）：生成式预训练 + 针对每个任务的有监督微调；
+      - GPT-2（2019）：最大 15 亿参数，在约 40 GB 的 WebText（从 Reddit 高赞外链抓取的网页）上训练，上下文 1024；把任务写成文本条件，如在文章后接「TL;DR:」诱导模型写摘要；结构上把 LayerNorm 移到子层输入端（Pre-Norm）；
+      - GPT-3（2020）：1750 亿参数，系统展示了零样本、单样本、少样本的上下文学习；
+      - InstructGPT（2022）：用 RLHF 让模型遵循指令，之后才有 ChatGPT。
+
+      - A 错：GPT 系列一直是 Decoder-only；把任务统一成文本到文本格式的 Encoder-Decoder 模型是 T5。
+      - C 错：这描述的是 GPT-3。
+      - D 错：这描述的是 InstructGPT。
+    source: 'Language Models are Unsupervised Multitask Learners（Radford 等, 2019）'
+
+  - id: LLM-MODEL-002
+    type: fill
+    difficulty: 1
+    frequency: 1
+    points: [GPT系列演进, 上下文长度演进]
+    source: 'GPT-1（Radford 等, 2018, Improving Language Understanding by Generative Pre-Training）；GPT-2（Radford 等, 2019, Language Models are Unsupervised Multitask Learners）；GPT-3 arXiv:2005.14165'
+    tags: [GPT-1, GPT-2, GPT-3]
+    question: |
+      GPT-1、GPT-2、GPT-3 的最大上下文长度分别为 ____、____、____ 个 token。
+    answer: ['512', '1024', '2048']
+    explanation: |
+      GPT-1 为 512，GPT-2 翻倍到 1024，GPT-3 再翻倍到 2048。它们都使用可学习的绝对位置编码，上下文长度在训练时就被固定，超出部分没有对应的位置向量。
+
+      此后的变化：LLaMA（2023 年 2 月）为 2048，Llama 2 为 4096；GPT-4（2023 年 3 月）提供 8K 和 32K 两个版本；2023 年底起，128K 甚至百万 token 级别的上下文陆续出现。推动这一变化的主要是 RoPE 及其外推技术、FlashAttention 等显存友好的注意力实现、GQA / MLA 等减小 KV Cache 的结构，以及专门的长文本继续训练。
+
+  - id: LLM-MODEL-003
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [GPT系列演进]
+    tags: [GPT-3, InstructGPT, ChatGPT, GPT-4]
+    question: |
+      请梳理 OpenAI 从 GPT-1 到 GPT-4 的演进：每一代（GPT-1、GPT-2、GPT-3、InstructGPT、ChatGPT、GPT-4）的关键变化是什么？这些变化背后的主线是什么？
+    answer: |
+      1. **GPT-1（2018）**：12 层 Transformer 解码器，在 BooksCorpus 上做语言模型预训练，再对每个下游任务微调；用「输入变换」把各种任务改写成序列，几乎不改模型结构。
+      2. **GPT-2（2019）**：放大到 15 亿参数，换成约 40 GB、更多样的 WebText，主张不做微调、用自然语言描述任务即可零样本完成；结构上改为 Pre-Norm，上下文扩到 1024；因担心被滥用而分阶段发布权重。
+      3. **GPT-3（2020）**：1750 亿参数、约 3000 亿 token，上下文 2048；核心发现是上下文学习，只在提示中给几个示例就能完成新任务，且模型越大，越能利用上下文中的示例。
+      4. **InstructGPT（2022）**：用「SFT → 奖励模型 → PPO」的 RLHF 流程对齐人类意图；标注员更偏好 13 亿参数的 InstructGPT，而不是 1750 亿参数的 GPT-3，说明对齐比单纯放大更能提升「好用」程度。
+      5. **ChatGPT（2022 年 11 月）**：与 InstructGPT 同一路线，基于 GPT-3.5 系列模型，用对话格式的数据和 RLHF 训练，把能力包装成人人可用的对话界面。
+      6. **GPT-4（2023 年 3 月）**：支持图像输入；技术报告不再公开架构、参数量、训练算力和数据等细节；报告了用小得多的模型预测最终损失的「可预测扩展」做法。
+      7. **主线**：先靠规模（参数、数据、算力）换来通用能力（预训练 → 零样本 → 少样本），再靠对齐和交互形式把能力变得可用、可控（指令遵循 → 对话），之后走向多模态；后续又出现了用强化学习训练长思维链的推理模型。另一条副线是逐渐从公开论文与权重走向闭源，直到 2025 年 8 月发布开放权重的 gpt-oss。
+    rubric:
+      - '说出 GPT-1、GPT-2、GPT-3 各自的关键变化（微调 → 零样本 → 少样本上下文学习）（3 分）'
+      - '说明 InstructGPT / ChatGPT 的对齐思路及「1.3B 胜过 175B」的意义（3 分）'
+      - '说明 GPT-4 的多模态与不公开细节等变化（2 分）'
+      - '总结「规模 → 对齐 → 多模态 / 推理」的主线（2 分）'
+    explanation: |
+      **常见失分点**：把上下文学习说成 GPT-2 提出的；以为 ChatGPT 只是更大的 GPT-3；说不出 InstructGPT 的意义（对齐让小模型也更受偏好）；声称知道 GPT-4 的参数量和结构（官方并未公布）。回答时注意区分「论文公开的事实」和「坊间传闻」。
+    source: 'GPT-1/2/3 论文；InstructGPT arXiv:2203.02155；GPT-4 Technical Report arXiv:2303.08774'
+
+  - id: LLM-MODEL-004
+    type: multiple
+    difficulty: 2
+    frequency: 1
+    points: [GPT系列演进, 开源与闭源生态, 开放权重与许可证]
+    tags: [gpt-oss, MoE, MXFP4]
+    question: |
+      2025 年 8 月，OpenAI 发布了开放权重模型 gpt-oss-120b 与 gpt-oss-20b。关于它们，下列说法**正确**的有：
+    options:
+      A: '两者都是 MoE 模型：gpt-oss-120b 总参数约 117B，每个 token 激活约 5.1B'
+      B: '这是 OpenAI 自 GPT-2 之后首次发布开放权重的语言模型，采用 Apache 2.0 许可'
+      C: '训练数据与完整训练代码一并公开，因此满足 OSI《开源 AI 定义》的全部要求'
+      D: 'MoE 权重以 MXFP4 格式原生量化发布，120b 版本可以放进单张 80 GB 的 GPU'
+      E: '各层交替使用稠密注意力与带状滑动窗口注意力，并给每个注意力头加了一个可学习的 sink 偏置'
+    answer: [A, B, D, E]
+    explanation: |
+      **结论**：A、B、D、E 正确。
+
+      - A 对：120b 总参数约 117B、激活约 5.1B，128 个专家每次选 4 个；20b 总参数约 21B、激活约 3.6B。
+      - B 对：OpenAI 的发布说明称，除 Whisper、CLIP 等之外，gpt-oss 是它自 GPT-2 以来首次开放权重的语言模型，许可为 Apache 2.0（另附使用政策）。
+      - C 错：发布的是权重和推理代码，训练数据和训练代码并未公开，属于「开放权重」，不满足 OSI 定义中对数据信息与完整训练代码的要求。
+      - D 对：MoE 权重用 MXFP4 存储，120b 可在单张 80 GB GPU 上运行，20b 约 16 GB 内存即可。
+      - E 对：模型卡说明，它在各层之间交替使用稠密注意力与局部带状稀疏注意力（窗口 128 个 token，与 GPT-3 的做法类似），并使用分组大小为 8 的 GQA，上下文 128K；每个注意力头还在 Softmax 的分母中加了一个可学习的偏置（类似 off-by-one attention 与 attention sink），让这个头可以「不关注任何 token」。
+
+      意义：头部闭源厂商也开始发布宽松许可的开放权重模型，开放权重生态的竞争更加激烈。
+    source: 'Introducing gpt-oss（OpenAI, 2025-08-05）https://openai.com/index/introducing-gpt-oss/；gpt-oss-120b & gpt-oss-20b Model Card（OpenAI, 2025-08）'
+
+  - id: LLM-MODEL-005
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [BERT与GPT路线]
+    tags: [BERT, GPT-1, 消融实验]
+    question: |
+      BERT 论文特意把 BERT-Base 的规模设计得与 OpenAI GPT（GPT-1）相同（12 层、768 维、12 头），而它在 GLUE 上明显超过了 GPT。结合论文的消融实验，最能解释这一差距的是：
+    options:
+      A: 'BERT 的预训练语料（BooksCorpus 加英文维基）比 GPT 大得多，消融显示数据规模是主因'
+      B: 'BERT 采用 Pre-Norm，GPT 采用 Post-Norm，归一化位置的不同决定了效果'
+      C: '双向上下文：同等条件下改成从左到右的单向模型（并去掉 NSP），各任务明显下降，SQuAD 尤甚'
+      D: 'BERT 在下游任务中冻结预训练模型、只训练顶层分类器，而 GPT 需要微调全部参数'
+    answer: C
+    explanation: |
+      **结论**：BERT 论文明确指出，提升的大部分来自两个预训练任务以及它们带来的双向性。
+
+      BERT 与 GPT 的差异不止一处：BERT 用 BooksCorpus 加英文维基百科，GPT 只用 BooksCorpus；预训练批量、[CLS] / [SEP] 的学习方式也不同。为了分离这些因素，论文做了消融：同样数据、同样规模下，把模型改成从左到右（LTR）并去掉 NSP，各任务效果都下降，MRPC、SQuAD 下降尤其明显；在 LTR 模型上再加一个随机初始化的 BiLSTM，SQuAD 有所改善，但仍明显不如双向预训练。原因在于 token 级任务需要每个位置都能看到右侧上下文，而单向模型在第 $t$ 个位置看不到后文。
+
+      - A 错：数据确实更多，但消融说明它不是主要原因。
+      - B 错：GPT-1 和 BERT 都沿用原始 Transformer 的 Post-Norm，Pre-Norm 是 GPT-2 才引入的。
+      - D 错：两者都采用「微调全部参数」的范式；冻结特征的用法是 ELMo 的典型方式。
+    source: 'BERT 论文 arXiv:1810.04805（3.4 节与 5.1 节）'
+
+  - id: LLM-MODEL-006
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [BERT与GPT路线]
+    tags: [Encoder-only, ModernBERT, 向量检索]
+    question: |
+      随着 GPT 路线的大模型兴起，BERT 这类 Encoder-only 模型在工业界已经基本没有用武之地，检索、分类、实体抽取等任务都改用 Decoder-only 大模型直接完成。
+    answer: false
+    explanation: |
+      **错误**。Encoder-only 模型在大模型时代仍被大量使用，主要因为它们在理解类任务上性价比极高：
+      - **向量检索与重排**：RAG 中常用的文本向量模型和交叉编码器重排模型，很多基于 BERT 类编码器，双向注意力天然适合产出整句表示；
+      - **分类、序列标注**：意图识别、内容审核、实体抽取等高并发任务，几十到几百 MB 的编码器模型延迟只有毫秒级，成本远低于调用大模型；
+      - **持续改进**：2024 年 12 月发布的 ModernBERT 用 2T token 训练，原生支持 8192 长度，作者称它在分类与检索上是对旧编码器的明显改进，速度和显存效率也更好。
+
+      也有基于 Decoder-only 大模型改造的向量模型，效果很强，但推理成本更高。两条路线在今天是分工关系，而不是谁淘汰谁。
+    source: 'ModernBERT arXiv:2412.13663'
+
+  - id: LLM-MODEL-007
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [BERT与GPT路线, GPT系列演进]
+    tags: [RoBERTa, ALBERT, GPT-2, GPT-3]
+    question: |
+      关于 2018—2020 年 BERT 路线与 GPT 路线的发展，下列说法**正确**的有：
+    options:
+      A: 'GPT-2 因担心被滥用而分阶段发布，完整的 15 亿参数版本到当年晚些时候才放出'
+      B: 'BERT 发布后，GPT-2 借鉴它改用掩码语言模型目标，以便同时利用左右两侧的上下文'
+      C: 'ALBERT 通过词嵌入矩阵分解和跨层参数共享，大幅减少了参数量'
+      D: 'RoBERTa 认为 BERT 训练不足：更多数据、更大批量、更长训练，并去掉 NSP、改用动态遮盖'
+      E: 'GPT-3 论文的主要卖点是 1750 亿参数模型经全参数微调后，在多数下游任务上刷新纪录'
+    answer: [A, C, D]
+    explanation: |
+      **结论**：A、C、D 正确。
+
+      - A 对：GPT-2 在 2019 年 2 月只公开了小模型，之后逐步放出更大的版本，完整的 1.5B 模型到 11 月才发布。
+      - B 错：GPT-2 仍是从左到右的自回归语言模型，GPT 路线始终坚持这一目标，并沿着「放大规模」的方向一路走到 GPT-3。
+      - C 对：ALBERT 把 $V\times H$ 的嵌入矩阵分解为 $V\times E$ 与 $E\times H$（$E\ll H$），并在各层之间共享参数，同时用句子顺序预测（SOP）替代 NSP。
+      - D 对：RoBERTa（2019）认为 BERT「明显训练不足」，改进包括动态遮盖、去掉 NSP、更大批量、约 160 GB 数据、更长训练，效果显著提升。
+      - E 错：GPT-3 的卖点恰恰是**不做微调**：通过零样本、少样本的上下文学习完成任务，参数完全不更新。
+
+      这一时期 BERT 路线在理解类基准上占优，GPT 路线则押注规模与生成；到 GPT-3 证明上下文学习之后，「一个模型、用提示完成所有任务」的范式逐渐成为主流。
+    source: 'RoBERTa arXiv:1907.11692；ALBERT arXiv:1909.11942；GPT-3 arXiv:2005.14165'
+
+  - id: LLM-MODEL-008
+    type: fill
+    difficulty: 1
+    frequency: 1
+    points: [T5与统一框架]
+    tags: [T5, 文本到文本]
+    question: |
+      T5 把所有任务统一成「文本输入、文本输出」。对于 STS-B 这种要预测 1～5 之间相似度分数的回归任务，T5 把分数四舍五入到 ____ 的倍数，再转成字符串作为目标文本（例如 2.57 写成 "2.6"），相当于把回归问题变成了一个 ____ 类的分类问题。
+    answer: ['0.2', '21']
+    explanation: |
+      T5 论文观察到 STS-B 的大多数分数本来就以 0.2 为间隔标注，于是把分数四舍五入到 **0.2** 的倍数，转成字符串让模型生成。1 到 5 之间以 0.2 为步长共有 $(5-1)/0.2+1=$ **21** 个取值。测试时，如果模型输出的字符串能解析成 1～5 之间的数，就转回浮点数计算指标，否则直接判错。
+
+      这个例子说明了「文本到文本」框架的彻底性：分类输出类别名（如 "entailment"），翻译、摘要直接输出文本，连回归也写成字符串。好处是所有任务共用同一个模型、同一个损失（交叉熵）、同一套超参数和解码方式；任务用输入前缀区分，如 "translate English to German:"、"summarize:"、"stsb sentence1: ... sentence2: ..."。后来的指令微调可以看作把这些前缀换成了自然语言指令。
+    source: 'T5 论文 arXiv:1910.10683（2.4 节）'
+
+  - id: LLM-MODEL-009
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [T5与统一框架]
+    tags: [T5, C4, 片段破坏]
+    question: |
+      T5 论文（Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer）做了大规模的系统对比实验。下列属于该论文结论或做法的有：
+    options:
+      A: '预训练数据的规模不重要：把一个小数据集重复很多遍，与使用同样 token 数的不重复大数据效果相同'
+      B: '构建并公开了约 750 GB 的清洗后 Common Crawl 语料 C4'
+      C: '无监督目标中，片段破坏（破坏约 15% 的 token、平均片段长度为 3）效果好，而且目标序列更短、训练更省计算'
+      D: '论文最终发布的 T5-11B 是一个 110 亿参数的 Decoder-only 模型'
+      E: '在比较的几种结构中，编码器—解码器结构配合去噪目标的效果最好'
+    answer: [B, C, E]
+    explanation: |
+      **结论**：B、C、E 正确。
+
+      - A 错：论文发现，小数据集重复很多遍会导致效果下降，出现过拟合迹象，所以预训练数据既要质量好，也要量足够大。
+      - B 对：C4（Colossal Clean Crawled Corpus）由 Common Crawl 经启发式规则清洗得到，规模约 750 GB。
+      - C 对：在若干去噪目标中，片段破坏的效果略好于逐 token 的遮盖，并且由于目标只包含被遮盖的片段，序列更短、训练更快。
+      - D 错：T5 全系列（直到 11B）都是编码器—解码器结构。
+      - E 对：论文比较了编码器—解码器、仅解码器的语言模型、前缀语言模型等结构，编码器—解码器配合去噪目标的综合表现最好，T5 因此采用这一结构。
+
+      T5 的价值在于两点：「文本到文本」的统一框架，以及一套系统的对照实验方法，后者为后来的预训练配方研究提供了范本。
+    source: 'T5 论文 arXiv:1910.10683'
+
+  - id: LLM-MODEL-010
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [规模与涌现能力, T5与统一框架]
+    tags: [FLAN, 指令微调]
+    question: |
+      FLAN（Wei 等, 2021）的实验发现：指令微调对所有规模的模型都能提升其在未见过的任务上的零样本表现，而且模型越小，提升越明显。
+    answer: false
+    explanation: |
+      **错误**。FLAN 的结论恰好相反：对 1000 亿参数量级的模型，指令微调显著提升了未见任务上的零样本表现；而对 80 亿参数及更小的模型，指令微调反而**损害**了未见任务上的表现。论文的解释是：小模型的容量有限，被用来记住训练中的几十个任务，泛化到新任务的能力反而下降；大模型在记住训练任务之外，还有余力学会「遵循指令」这种更通用的能力。
+
+      后续工作改变了这一图景。例如 Flan-T5 所在的《Scaling Instruction-Finetuned Language Models》（Chung 等, 2022）把指令任务扩展到上千个，并加入思维链数据，较小的模型也能从指令微调中明显受益。这提醒我们：「某种方法只对大模型有效」常常与当时的数据规模和训练配方有关，不是一成不变的规律。
+    source: 'Finetuned Language Models Are Zero-Shot Learners arXiv:2109.01652；Scaling Instruction-Finetuned Language Models arXiv:2210.11416'
+
+  - id: LLM-MODEL-011
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [Llama系列]
+    tags: [LLaMA, RMSNorm, SwiGLU, RoPE]
+    question: |
+      LLaMA（2023 年 2 月）论文在原始 Transformer 的基础上做了三处主要修改，并注明了各自借鉴的来源。下列对应关系正确的是：
+    options:
+      A: '前置归一化——借鉴 GPT-3；SwiGLU 激活——借鉴 PaLM；RoPE——借鉴 GPT-Neo'
+      B: '前置归一化——借鉴 BERT；SwiGLU 激活——借鉴 T5；RoPE——借鉴 GPT-3'
+      C: '前置归一化——借鉴 PaLM；SwiGLU 激活——借鉴 GPT-3；RoPE——借鉴 T5'
+      D: 'GQA——借鉴 PaLM；SwiGLU 激活——借鉴 GPT-Neo；RoPE——借鉴 Chinchilla'
+    answer: A
+    explanation: |
+      **结论**：LLaMA 论文的原文写法是「Pre-normalization [GPT3]、SwiGLU activation function [PaLM]、Rotary Embeddings [GPTNeo]」。
+
+      - **前置归一化**：对每个子层的输入而不是输出做归一化，以提升训练稳定性，这一做法来自 GPT-3；归一化函数换成了 RMSNorm（Zhang 与 Sennrich, 2019），GPT-3 用的是 LayerNorm。
+      - **SwiGLU**：来自 PaLM，LLaMA 把中间维度取为 $\frac23\times4d$，使参数量与普通 FFN 持平。
+      - **RoPE**：去掉绝对位置编码，在每一层对 Q、K 施加旋转位置编码，来自 GPT-Neo 系列的做法（RoPE 本身由 Su 等提出）。
+
+      其他关键选择：只用公开数据训练（7B、13B 用 1T token，33B、65B 用 1.4T token），上下文 2048；LLaMA-13B 在多数基准上超过 GPT-3（175B）。初版以非商用的研究许可发布。
+
+      - B 错：BERT 是 Post-Norm，原始 T5 的 FFN 用 ReLU，GPT-3 用学习式绝对位置编码，三处出处都不对。
+      - C 错：GPT-3 的 FFN 用 GELU，T5 用相对位置偏置而非 RoPE；前置归一化在 LLaMA 论文中注明借鉴的是 GPT-3。
+      - D 错：LLaMA 第一代没有使用 GQA，Llama 2 的 34B、70B 才开始使用。
+    source: 'LLaMA: Open and Efficient Foundation Language Models arXiv:2302.13971'
+
+  - id: LLM-MODEL-012
+    type: multiple
+    difficulty: 2
+    frequency: 3
+    points: [Llama系列, 上下文长度演进]
+    tags: [Llama 2, Llama 3, Llama 3.1]
+    question: |
+      关于 Llama 系列各代的变化，下列说法**正确**的有：
+    options:
+      A: 'Llama 3 在 2024 年 4 月发布时上下文就已是 128K，3.1 版主要是扩充了多语言能力'
+      B: 'Llama 3.1 405B 采用 MoE 架构，每个 token 只激活约 17B 参数，推理成本接近 17B 稠密模型'
+      C: 'Llama 3.1 的 128K 上下文是从预训练第一步起就用 128K 长度的序列训练出来的，没有单独的扩展阶段'
+      D: 'Llama 2 预训练数据增至约 2T token，上下文从 2048 扩到 4096，只在 34B 和 70B 上用 GQA'
+      E: 'Llama 3 把词表从 32K 扩到约 128K，8B 也改用 GQA，预训练数据超过 15T token'
+    answer: [D, E]
+    explanation: |
+      **结论**：D、E 正确。
+
+      - A 错：Llama 3 发布时上下文为 8K，128K 要到同年 7 月的 Llama 3.1。
+      - B 错：Llama 3.1 405B 是**稠密**模型；「激活约 17B」是 2025 年 4 月 Llama 4 的 MoE 模型（Scout、Maverick）的特征。
+      - C 错：《The Llama 3 Herd of Models》写明，预训练主体用 8K 序列，长上下文是在预训练后期单独扩展的：从 8K 开始分六个阶段逐步加长到 128K，每个阶段要等短文本指标恢复、长文本「大海捞针」测试通过后再继续，该阶段约用了 800B token。一开始就用 128K 训练，注意力的平方开销会让计算代价过高，而且大多数文档本来就很短。
+      - D 对：Llama 2（2023 年 7 月）的训练数据比初代多约 40%，上下文翻倍到 4096；为了推理时的可扩展性，GQA 只用在较大的 34B（未公开发布）和 70B 上。
+      - E 对：Llama 3（2024 年 4 月）改用基于 tiktoken 的约 128K 词表，压缩率更高；8B 和 70B 都使用 GQA；预训练超过 15T token，发布时上下文为 8K。
+
+      Llama 系列的演进思路很典型：架构基本稳定（Pre-RMSNorm、SwiGLU、RoPE），主要靠更多更好的数据、更大的词表、GQA 与更长的上下文来提升；直到 Llama 4 才转向 MoE 与原生多模态。
+    source: 'Llama 2 arXiv:2307.09288；The Llama 3 Herd of Models arXiv:2407.21783'
+
+  - id: LLM-MODEL-013
+    type: judge
+    difficulty: 1
+    frequency: 2
+    points: [Llama系列]
+    tags: [Llama 4, MoE, 早期融合]
+    question: |
+      Llama 4（2025 年 4 月）是 Llama 系列首次采用 MoE 的版本：Scout 与 Maverick 每个 token 都激活约 17B 参数，总参数分别约为 109B 与 400B；它们是原生多模态模型，用早期融合（early fusion）把文本和视觉 token 送入同一个骨干网络。
+    answer: true
+    explanation: |
+      **正确**。Llama 1～3 都是稠密模型，Llama 4 首次改用 MoE：
+      - **Scout**：16 个专家，总参数约 109B，宣称支持 1000 万 token 上下文（预训练与后训练在 256K 长度上进行），Int4 量化后可放进单张 H100；
+      - **Maverick**：128 个路由专家加 1 个共享专家，每个 token 走共享专家和 1 个路由专家，总参数约 400B，上下文 1M；稠密层与 MoE 层交替排列；
+      - **原生多模态**：早期融合，文本与视觉 token 进入同一骨干，联合预训练文本、图像、视频数据；
+      - **iRoPE**：部分注意力层不使用位置编码，与使用 RoPE 的层交错，配合推理时的注意力温度缩放，提升长度泛化能力；
+      - 另有约 2 万亿参数的教师模型 Behemoth（发布时仍在训练），Maverick 由它协同蒸馏而来。
+
+      许可仍是自定义的 Llama 4 社区许可（7 亿月活条款、「Built with Llama」标注、衍生模型名以 Llama 开头等）。
+    source: 'Meta 博客 The Llama 4 herd（2025-04-05）；Llama-4-Scout 模型卡（Hugging Face）'
+
+  - id: LLM-MODEL-014
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [Qwen系列]
+    tags: [Qwen3, QK-Norm]
+    question: |
+      根据 Qwen3 技术报告（2025 年 5 月），下列关于 Qwen3 相对上一代所做改变的说法，正确的是：
+    options:
+      A: '全系列改用 DeepSeek 提出的 MLA 注意力，KV Cache 降到 Qwen2.5 的十分之一左右'
+      B: 'MoE 模型沿用了 Qwen2.5-MoE 的共享专家设计，并以每个 token 激活 2 个专家为主'
+      C: '稠密模型去掉了 QKV 投影上的偏置，并在注意力中引入 QK-Norm 以稳定训练'
+      D: '为配合思考模式的推出，Qwen3 把开放权重的许可从 Apache 2.0 改为仅限研究用途'
+    answer: C
+    explanation: |
+      **结论**：Qwen3 在 Qwen2.5 的骨架（GQA、SwiGLU、RoPE、Pre-RMSNorm）上做了「稳定性 + 数据 + 稀疏化」三方面的调整。
+
+      - **结构**：去掉 Qwen2 系列在 QKV 投影上使用的偏置，加入 QK-Norm，约束注意力 logits 的尺度，提升大规模训练的稳定性。
+      - **数据**：约 36T token，是 Qwen2.5（18T）的两倍；语言从 29 种扩展到 119 种。预训练分三个阶段：约 30T token 的通用阶段、约 5T 高质量 token 的推理强化阶段、上下文 32K 的长文本阶段（RoPE 基频从 1 万调到 100 万），推理时再配合 YaRN 等把可用长度扩大 4 倍。
+      - **MoE**：Qwen3-30B-A3B 与 Qwen3-235B-A22B 每层 128 个专家、每个 token 激活 8 个，**不使用**共享专家，并采用全局批次级的负载均衡损失。
+
+      - A 错：Qwen3 用的是 GQA。
+      - B 错：Qwen3 的 MoE 去掉了共享专家，每个 token 激活 8 个专家。
+      - D 错：Qwen3 全部开放权重模型都以 Apache 2.0 发布，比 Qwen2.5（3B 与 72B 另有许可）更宽松。
+    source: 'Qwen3 Technical Report arXiv:2505.09388'
+
+  - id: LLM-MODEL-015
+    type: short
+    difficulty: 2
+    frequency: 3
+    points: [Qwen系列]
+    tags: [Qwen2.5, Qwen3, Qwen3-Next, Qwen3.5]
+    question: |
+      请梳理 Qwen 系列从 Qwen2.5 到 Qwen3、再到 Qwen3-Next 与 Qwen3.5 的主要变化，并分析每一步背后的动机。
+    answer: |
+      1. **Qwen2.5（2024 年 9 月）**：稠密模型 0.5B～72B，预训练数据扩到约 18T token；沿用 Qwen2 起全系列使用的 GQA；大部分模型为 Apache 2.0，3B 与 72B 另有许可。主线是「数据更多、更好」。
+      2. **Qwen3（2025 年 4—5 月）**：
+         - 数据翻倍到约 36T token，语言扩到 119 种；分通用、推理强化、长上下文三个阶段预训练。
+         - 结构上去掉 QKV 偏置、加入 QK-Norm，提升训练稳定性。
+         - 推出 MoE（30B-A3B、235B-A22B），128 个专家选 8 个，不设共享专家。
+         - 同一模型支持思考与非思考两种模式，可设置思考预算。
+         - 全部改为 Apache 2.0。
+         - 动机：进入推理模型时代，需要在效果与成本之间灵活取舍；用 MoE 降低推理成本；用更宽松的许可扩大生态。
+      3. **Qwen3-Next（2025 年 9 月）**：80B 总参数、每个 token 激活约 3B；层间采用「3 层 Gated DeltaNet（线性注意力）+ 1 层门控注意力」的混合布局；512 个专家中每个 token 激活 10 个路由专家和 1 个共享专家；训练中加入 MTP；原生上下文 256K。官方称它以约十分之一的训练成本超过 Qwen3-32B-Base，32K 以上上下文的推理吞吐提升 10 倍以上。动机：长上下文与 Agent 场景中，注意力的平方复杂度和 KV Cache 成为瓶颈，于是用线性注意力层承担大部分计算，保留少量全注意力层负责精确检索；同时用更高的稀疏度压低每个 token 的计算量。
+      4. **Qwen3.5（2026 年 2 月）**：旗舰模型 397B-A17B 沿用同样的混合布局（60 层，15 组「3 层 Gated DeltaNet + 1 层门控注意力」）与高稀疏 MoE；开放权重模型带视觉编码器，成为原生多模态模型；原生上下文 262K，可扩展到约 100 万；继续使用 MTP，以 Apache 2.0 发布。动机：把在 Qwen3-Next 上验证过的高效架构推向主力系列，并统一文本与视觉。
+      5. **总体趋势**：数据规模持续扩大 → 稀疏化（MoE 稀疏度越来越高）→ 注意力结构从全注意力走向混合线性注意力 → 原生多模态；许可越来越宽松。
+    rubric:
+      - '说清 Qwen2.5 到 Qwen3 在数据、结构（QK-Norm）、MoE、思考模式、许可上的变化（3 分）'
+      - '说清 Qwen3-Next 的混合注意力与高稀疏 MoE 设计（3 分）'
+      - '说明 Qwen3.5 的变化（混合架构进入主力系列、原生多模态）（2 分）'
+      - '能分析每一步的动机并总结趋势（2 分）'
+    explanation: |
+      **常见失分点**：把 Qwen3 的 MoE 说成有共享专家（Qwen3-Next 才重新引入 1 个共享专家）；以为混合架构中的线性注意力层也需要随长度增长的 KV Cache；只罗列参数量，讲不出每次改变要解决什么问题。模型版本更新很快，回答时最好注明时间，并区分官方报告的数据与第三方的评价。
+    source: 'Qwen2.5 博客；Qwen3 Technical Report arXiv:2505.09388；Qwen3-Next 与 Qwen3.5 模型卡（Hugging Face）'
+
+  - id: LLM-MODEL-016
+    type: single
+    difficulty: 2
+    frequency: 3
+    points: [DeepSeek系列]
+    tags: [DeepSeek-V2, DeepSeek-V3, MLA, DSA]
+    question: |
+      下列关于 DeepSeek 系列各项关键技术「首次出现在哪个版本」的说法，正确的是：
+    options:
+      A: 'MLA 首次出现在 DeepSeek-V3，DeepSeek-V2 仍使用 GQA，靠 MoE 降低推理成本'
+      B: 'DeepSeek-R1 在 DeepSeek-V3 的基础上，把注意力换成了稀疏注意力 DSA'
+      C: 'DeepSeek-V3 只在推理阶段使用 FP8 量化，训练全程仍使用 BF16 混合精度'
+      D: 'MLA 与 DeepSeekMoE 在 V2 中一起使用；无辅助损失负载均衡与 MTP 在 V3 中引入'
+    answer: D
+    explanation: |
+      **结论**：DeepSeek 的技术是逐代叠加的。
+
+      - **DeepSeek-V2（2024 年 5 月）**：总参数 236B、激活 21B，首次提出 MLA（压缩 KV Cache），并与 DeepSeekMoE（细粒度专家 + 共享专家，最早在 2024 年 1 月的 DeepSeekMoE 16B 中提出）组合使用，支持 128K 上下文。
+      - **DeepSeek-V3（2024 年 12 月）**：671B / 37B，新增无辅助损失的负载均衡、MTP 训练目标，并首次在超大规模上验证 FP8 混合精度**训练**。
+      - **DeepSeek-R1（2025 年 1 月）**：在 V3-Base 上用大规模强化学习训练推理能力，架构与 V3 相同，MIT 许可。
+      - **V3.1（2025 年 8 月）**：一个模型同时支持思考与非思考模式。
+      - **V3.2-Exp（2025 年 9 月）**：在 V3.1-Terminus 的基础上续训，引入 DeepSeek 稀疏注意力（DSA）。
+      - **V4（2026 年 4 月预览）**：1M 上下文，采用 CSA 与 HCA 两种压缩注意力的混合结构。
+
+      - A 错：MLA 在 V2 就已提出。
+      - B 错：R1 的架构与 V3 相同，DSA 出现在 V3.2-Exp。
+      - C 错：V3 的亮点之一正是 FP8 混合精度训练。
+    source: 'DeepSeek-V2 arXiv:2405.04434；DeepSeek-V3 arXiv:2412.19437；DeepSeek-V3.2 arXiv:2512.02556；DeepSeek-V4 模型卡'
+
+  - id: LLM-MODEL-017
+    type: calc
+    difficulty: 2
+    frequency: 3
+    points: [DeepSeek系列]
+    tags: [DeepSeek-V3, 训练成本]
+    question: |
+      DeepSeek-V3 技术报告给出：每训练 1T token 需要 18 万（180K）H800 GPU 小时，预训练共 14.8T token；之后的上下文扩展用了 119K GPU 小时，后训练用了 5K GPU 小时；按每 GPU 小时 2 美元的租用价格折算成本。
+      (1) 预训练需要多少 GPU 小时？在 2048 张 H800 上约需多少天？
+      (2) 训练总成本约多少美元？
+      (3) 这个数字常被简化为「DeepSeek-V3 只花了 557 万美元」，这种说法遗漏了什么？
+    answer: '(1) 2664K GPU 小时，约 54 天；(2) 2788K GPU 小时 × 2 美元 ≈ 557.6 万美元；(3) 它只是正式训练一次的 GPU 租用价，不含前期研究与消融实验、数据、人力和集群购置等成本'
+    explanation: |
+      **(1)** $14.8\times180\text{K}=2664\text{K}$ GPU 小时。在 2048 张卡上：$2{,}664{,}000/2048\approx1301$ 小时 $\approx54$ 天，与报告中「不到两个月完成预训练」一致；每 1T token 约 $180\text{K}/2048\approx88$ 小时 $\approx3.7$ 天。
+
+      **(2)** 总计 $2664\text{K}+119\text{K}+5\text{K}=2788\text{K}$ GPU 小时，乘以 2 美元得 **557.6 万美元**。
+
+      **(3)** 报告本身就注明，这一成本只包括 DeepSeek-V3 的正式训练，不包括此前在架构、算法、数据上的研究与消融实验。此外也不含数据采集与处理、人员、以及拥有 2048 张 H800 规模集群的资本开销。把它理解为「同等规模的一次正式训练，按租卡价格计算的算力账单」才准确。
+
+      **延伸**：这个数字之所以低，关键在于 MoE 使每个 token 只激活 37B 参数（按 $6ND$ 估算，计算量远小于同等总参数的稠密模型），FP8 训练、DualPipe 与通信重叠提高了硬件利用率，训练中也没有出现需要回滚的损失尖峰。
+    source: 'DeepSeek-V3 Technical Report arXiv:2412.19437（表 1）'
+
+  - id: LLM-MODEL-018
+    type: short
+    difficulty: 3
+    frequency: 3
+    points: [DeepSeek系列]
+    tags: [DeepSeek-V3, MLA, MTP, FP8, DualPipe]
+    question: |
+      DeepSeek-V3（2024 年 12 月）以较低的训练成本达到了当时开放权重模型的领先水平。请从模型架构、训练目标、训练效率（精度与并行）三个方面说明它的关键技术选择，以及每项选择要解决的问题。
+    answer: |
+      1. **模型架构**：
+         - **MLA**：把 K、V 压缩成低秩潜向量，每层每 token 只缓存 512 + 64 维，解决长上下文推理时 KV Cache 过大、Decode 受带宽限制的问题。
+         - **DeepSeekMoE**：每个 MoE 层 1 个共享专家 + 256 个细粒度路由专家，每个 token 激活 8 个，总参数 671B、激活 37B，用较小的计算量换取大容量。
+         - **无辅助损失负载均衡**：给每个专家一个只用于选择的偏置，按负载动态调整，避免辅助损失干扰主目标；另有系数极小的序列级平衡损失。
+         - **节点受限路由**：每个 token 最多发往 4 个节点，控制跨节点 All-to-All 的通信量。
+      2. **训练目标**：**MTP**（深度 1，即额外预测再往后一个 token），让训练信号更密集，可能促使模型提前规划；推理时可以直接丢弃，也可以拿来做投机解码的草稿。
+      3. **训练效率**：
+         - **FP8 混合精度训练**：细粒度（分块）缩放量化配合高精度累加，首次在超大规模模型上验证可行，相对 BF16 的损失误差小于 0.25%，显著节省计算与显存。
+         - **DualPipe 流水线并行**：前向与反向的计算和通信相互重叠，减少流水线气泡，掩盖专家并行带来的跨节点通信；配合定制的 All-to-All 通信内核。
+         - **并行策略**：16 路流水线并行、跨 8 个节点的 64 路专家并行、ZeRO-1 数据并行，通过节省显存做到训练中不使用代价较高的张量并行。
+      4. **结果**：14.8T token 的预训练用约 2.664M H800 GPU 小时完成，全程没有出现不可恢复的损失尖峰，也没有回滚；后训练中还从 R1 系列蒸馏了推理能力。
+    rubric:
+      - '架构：MLA、细粒度 MoE + 共享专家、无辅助损失负载均衡，并说明各自目的（3 分）'
+      - '训练目标：MTP 及其在推理时的处理方式（2 分）'
+      - '训练效率：FP8 混合精度训练、DualPipe / 通信重叠或并行策略（3 分）'
+      - '能把技术选择与成本或稳定性结果联系起来（2 分）'
+    explanation: |
+      **常见失分点**：把 MLA 说成量化或省参数；把 MTP 说成推理时必须保留的模块；认为 FP8 只用于推理；只罗列名词，不说每项技术解决什么问题。这类题常接着追问「为什么激活 37B 却要部署 671B 的显存」「MTP 和投机解码是什么关系」，可以提前准备。
+    source: 'DeepSeek-V3 Technical Report arXiv:2412.19437'
+
+  - id: LLM-MODEL-019
+    type: judge
+    difficulty: 2
+    frequency: 1
+    points: [DeepSeek系列, 上下文长度演进]
+    tags: [DeepSeek-V4, 长上下文, 压缩注意力]
+    question: |
+      DeepSeek-V4（2026 年 4 月发布预览版）支持 1M token 上下文。官方模型卡称，在 1M 上下文下，V4-Pro 的单 token 推理 FLOPs 只有 DeepSeek-V3.2 的 27%，KV Cache 只有其 10%，这主要得益于由压缩稀疏注意力（CSA）与重度压缩注意力（HCA）组成的混合注意力结构。
+    answer: true
+    explanation: |
+      **正确**。据 DeepSeek-V4 的 Hugging Face 模型卡：
+      - **规模**：V4-Pro 总参数 1.6T、激活 49B；V4-Flash 总参数 284B、激活 13B；都支持 1M 上下文；
+      - **注意力**：CSA 与 HCA 组成的混合注意力，面向长上下文效率；1M 上下文下 V4-Pro 的单 token 推理 FLOPs 约为 V3.2 的 27%，KV Cache 约为 10%；
+      - **其他**：用流形约束超连接（mHC）加强残差连接，使用 Muon 优化器，预训练超过 32T token；思考与非思考模式合一；MIT 许可。
+
+      这条演进线可以串起来看：V2 / V3 用 MLA 压缩「每个 token 存多少」，V3.2 用 DSA 减少「每次读多少 token」，V4 再用压缩注意力的混合结构进一步降低超长上下文下的计算与缓存。上下文长度的竞争，本质上是在比谁能把长上下文的计算和显存成本降下来。
+    source: 'DeepSeek-V4-Pro 模型卡（Hugging Face, deepseek-ai/DeepSeek-V4-Pro）'
+
+  - id: LLM-MODEL-020
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [Mistral与Mixtral]
+    tags: [Mistral 7B, 滑动窗口注意力, Apache 2.0]
+    question: |
+      Mistral 7B（2023 年 9 月）发布后引起了广泛关注。下列描述与其论文和发布信息相符的是：
+    options:
+      A: '以 Apache 2.0 开放权重，结合 GQA 与滑动窗口注意力降低长序列的推理成本'
+      B: '它采用 MoE 架构：8 个前馈专家、每个 token 由路由选出 2 个，激活参数约 13B'
+      C: '它只以仅限研究用途的许可发布，商业使用需向 Mistral AI 另行申请授权'
+      D: '它用 MLA 压缩 KV Cache，并直接在 128K 长度的序列上完成了预训练'
+    answer: A
+    explanation: |
+      **结论**：Mistral 7B 的卖点是「小而强、许可宽松、推理便宜」。
+
+      论文报告它在全部评测基准上超过 Llama 2 13B，在推理、数学和代码上超过 Llama 1 34B；结构上用 GQA 加快推理，用窗口为 4096 的滑动窗口注意力配合滚动缓存，降低长序列的计算与显存；权重以 Apache 2.0 发布。这让「7B 级模型也能实用」成为共识，也推动了大量基于它的微调模型。
+
+      - B 错：这是 2023 年 12 月的 Mixtral 8×7B。
+      - C 错：Mistral 7B 使用 Apache 2.0，可以商用。
+      - D 错：MLA 是 DeepSeek-V2 提出的；Mistral 7B 用的是 GQA 加滑动窗口注意力。
+    source: 'Mistral 7B arXiv:2310.06825'
+
+  - id: LLM-MODEL-021
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [Mistral与Mixtral, 开放权重与许可证]
+    tags: [Mixtral, 许可, Mistral Large 3]
+    question: |
+      关于 Mistral AI 的模型与许可策略，下列说法**正确**的有：
+    options:
+      A: '2025 年 12 月发布的 Mistral Large 3 是 MoE 模型，以 Apache 2.0 许可开放权重'
+      B: 'Mistral 7B 与 Mixtral 8×7B 都以 Apache 2.0 许可发布'
+      C: 'Mixtral 8×7B 以 32K 上下文训练，论文报告它在多数评测上达到或超过 Llama 2 70B 与 GPT-3.5'
+      D: 'Mixtral 的指令版只做了监督微调，没有使用任何偏好优化方法'
+      E: 'Mistral 发布的所有开放权重模型一直都采用 Apache 2.0，从未使用过其他许可'
+    answer: [A, B, C]
+    explanation: |
+      **结论**：A、B、C 正确。
+
+      - A 对：Mistral 3 系列中的 Mistral Large 3 是总参数约 675B、激活约 41B 的 MoE 模型，以 Apache 2.0 开放权重。
+      - B 对：两者都以 Apache 2.0 发布，可自由商用。
+      - C 对：Mixtral 论文称它在所评测的基准上达到或超过 Llama 2 70B 与 GPT-3.5，数学、代码和多语言任务上大幅领先 Llama 2 70B；每个 token 只激活约 13B 参数，推理成本远低于 70B 稠密模型。
+      - D 错：Mixtral 8×7B – Instruct 使用了监督微调加直接偏好优化（DPO）。
+      - E 错：Mistral 的许可并不统一。例如 Mistral Large 2（2024 年 7 月）使用 Mistral Research License，商用需另行授权；Codestral 使用非生产用途许可。之后 Mistral Small 3（2025 年 1 月）等又回到 Apache 2.0。
+
+      启示：同一家厂商的不同模型可能采用不同许可，选型时要逐个模型核对许可文本，不能凭厂商的「开源」形象下结论。
+    source: 'Mixtral of Experts arXiv:2401.04088；Mistral AI 发布信息（Mistral Large 2、Mistral 3）'
+
+  - id: LLM-MODEL-022
+    type: single
+    difficulty: 2
+    frequency: 1
+    points: [Gemma系列]
+    tags: [Gemma 3, SigLIP, Pan & Scan]
+    question: |
+      关于 Gemma 3（2025 年 3 月）的多模态设计，下列说法正确的是：
+    options:
+      A: '全系列（含 1B）都支持图像输入，按原生分辨率切 patch，视觉 token 数随图像面积线性增长'
+      B: '4B 以上共用冻结的 SigLIP 编码器，图像缩放到 896×896 后压缩成固定 256 个 token'
+      C: '视觉编码器与语言模型从头联合训练，没有使用任何预训练视觉模型，以保证模态对齐'
+      D: '图像通过插入的交叉注意力层注入语言模型，视觉 token 不占用语言模型的上下文长度'
+    answer: B
+    explanation: |
+      **结论**：Gemma 3 走的是「冻结的预训练视觉编码器 + 固定数量的视觉 token 拼接进序列」路线。
+
+      4B、12B、27B 共用同一个 SigLIP 编码器，约 4 亿参数，训练中保持冻结，输入固定为 896×896，输出经平均池化压缩成 256 个视觉 token，作为软 token 拼进文本序列。固定分辨率对长条形图片和小字不友好，于是推理时可选 Pan & Scan：把图像切成若干等大的块分别缩放、编码，代价是视觉 token 成倍增加。报告中 4B 模型在 DocVQA 上用 P&S 从 72.8 提升到 81.0。
+
+      - A 错：1B 模型是纯文本模型（上下文 32K）；每张图（或每个切块）固定 256 个 token，不随分辨率增长。
+      - C 错：视觉编码器是预训练好的 SigLIP，训练中保持冻结。
+      - D 错：视觉 token 直接拼进语言模型的输入序列，会占用上下文长度；用交叉注意力注入视觉信息的是 Flamingo、Llama 3.2 Vision 等模型。
+
+      其他相关事实：Gemma 3 的 4B、12B、27B 支持 128K 上下文，局部与全局注意力按 5:1 交替，用 QK-Norm 取代 Gemma 2 的软截断。
+    source: 'Gemma 3 Technical Report arXiv:2503.19786'
+
+  - id: LLM-MODEL-023
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [Gemma系列, 开放权重与许可证]
+    tags: [Gemma, Gemma 3n, 知识蒸馏]
+    question: |
+      关于 Gemma 系列，下列说法**正确**的有：
+    options:
+      A: 'Gemma 3 的所有规格都用知识蒸馏的方式训练，以教师模型的输出分布作为学习目标'
+      B: 'Gemma 1～3 代都采用 Apache 2.0 许可发布，可自由商用，没有额外的禁止用途政策'
+      C: 'Gemma 7B 有 16 个注意力头、头维度 256，注意力的总宽度 4096 大于它的隐藏维度 3072'
+      D: '第一代 Gemma 的 2B 用 MQA、7B 用标准多头注意力，两者头维度都是 256'
+      E: 'Gemma 3n 用逐层嵌入（PLE）减少常驻加速器的参数，E2B、E4B 表示有效参数约 2B、4B'
+    answer: [A, C, D, E]
+    explanation: |
+      **结论**：A、C、D、E 正确。
+
+      - A 对：Gemma 3 报告写明所有模型都用知识蒸馏训练：每个 token 从教师分布中采样 256 个 logits，学生学习教师在这些候选上的分布。
+      - B 错：Gemma 1～3（以及 3n 等）使用 Google 自定义的 Gemma Terms of Use，附带禁止用途政策；2026 年 4 月发布的 Gemma 4 才首次改用 Apache 2.0。
+      - C 对：$16\times256=4096>3072$。注意力的总宽度可以与隐藏维度不同，靠 Q、K、V 与输出投影在两者之间转换，所以读配置时不能想当然地用 $d/h$ 计算头维度。
+      - D 对：第一代 Gemma 于 2024 年 2 月发布，2B 只有 1 个 KV 头（MQA），7B 有 16 个 KV 头（MHA）；头维度都是 256，词表 256128，上下文 8192，使用 GeGLU、RMSNorm、RoPE，输入输出嵌入共享。
+      - E 对：Gemma 3n 面向端侧，逐层嵌入让大量嵌入参数不必常驻加速器，型号名中的 E2B、E4B 指有效（effective）参数量：它们的原始参数约 5B、8B，借助 PLE 等技术，运行时的显存占用与 2B、4B 模型相当；MatFormer 让大模型里嵌套着可单独使用的小模型。
+    source: 'Gemma arXiv:2403.08295；Gemma 3 arXiv:2503.19786；Gemma 3n 开发者指南；Gemma 4 发布博客（2026-04-02）'
+
+  - id: LLM-MODEL-024
+    type: single
+    difficulty: 3
+    frequency: 2
+    points: [Llama系列, DeepSeek系列, Qwen系列, Mistral与Mixtral]
+    tags: [模型辨识, MoE, 共享专家]
+    question: |
+      某开放权重模型的技术资料中有以下描述：(1) 稠密层与 MoE 层交替排列；(2) 每个 MoE 层有 128 个路由专家和 1 个共享专家，每个 token 除了经过共享专家，只被路由到 1 个路由专家；(3) 部分注意力层不使用位置编码，与使用 RoPE 的层交错排列；(4) 原生多模态，文本与视觉 token 早期融合进同一骨干。它最可能是：
+    options:
+      A: 'DeepSeek-V3'
+      B: 'Qwen3-235B-A22B'
+      C: 'Mixtral 8×7B'
+      D: 'Llama 4 Maverick'
+    answer: D
+    explanation: |
+      **结论**：这些特征都出自 Meta 对 Llama 4 Maverick 的介绍：稠密层与 MoE 层交替；128 个路由专家加 1 个共享专家，每个 token 走共享专家和 1 个路由专家；iRoPE（交错的无位置编码注意力层）；早期融合的原生多模态。
+
+      对比其他选项：
+      - **DeepSeek-V3**：注意力是 MLA；每个 MoE 层 1 个共享专家加 256 个路由专家，每个 token 激活 8 个；只有前 3 层是稠密 FFN，其余层都是 MoE；纯文本模型。
+      - **Qwen3-235B-A22B**：128 个专家、每个 token 激活 8 个，不设共享专家；GQA 加 RoPE；纯文本模型。
+      - **Mixtral 8×7B**：每层 8 个专家选 2 个，没有共享专家；纯文本模型。
+
+      辨识模型的技巧：先看注意力（MLA / GQA / 滑动窗口 / 混合线性注意力），再看 MoE 的专家数、激活数和共享专家，最后看位置编码与模态。这些「架构指纹」往往比参数量更能区分模型家族。
+    source: 'Meta 博客 The Llama 4 herd（2025-04-05）；DeepSeek-V3 arXiv:2412.19437；Qwen3 arXiv:2505.09388；Mixtral arXiv:2401.04088'
+
+  - id: LLM-MODEL-025
+    type: scenario
+    difficulty: 3
+    frequency: 3
+    points: [开源与闭源生态, 开放权重与许可证]
+    source: 'Qwen3 技术报告 arXiv:2505.09388；DeepSeek-V3 技术报告 arXiv:2412.19437；Open Source AI Definition 1.0（OSI）'
+    tags: [基座选型, 私有化部署]
+    question: |
+      一家金融科技公司计划建设两个大模型应用：(a) 面向内部研究员的「投研助手」，要阅读上百页的研报与公告并做多步推理；(b) 面向数百万客户的「智能客服」，高并发、对成本和延迟敏感。合规要求客户数据不能发送给境外的第三方服务；团队自有 16 张 H100（80 GB）。请从能力、合规、成本、可控性、许可证等角度分析闭源 API 与开放权重模型的取舍，给出你的选型方案，并说明如何验证。
+    answer: |
+      **1. 评估维度**
+      - **能力**：最强的闭源模型在复杂推理与长文档上往往仍有优势，但差距随版本变化很快，必须在自有评测集上实测，不能只看公开榜单。
+      - **合规与数据**：客户数据不得出境，客服必须私有化部署，或使用满足合规要求的境内托管服务；投研如果只处理公开研报，可以评估合规的 API，一旦涉及内部或客户数据，同样需要私有化。
+      - **成本**：API 按 token 计费，适合流量小、波动大的场景；高并发、稳定的流量下，自建推理的单位成本通常更低，但要算上 GPU 折旧、运维人力和利用率。
+      - **可控性**：开放权重可以微调（领域术语、话术与合规风格）、量化、约束解码，版本由自己掌握；闭源 API 升级或下线可能改变线上行为，还存在供应商锁定。
+      - **许可证**：Apache 2.0、MIT 最省心；自定义许可要核对月活门槛、使用政策、署名与命名要求，以及衍生模型的许可继承。
+      - **生态**：推理框架（vLLM、SGLang）与量化工具对候选模型的支持程度。
+
+      **2. 选型方案**
+      - **客服**：选一个许可宽松、激活参数较少的开放权重模型（中等规模的 MoE，或 7B～32B 的稠密模型），用客服对话做 SFT 或 LoRA，结合 RAG 接入知识库；FP8 或 INT4 量化后私有化部署，从 16 张卡中划出一部分专门承载高并发。
+      - **投研**：优先评估大规模开放权重 MoE 模型的私有化部署。例如 235B 级 MoE 用 BF16 约需 470 GB 显存，单机 8 卡可以放下；6710 亿参数级别的模型用 FP8 仅权重就约 671 GB，需要占用两台机器。若公开资料场景允许，可接入合规的闭源 API 作为补充，处理非敏感任务。
+      - **架构**：在应用与模型之间加一层模型网关，统一接口，按任务类型和数据敏感级别路由，便于随时替换或升级模型。
+
+      **3. 验证**
+      - 构建自有评测集：客服意图识别、话术合规、知识准确率；投研的长文档问答、财务计算、引用准确性。
+      - 比较候选模型的准确率、幻觉率、延迟、吞吐与每千次请求成本。
+      - 灰度上线，监控投诉率与人工接管率，定期用新版本模型回归评测。
+    rubric:
+      - '从能力、合规、成本、可控性、许可证中至少分析四个维度（4 分）'
+      - '针对两个应用分别给出合理选型，并做显存或成本的量级估算（3 分）'
+      - '提到许可证核查与模型网关、可替换性等工程设计（1 分）'
+      - '给出基于自有数据的评测与灰度验证方案（2 分）'
+    explanation: |
+      **常见失分点**：只说「开源便宜、闭源强」；忽视数据合规这一硬约束；不核对许可证就默认开放权重可以随意商用；不估算显存，给出放不下的方案；没有自有评测集，只引用公开榜单。
+
+  - id: LLM-MODEL-026
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [开源与闭源生态, 开放权重与许可证]
+    tags: [开放权重, OSI, 开源AI定义]
+    question: |
+      关于「开放权重（open weights）」与「开源（open source）」的区别，下列说法最准确的是：
+    options:
+      A: '权重可公开下载且允许商用，就符合 OSI 对开源 AI 的定义，代码与数据不在考虑范围内'
+      B: 'OSI《开源 AI 定义》要求以认可的条款提供参数、完整代码和足够详细的数据信息'
+      C: '按 OSI 的定义，开源 AI 必须公开全部原始训练数据，涉及版权的数据也不能例外'
+      D: '权重以 Apache 2.0 许可发布，就自动满足 OSI《开源 AI 定义》的全部要求'
+    answer: B
+    explanation: |
+      **结论**：「能下载权重」只说明是开放权重；OSI 意义上的开源 AI 要求使用、研究、修改、分享四项自由，并提供修改所需的「首选形式」：参数、代码、数据信息。
+
+      OSI 于 2024 年 10 月发布的《开源 AI 定义》1.0 列出了三项要求：
+
+      - **参数**：以 OSI 认可的条款提供权重等参数；
+      - **代码**：数据处理、训练、推理的完整源代码；
+      - **数据信息**：足够详细，让有经验的人能构建出实质等价的系统，包括数据来源、筛选、清洗方法；公开数据要列出获取途径。
+
+      逐项点评：
+      - A 错：能下载、可商用只说明是开放权重，开源 AI 还要求完整代码和数据信息；带有月活门槛、可接受使用政策的自定义许可（如 Llama 社区许可）更是限制了「任意用途使用」的自由，不满足开源定义。
+      - C 错：定义要求的是「数据信息」，对无法公开的数据允许只做描述，并不强制公开全部原始数据。
+      - D 错：Apache 2.0 解决了权重的许可问题，但大多数开放权重模型并不公开训练代码与数据信息。
+
+      这就是为什么业界常说 Qwen3、Mistral 等是「许可宽松的开放权重模型」，而 OLMo（Ai2）、Pythia（EleutherAI）这类同时公开数据、代码和中间检查点的模型才更接近「完全开源」。
+    source: 'Open Source AI Definition 1.0（OSI，https://opensource.org/ai/open-source-ai-definition）'
+
+  - id: LLM-MODEL-027
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [开放权重与许可证, Llama系列]
+    tags: [Llama 社区许可]
+    question: |
+      某团队基于 Llama 3.1 8B 微调了一个客服模型，准备公开发布权重，并在自家 App 中使用。按照 Llama 3.1 社区许可，下列说法正确的是：
+    options:
+      A: '模型名称要以「Llama」开头，并显著标注「Built with Llama」'
+      B: '许可禁止使用 Llama 的输出训练其他模型，所以团队不能用它生成数据来训练自研模型'
+      C: '7 亿月活门槛以下的使用者属于免责范围，不必遵守 Meta 的可接受使用政策'
+      D: '这一许可与 Apache 2.0 等价，再分发时只需保留版权声明和许可副本即可'
+    answer: A
+    explanation: |
+      **结论**：Llama 3.1 社区许可允许商用和再分发，但附带署名、命名、使用政策和月活门槛等条件。
+
+      - A 对：许可 1.b.i 要求再分发时显著标注「Built with Llama」；用 Llama 材料或其输出创建、训练、微调并对外发布或提供的模型，名称开头要包含「Llama」；此外还要附带许可副本和规定的 Notice 文本。
+      - B 错：最早的 Llama 3 许可确实有「不得使用输出改进其他大语言模型」的条款；Llama 3.1 起改为允许，但附带上述命名要求。
+      - C 错：可接受使用政策对所有使用者都适用；7 亿月活是另一个条件：发布时月活超过 7 亿的企业需要向 Meta 单独申请许可。
+      - D 错：Apache 2.0 没有使用政策、月活门槛和命名要求，两者差别很大。这也是 Llama 被称为「开放权重」而非 OSI 意义上开源的原因之一。
+
+      实务建议：上线前把基座模型的许可条款逐条列成清单，由法务确认；不同小版本（3、3.1、3.2、3.3、4）的条款有差异，不能混用结论。
+    source: 'Llama 3.1 Community License；Llama 3 License（meta-llama/llama3 仓库）'
+
+  - id: LLM-MODEL-028
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [开放权重与许可证]
+    tags: [Apache 2.0, MIT, 可接受使用政策]
+    question: |
+      关于常见许可在模型权重上的使用，下列说法**正确**的有：
+    options:
+      A: 'Apache 2.0 含明确的专利授权条款（发起专利诉讼则授权终止），MIT 没有明确的专利条款'
+      B: 'Apache 2.0 与 MIT 都允许商用、修改和再分发，都不是要求衍生作品同样开源的 copyleft 许可'
+      C: 'Llama 等自定义许可附带使用政策、限制某些用途，这是它们不被视为 OSI 开源的原因之一'
+      D: '基于 Apache 2.0 模型微调得到的新模型，再分发时必须同样以 Apache 2.0 开放权重'
+      E: '采用 MIT 许可的 DeepSeek-R1，用它生成的数据蒸馏出的任何模型，都必须以 MIT 许可发布'
+    answer: [A, B, C]
+    explanation: |
+      **结论**：A、B、C 正确。
+
+      - A 对：这是 Apache 2.0 与 MIT 最主要的区别之一，也是很多企业更偏好 Apache 2.0 的原因。
+      - B 对：两者都是宽松许可，只要求保留许可与版权声明等，不要求衍生作品开源。
+      - C 对：Llama、Gemma（1～3 代）这类自定义许可通常附带可接受使用政策或禁止用途政策，限制了「任意用途使用」的自由，而 OSI 的开源定义要求不得有用途歧视。
+      - D 错：Apache 2.0 不是 copyleft，微调后的模型可以闭源使用，也可以换别的许可发布；再分发时需要附上许可副本、保留原有的版权与 NOTICE 信息，并在修改过的文件中注明已修改。
+      - E 错：MIT 同样不是 copyleft，不会「传染」给用其输出训练的模型。真正需要注意的是蒸馏所用**基座**的许可：例如 DeepSeek-R1-Distill-Llama-70B 继承 Llama 3.3 的许可。
+
+      常见代表：Apache 2.0（Qwen3、Mistral 7B、gpt-oss、Gemma 4）；MIT（DeepSeek-R1、DeepSeek-V4）；自定义许可（Llama 系列、Gemma 1～3、Qwen2.5-72B）。
+    source: 'Apache License 2.0；MIT License；Open Source AI Definition 1.0'
+
+  - id: LLM-MODEL-029
+    type: judge
+    difficulty: 2
+    frequency: 2
+    points: [开放权重与许可证, DeepSeek系列]
+    tags: [DeepSeek-R1, 蒸馏模型, 许可继承]
+    question: |
+      DeepSeek-R1 以 MIT 许可发布，因此 DeepSeek-R1-Distill-Llama-70B 等全部蒸馏模型也只受 MIT 许可约束，使用时无需考虑基座模型原有的许可。
+    answer: false
+    explanation: |
+      **错误**。DeepSeek-R1 本身（代码与权重）采用 MIT 许可，并明确允许商用、修改以及用于蒸馏训练其他模型。但蒸馏模型是在别人的基座上微调得到的，基座原有的许可仍然有效。R1 的模型卡写明：
+      - DeepSeek-R1-Distill-Qwen-1.5B / 7B / 14B / 32B 来自 Qwen2.5 系列，原许可为 Apache 2.0；
+      - DeepSeek-R1-Distill-Llama-8B 来自 Llama3.1-8B-Base，受 Llama 3.1 许可约束；
+      - DeepSeek-R1-Distill-Llama-70B 来自 Llama3.3-70B-Instruct，受 Llama 3.3 许可约束。
+
+      所以使用 Llama 系的蒸馏模型，仍要遵守 Llama 社区许可的署名、命名、使用政策与月活门槛等条款。判断一个模型的许可，要沿着「基座 → 微调 / 蒸馏 → 发布」的链条逐层核对。
+    source: 'DeepSeek-R1 模型卡（Hugging Face, deepseek-ai/DeepSeek-R1）'
+
+  - id: LLM-MODEL-030
+    type: single
+    difficulty: 2
+    frequency: 2
+    points: [规模与涌现能力]
+    tags: [思维链, 模型规模]
+    question: |
+      Wei 等（2022）提出思维链（Chain-of-Thought）提示时，在 LaMDA、GPT-3、PaLM 等不同规模的模型上做了实验。关于模型规模与思维链效果的关系，论文的发现是：
+    options:
+      A: '思维链对各种规模的模型都有稳定提升，小模型因为基础能力弱，提升幅度反而最大'
+      B: '思维链只对经过指令微调或 RLHF 的对话模型有效，对少样本提示的预训练模型无效'
+      C: '收益主要出现在约千亿参数量级的模型上，小模型的推理链通顺却不合逻辑，效果甚至更差'
+      D: '思维链的效果与模型规模关系不大，主要取决于提示中推理示例的数量和质量'
+    answer: C
+    explanation: |
+      **结论**：论文把思维链推理称为一种「随模型规模涌现的能力」。
+
+      实验中，思维链提示对小模型没有正面作用，只有在约 1000 亿参数及以上的模型上才明显提升算术、常识和符号推理；PaLM 540B 加思维链提示在 GSM8K 上达到了当时的最好成绩。小模型往往能写出看似通顺、实则错误的推理步骤，反而拉低准确率。
+
+      - A 错：方向说反了。
+      - B 错：论文中的模型都是用少样本示例直接提示的预训练模型。
+      - D 错：同样数量的示例，在不同规模的模型上效果差异巨大。
+
+      **注意时代背景**：这是对 2022 年「基座模型 + 少样本提示」的观察。之后，人们用大模型生成的推理数据蒸馏、或用强化学习训练长思维链，让几十亿参数的小模型也具备了不错的推理能力。「涌现」的门槛与训练方法和数据密切相关，不是固定的参数量阈值。
+    source: 'Chain-of-Thought Prompting Elicits Reasoning in Large Language Models arXiv:2201.11903'
+
+  - id: LLM-MODEL-031
+    type: multiple
+    difficulty: 2
+    frequency: 2
+    points: [规模与涌现能力]
+    tags: [小模型, 数据质量]
+    question: |
+      「参数规模不是一切」。下列事实中，能说明在参数量相近甚至更小的情况下，依靠数据与训练方法也能大幅提升能力的有：
+    options:
+      A: 'GPT-3 论文发现，在少样本设定下模型越小，从上下文示例中获益越多，少样本与零样本差距越大'
+      B: 'Mistral 7B 的论文报告它在所有评测基准上超过 Llama 2 13B'
+      C: 'Chinchilla 缩放律表明，给定算力时参数越少、训练 token 越多，模型效果就越好'
+      D: 'phi-3-mini（3.8B）靠精选网页与合成数据训练，技术报告称其综合表现可比肩 GPT-3.5'
+      E: 'LLaMA 论文报告，LLaMA-13B 在大多数基准上超过 GPT-3（175B）'
+    answer: [B, D, E]
+    explanation: |
+      **结论**：B、D、E 正确。
+
+      - A 错：GPT-3 论文的结论相反，模型越大，越能有效利用上下文中的示例，少样本与零样本之间的差距随规模扩大。
+      - B 对：Mistral 7B 的提升来自更好的数据与训练，加上 GQA、滑动窗口等工程设计。
+      - C 错：Chinchilla 给出的是计算最优的配比（约每个参数 20 个 token），参数过少同样会欠佳，并非越小越好；而且小模型的容量有限，知识密集、长链推理等任务上仍与大模型有明显差距；数据与方法能大幅提高同等规模下的上限，但不能消除规模的作用。
+      - D 对：phi-3-mini 用约 3.3T token 训练，技术报告称其综合表现可与 Mixtral 8×7B、GPT-3.5 相比，MMLU 约 69%、MT-bench 约 8.38，并强调提升主要来自经过严格筛选的网页数据与合成数据；它小到可以在手机上运行。
+      - E 对：LLaMA-13B 只用公开数据训练了 1T token，参数量不到 GPT-3 的十分之一。
+
+      背后的道理：计算最优的缩放律之外，推理成本也很重要。在更多高质量 token 上「过训练」小模型、从大模型蒸馏，是近年小模型进步的主要来源。
+    source: 'Mistral 7B arXiv:2310.06825；Phi-3 Technical Report arXiv:2404.14219；LLaMA arXiv:2302.13971；GPT-3 arXiv:2005.14165'
+
+  - id: LLM-MODEL-032
+    type: single
+    difficulty: 1
+    frequency: 2
+    points: [上下文长度演进]
+    source: 'OpenAI, New models and developer products announced at DevDay（2023-11-06）；Google, Our next-generation model: Gemini 1.5（2024-02-15）；Meta, The Llama 4 herd（2025-04-05）'
+    tags: [GPT-4 Turbo, Gemini 1.5, Llama 4]
+    question: |
+      下列关于主流模型上下文长度演进的说法，正确的是：
+    options:
+      A: 'GPT-3（2020 年）借助交替的稀疏注意力，把上下文长度扩展到了 32K token'
+      B: 'Llama 2（2023 年 7 月）原生支持 128K 上下文，是首个达到这一长度的开放权重模型'
+      C: 'Llama 4 Scout 宣称支持 1000 万 token 上下文，是直接在该长度的序列上预训练得到的'
+      D: 'Gemini 1.5 Pro（2024 年 2 月）把上下文推进到 100 万 token 级别'
+    answer: D
+    explanation: |
+      **结论**：2023 年底到 2024 年初，主流模型的上下文从几千、几万跃升到十万、百万级别。
+
+      - A 错：GPT-3 的上下文是 2048；它确实交替使用稠密与局部带状稀疏注意力，但没有借此扩展上下文长度。
+      - B 错：Llama 2 是 4096，128K 要到 2024 年 7 月的 Llama 3.1。
+      - C 错：Meta 称 Scout 在 256K 长度上完成预训练和后训练，1000 万的支持依靠 iRoPE 等长度泛化设计。宣称能处理的长度，与训练长度、实际有效长度都是不同的概念。
+      - D 对：GPT-4 Turbo 在 2023 年 11 月发布，支持 128K；同月 Claude 2.1 支持 200K；Gemini 1.5 Pro 在 2024 年 2 月发布，上下文达到 100 万 token。
+
+      之后，开放权重模型也陆续支持 128K 到 1M 的上下文。但标称长度不等于有效长度：在 RULER 等需要多跳检索、聚合的评测上，很多模型的性能会随长度明显下降，选型时要用接近真实任务的长文本评测验证。
+
+  - id: LLM-MODEL-033
+    type: short
+    difficulty: 3
+    frequency: 2
+    points: [上下文长度演进, Llama系列, DeepSeek系列, Qwen系列]
+    tags: [长上下文, YaRN, 继续预训练]
+    question: |
+      从 2K 到 128K 乃至 1M，大模型的上下文长度增长依赖哪些技术进步？请以 Llama 3.1、DeepSeek-V3、Qwen3 为例，说明它们分别如何把上下文扩展到 128K；并说明标称上下文长度与实际可用能力之间可能存在的差距。
+    answer: |
+      1. **技术基础**：
+         - 位置编码：从可学习的绝对位置编码转向 RoPE，配合调大基频（ABF）、位置插值、NTK、YaRN 等方法扩展长度；
+         - 注意力实现：FlashAttention 让注意力的额外显存从 $O(T^2)$ 降到 $O(T)$；训练时用上下文并行（如 Ring Attention）把长序列切到多张卡上；
+         - 缓存与结构：GQA、MLA、滑动窗口或局部 / 全局交替、混合线性注意力、稀疏注意力，压低长上下文推理的 KV Cache 与计算量；
+         - 数据与训练：主体预训练用较短的序列，最后再用长文本做分阶段的继续训练。
+      2. **三个例子**：
+         - **Llama 3.1**：主体预训练用 8K，之后分六个阶段逐步加长到 128K，每个阶段等短文本能力恢复、长文本检索通过后再加长，长上下文阶段约用 800B token。
+         - **DeepSeek-V3**：预训练用 4K，之后用 YaRN 分两个阶段（各 1000 步）扩展：4K → 32K → 128K。
+         - **Qwen3**：预训练的长上下文阶段把 RoPE 基频从 1 万调到 100 万（ABF），在 32K 长度上训练；推理时再用 YaRN 与双块注意力（DCA）把可用长度扩大到 4 倍，即 128K。
+      3. **标称与实际的差距**：
+         - 「大海捞针」接近满分，不代表能做多跳检索、信息聚合（RULER 上常随长度下降）；
+         - 存在 Lost in the Middle 现象，中间位置的信息利用率低；
+         - 靠推理时外推获得的长度，效果通常不如在该长度上真正训练过；
+         - 长上下文的延迟与成本很高，很多场景下 RAG、摘要压缩仍然更划算。
+         - 因此应当用贴近真实任务的长文本评测确定「有效长度」。
+    rubric:
+      - '列出位置编码、注意力实现、KV 压缩、数据与分阶段训练中的至少三类技术（3 分）'
+      - '正确说明 Llama 3.1、DeepSeek-V3、Qwen3 中至少两个的扩展方式（4 分）'
+      - '说明标称长度与有效长度的差距及评测方法（3 分）'
+    explanation: |
+      **常见失分点**：把 FlashAttention 当成「扩展上下文的位置编码方法」；以为把 RoPE 基频调大、不训练就能可靠地用到 128K；只报标称长度，不谈有效长度与评测。各家的具体做法可在技术报告中核对，回答时说清是预训练阶段的做法还是推理时的外推。
+    source: 'The Llama 3 Herd of Models arXiv:2407.21783；DeepSeek-V3 arXiv:2412.19437；Qwen3 arXiv:2505.09388'
+
+  - id: LLM-MODEL-034
+    type: scenario
+    difficulty: 3
+    frequency: 2
+    points: [开放权重与许可证]
+    tags: [许可合规, Llama, Qwen, Gemma]
+    question: |
+      某团队有三项计划：
+      1. 用 Llama 3.3 70B Instruct 批量生成合成数据，用这些数据微调一个基于 Qwen2.5-7B 的模型，并公开发布它的权重；
+      2. 把 Qwen2.5-72B 微调后部署在自家 SaaS 产品中，预计月活跃用户约 3000 万；
+      3. 以 Gemma 3 4B 为教师，蒸馏出一个端侧小模型并公开发布。
+      请逐项指出需要注意的许可问题，并给出建议。
+    answer: |
+      **计划 1**
+      - Llama 3.3 社区许可允许用其输出训练其他模型（早期的 Llama 3 许可曾禁止用输出改进其他大语言模型），但用 Llama 材料或其输出训练的模型一旦对外发布或提供，**名称开头必须包含「Llama」**；还要遵守 Meta 的可接受使用政策。
+      - 基座 Qwen2.5-7B 是 Apache 2.0：再分发时附上许可副本，保留版权与 NOTICE，在修改过的文件中注明修改。
+      - 最终模型同时受两方面约束。如果不希望模型名带「Llama」，可以改用 Apache 2.0 或 MIT 许可的模型来生成数据。
+
+      **计划 2**
+      - Qwen2.5-72B 使用 Qwen License（不是 Apache 2.0）：允许商用，但产品月活超过 1 亿时需要向阿里云申请许可，3000 万暂时在门槛之下，要预留增长后的预案；
+      - 用它（或其输出）训练、微调并对外提供的模型，需要在产品文档中显著标注「Built with Qwen」或「Improved using Qwen」；再分发时附带许可与规定的 Notice。
+      - 注意同系列的 Qwen2.5-3B 是仅限研究用途的许可，不能直接商用。若希望简化，可评估 Apache 2.0 的 Qwen3 系列。
+
+      **计划 3**
+      - Gemma 3 使用 Gemma Terms of Use。按其定义，通过蒸馏（包括利用 Gemma 生成的合成数据）让模型表现得与 Gemma 相似，得到的模型属于「Model Derivatives」，同样受这份条款约束。
+      - 分发时必须把禁止用途等使用限制作为可执行条款写进与下游的协议，向接收者提供条款副本，附带规定的 Notice 文件，并标注修改过的文件。
+      - 可考虑改用 2026 年 4 月起以 Apache 2.0 发布的 Gemma 4 作为基础，以简化合规。
+
+      **通用做法**：为每个模型建立「血缘档案」，记录基座、数据来源、所用外部模型及其许可与服务条款；上线与发布前由法务逐条确认；许可文本以实际下载版本为准，不同小版本的条款可能不同。
+    rubric:
+      - '计划 1：指出 Llama 3.3 输出训练的命名要求，并兼顾 Qwen2.5-7B 的 Apache 2.0 义务（3 分）'
+      - '计划 2：指出 Qwen2.5-72B 不是 Apache 2.0、1 亿月活门槛与署名要求（2 分）'
+      - '计划 3：指出蒸馏模型属于 Gemma 的 Model Derivatives，使用限制需向下游传递（3 分）'
+      - '给出血缘档案、法务审核或换用宽松许可基座等通用做法（2 分）'
+    explanation: |
+      **常见失分点**：把所有开放权重模型都当成 Apache 2.0；以为「只用了输出、没用权重」就不受基座许可约束；不知道同一系列中不同规格的许可可能不同（如 Qwen2.5 的 3B 与 72B）；忽视使用限制需要向下游传递。注意：本题只讨论许可条款本身，实际业务还要结合所在地区的法规与数据合规要求。
+    source: 'Llama 3.3 Community License；Qwen LICENSE AGREEMENT（Qwen2.5-72B）；Gemma Terms of Use（gemma.ai/resources/terms）'
+
+  - id: LLM-MODEL-035
+    type: multiple
+    difficulty: 3
+    frequency: 2
+    points: [Qwen系列]
+    tags: [Qwen3-Next, 混合注意力, 高稀疏MoE]
+    question: |
+      Qwen3-Next（2025 年 9 月）把每 4 层中的 3 层换成 Gated DeltaNet（一种线性注意力），只保留 1 层门控的全注意力；MoE 部分有 512 个专家，每个 token 激活 10 个路由专家和 1 个共享专家，总参数约 80B、激活约 3B。关于这些设计，下列说法**正确**的有：
+    options:
+      A: '由于线性注意力层已隐式编码了顺序信息，保留的全注意力层不再使用 RoPE 等位置编码'
+      B: 'Gated DeltaNet 层的状态大小也随上下文长度线性增长，与全注意力层没有本质区别'
+      C: '只有全注意力层的 KV Cache 随上下文增长，长上下文下约为同层数全注意力模型的四分之一'
+      D: '保留少量全注意力层，主要是为了弥补线性注意力在精确检索、复制远处信息方面的不足'
+      E: '每个 token 只激活约 3B 参数，所以部署时只需加载这部分参数，显存需求与 3B 稠密模型相当'
+    answer: [C, D]
+    explanation: |
+      **结论**：C、D 正确。
+
+      - A 错：模型卡显示 Qwen3-Next 的门控注意力层仍使用 RoPE（只对每个头的部分维度施加旋转）。
+      - B 错：线性注意力（包括 Gated DeltaNet）的递推状态大小与序列长度无关，这正是它省显存的原因。
+      - C 对：48 层中只有 12 层是全注意力，随上下文增长的 KV Cache 只存在于这些层；Gated DeltaNet 层把历史压缩进固定大小的矩阵状态，长度增加时状态不变。
+      - D 对：线性注意力的状态容量有限，精确回忆远处细节的能力较弱；少量全注意力层负责精确检索，这是混合架构的基本思路。
+      - E 错：MoE 的计算量由激活参数决定，显存占用却由总参数决定：每个 token 选中的专家各不相同，下一个 token 可能用到任何一个专家，全部约 80B 参数都要常驻显存（或可快速访问的存储）。每个 token 的计算量接近 3B 稠密模型，这才是「A3B」的含义。官方称 Qwen3-Next-80B-A3B 以约十分之一的训练成本超过 Qwen3-32B-Base，32K 以上的长上下文推理吞吐提升 10 倍以上。
+
+      这套设计在 2026 年 2 月发布的 Qwen3.5 中被沿用到旗舰模型（60 层，15 组「3 层 Gated DeltaNet + 1 层门控注意力」），说明混合线性注意力已从实验性模型走进主力系列。
+    source: 'Qwen3-Next-80B-A3B 与 Qwen3.5-397B-A17B 模型卡（Hugging Face）'

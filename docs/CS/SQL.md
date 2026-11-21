@@ -1,0 +1,1488 @@
+# CS-SQL · SQL 与数据库
+
+> 所属大类：编程与计算机基础　｜　题量：32
+
+SQL 查询、索引、事务与数据库选型。
+
+**考点覆盖**：JOIN类型（3） · 聚合与分组（3） · 子查询与CTE（3） · 窗口函数（7） · 去重保留最新（2） · 分组TopN（3） · B+树索引（3） · 最左前缀与覆盖索引（5） · 执行计划（4） · 事务与隔离级别（5） · 锁（3） · 数据库选型（2）
+
+**题型**：[单选题（9）](#单选题) · [多选题（3）](#多选题) · [判断题（3）](#判断题) · [填空题（1）](#填空题) · [计算题（1）](#计算题) · [代码输出题（6）](#代码输出题) · [代码填空题（1）](#代码填空题) · [代码改错题（2）](#代码改错题) · [编程题（3）](#编程题) · [简答题（1）](#简答题) · [场景分析题（1）](#场景分析题) · [系统设计题（1）](#系统设计题)
+
+---
+
+## 单选题
+
+<a name="CS-SQL-002"></a>
+
+### CS-SQL-002　进阶 · 考频 ★★★
+
+表 users 有 3 个用户（id = 1、2、3）；表 orders(uid, status) 有三行：(1, 'paid')、(1, 'refund')、(2, 'refund')。需求是「列出所有用户，以及他们已支付的订单状态，没有则为 NULL」。下面两条查询分别返回几行？
+
+```sql
+-- Q1
+SELECT u.id, o.status FROM users u
+LEFT JOIN orders o ON u.id = o.uid AND o.status = 'paid';
+
+-- Q2
+SELECT u.id, o.status FROM users u
+LEFT JOIN orders o ON u.id = o.uid
+WHERE o.status = 'paid';
+```
+
+- **A.** Q1 返回 1 行，Q2 返回 3 行；Q2 才满足需求，Q1 过滤掉了没有付款的用户
+- **B.** 两条都返回 3 行，结果完全相同，条件写在 ON 还是 WHERE 中没有区别
+- **C.** Q1 返回 3 行，满足需求；Q2 只返回 1 行，效果相当于内连接
+- **D.** Q1 返回 4 行，Q2 返回 1 行；两条都不满足需求，应改用 INNER JOIN
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：ON 中的条件决定「右表哪些行能参与匹配」，左表的行无论是否匹配都会保留；WHERE 中的条件在连接**之后**过滤整行。
+
+- Q1：用户 1 匹配到 paid 那一行；用户 2 只有 refund，不满足 ON 条件，保留并填 NULL；用户 3 没有订单，同样填 NULL。共 3 行：`(1, 'paid')、(2, NULL)、(3, NULL)`。
+- Q2：先做普通的 LEFT JOIN，得到 4 行：`(1, paid)、(1, refund)、(2, refund)、(3, NULL)`；再用 `WHERE o.status = 'paid'` 过滤，`NULL = 'paid'` 的结果是未知，被当作假过滤掉，只剩 1 行。右表为 NULL 的行全被滤掉，效果等同于 INNER JOIN。
+
+- A 错：说反了，Q1 返回 3 行、满足需求；Q2 只剩 1 行。
+- B 错：对外连接而言，条件写在 ON 还是 WHERE 中，结果可能完全不同。
+- D 错：4 行是不加 status 条件的 LEFT JOIN 的结果；Q1 把条件写在 ON 中，只有 3 行，已经满足需求，改用 INNER JOIN 反而会丢掉没有付款的用户。
+
+**规则**：对 LEFT JOIN 右表的过滤条件要写在 ON 中；只有想要「找出没有匹配的左表行」时，才在 WHERE 中写 `o.uid IS NULL`（反连接）。
+
+<sub>考点：JOIN类型</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-004"></a>
+
+### CS-SQL-004　基础 · 考频 ★★★
+
+表 `emp(dept, name, salary, hire_year)`。需求：只统计 2020 年及以后入职的员工，找出这些员工平均薪资超过 20000 的部门。下列写法正确的是：
+
+- **A.** `SELECT dept, AVG(salary) FROM emp WHERE hire_year >= 2020 GROUP BY dept HAVING AVG(salary) > 20000`
+- **B.** `SELECT dept, AVG(salary) FROM emp WHERE hire_year >= 2020 AND AVG(salary) > 20000 GROUP BY dept`
+- **C.** `SELECT dept, AVG(salary) FROM emp GROUP BY dept HAVING hire_year >= 2020 AND AVG(salary) > 20000`
+- **D.** `SELECT dept, AVG(salary) AS s FROM emp WHERE s > 20000 GROUP BY dept HAVING hire_year >= 2020`
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：记住 SQL 的逻辑执行顺序：`FROM / JOIN → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT`。
+
+- WHERE 在分组**之前**逐行过滤，不能使用聚合函数；
+- HAVING 在分组**之后**过滤整个组，可以使用聚合结果。
+
+所以「入职年份」这种行级条件放 WHERE，「平均薪资」这种组级条件放 HAVING，A 正确。
+
+- B 错：WHERE 中不能出现聚合函数，会报错（SQLite 的报错为 `misuse of aggregate: AVG()`）。
+- C 错：hire_year 既不在 GROUP BY 中，也不在聚合函数里，标准 SQL 中会报错；即使某些数据库放行，也只是取组内某一行的值来判断，语义完全错误。
+- D 错：标准 SQL 中，SELECT 里定义的别名在 WHERE 执行时还不存在；即使有的数据库允许在 WHERE 中引用别名，s 代表的也是聚合结果，同样不能出现在 WHERE 中。此外，HAVING 中的 hire_year 既不在 GROUP BY 中，也不在聚合函数里。
+
+**性能提示**：能在 WHERE 中完成的过滤不要放到 HAVING 中，先过滤掉的行不用参与分组，WHERE 中的条件还可能用上索引。
+
+<sub>考点：聚合与分组　｜　出处：PostgreSQL 文档：2.7 Aggregate Functions（WHERE 在分组与聚合之前筛选输入行，不能包含聚合函数；HAVING 在之后筛选分组），https://www.postgresql.org/docs/current/tutorial-agg.html；Microsoft Learn：SELECT (Transact-SQL)，Logical processing order of the SELECT statement，https://learn.microsoft.com/en-us/sql/t-sql/queries/select-transact-sql</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-014"></a>
+
+### CS-SQL-014　进阶 · 考频 ★★★
+
+表 `events(id 主键, user_id, ts, payload)`。要求每个用户只保留 ts 最新的一条记录；同一用户可能有多条 ts 完全相同的记录，要求结果中每个用户**恰好一行**，并且多次执行的结果一致。下列写法中满足要求的是：
+
+- **A.** `SELECT e.* FROM events e JOIN (SELECT user_id, MAX(ts) AS mx FROM events GROUP BY user_id) m ON e.user_id = m.user_id AND e.ts = m.mx`
+- **B.** `SELECT * FROM (SELECT *, RANK() OVER (PARTITION BY user_id ORDER BY ts DESC) AS r FROM events) t WHERE r = 1`
+- **C.** `SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) AS rn FROM events) t WHERE rn = 1`
+- **D.** `SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC, id DESC) AS rn FROM events) t WHERE rn = 1`
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**结论**：要同时满足「每组恰好一行」和「结果确定」，需要 ROW_NUMBER 加上能打破并列的唯一排序键。
+
+- A 错：最新时间并列时，JOIN 回原表会匹配到多行。
+- B 错：RANK 给并列的行相同的名次，ts 并列的记录都是第 1 名，同样会返回多行。
+- C 错：每个用户恰好一行，但并列的记录中哪一条编为 1 是**不确定**的，取决于执行计划、数据的物理顺序、并行度，不同时间执行可能返回不同的行。线上出现「同一个查询每次结果不一样」，往往就是这个原因。
+- D 对：加上主键 id 后排序唯一，结果确定。
+
+**性能**：数据量大时，在 `(user_id, ts, id)` 上建联合索引，数据库可以直接按索引顺序读取每个分区，减少排序开销。
+
+<sub>考点：去重保留最新、窗口函数</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-016"></a>
+
+### CS-SQL-016　基础 · 考频 ★★
+
+每个部门按薪资从高到低取「前 3 名」，下面三种需求分别应该使用哪个窗口函数（外层过滤条件都是「编号 ≤ 3」）？
+
+① 每个部门恰好取 3 人，薪资并列时任取其一（但结果要确定）；
+② 名次不超过 3 的人都要，并列会占用名次（如 100、90、90、80 中 80 排第 4，不入选）；
+③ 薪资最高的 3 个「档位」中的人都要（如 100、90、90、80 中 80 属于第 3 档，入选）。
+
+- **A.** ①RANK　②ROW_NUMBER　③DENSE_RANK
+- **B.** ①ROW_NUMBER　②RANK　③DENSE_RANK
+- **C.** ①DENSE_RANK　②RANK　③ROW_NUMBER
+- **D.** ①ROW_NUMBER　②DENSE_RANK　③RANK
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+以 100、90、90、80 为例，三个函数的编号分别是：
+- ROW_NUMBER：1、2、3、4，取 ≤ 3 恰好 3 人。要保证结果确定，ORDER BY 中要加员工 id 等唯一列打破并列，满足 ①。
+- RANK：1、2、2、4，取 ≤ 3 得到 100、90、90 三人，80 因名次为 4 不入选，满足 ②。
+- DENSE_RANK：1、2、2、3，取 ≤ 3 得到全部 4 人，满足 ③。
+
+- A 错：RANK 遇到并列时人数不固定，不能保证「恰好 3 人」；ROW_NUMBER 会把并列的人强行拆开、截断。
+- C 错：DENSE_RANK 遇到并列时会多取人；ROW_NUMBER 无法表达「档位」。
+- D 错：② 与 ③ 的函数正好用反了。
+
+面试写 SQL 时先问清「并列怎么处理」，这本身就是考点。
+
+<sub>考点：分组TopN</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-018"></a>
+
+### CS-SQL-018　基础 · 考频 ★★★
+
+关系型数据库（如 MySQL InnoDB）的索引普遍采用 B+ 树，而不是二叉搜索树、哈希表或 B 树。下列解释中最准确的是：
+
+- **A.** B+ 树的查找时间复杂度是 O(1)，比二叉搜索树的 O(log n) 更快，所以被普遍采用
+- **B.** B+ 树把数据同时存放在内部节点和叶子节点，查询可以在内部节点提前结束，所以比 B 树更快
+- **C.** B+ 树扇出大、树很矮，查找只需访问少量页；数据都在叶子层且叶子相连，适合范围查询
+- **D.** 哈希索引同样能高效支持等值查询和范围查询，B+ 树被普遍采用只是因为实现更简单、更成熟
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：数据库的瓶颈在于按页读取存储（磁盘或 SSD，即使在缓冲池中也以页为单位管理），设计目标是让一次查找经过的页尽可能少，并且支持范围查询。
+
+- **对比二叉树**：二叉树每个节点只有两个分支，千万行的数据树高约 24 层，每层都可能是一次页访问；B+ 树一个节点就是一个页，有上千个分支，3～4 层就够了。
+- **对比 B 树**：B 树的内部节点也存数据，一页能放的分支更少，树更高；范围查询要在树中来回中序遍历。B+ 树的数据只在叶子，叶子串成链表，`BETWEEN`、`ORDER BY`、`LIMIT` 都只需顺序扫描。
+- **对比哈希**：哈希索引的等值查询平均 O(1)，但不支持范围查询、排序和前缀匹配。
+
+- A 错：B+ 树的查找是 $O(\log_f n)$，f 为扇出，只是 f 很大使得树高很小，不是 O(1)。
+- B 错：描述的是 B 树的特点，而且正是 B+ 树要避免的设计。
+- D 错：哈希索引不支持范围查询。
+
+**补充**：写入极多的场景（如日志、时序数据）也会使用 LSM 树（如 RocksDB），以顺序写换取更高的写吞吐，代价是读放大和后台合并。
+
+<sub>考点：B+树索引</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-021"></a>
+
+### CS-SQL-021　进阶 · 考频 ★★★
+
+表上建有联合索引 `idx(a, b, c)`，三列都是整数。下列查询中，能把 a、b、c 三列**都**用于索引定位的是：
+
+- **A.** `WHERE c = 3 AND b = 2 AND a = 1`
+- **B.** `WHERE a = 1 AND b > 2 AND c = 3`
+- **C.** `WHERE b = 2 AND c = 3`
+- **D.** `WHERE a = 1 AND c = 3`
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：A**
+
+**解析：**
+
+**结论**：最左前缀看的是**索引列的顺序**，不是 WHERE 中条件的书写顺序。A 中 a、b、c 都是等值条件，优化器会按索引顺序组合，三列全部用于定位。
+
+- B 错：b 是范围条件。索引中 a = 1 的那一段按 b 排序，满足 b > 2 的是一个连续区间，但在这个区间里 c 并不有序，所以 c 不能再用于定位，只用到 a、b 两列。c 的条件可以通过索引下推在索引层过滤，减少回表，但不参与定位。
+- C 错：缺少最左列 a，通常无法定位（若查询只需要索引中的列，可能扫描整个索引；MySQL 8.0.13 起在 a 的不同取值很少时还可能使用 skip scan）。
+- D 错：a 之后跳过了 b，只有 a 用于定位，c 只能过滤。
+
+**设计联合索引的经验**：等值条件的列放前面，范围条件、排序的列放后面；在此基础上把区分度高、查询频率高的列往前放。
+
+<sub>考点：最左前缀与覆盖索引</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-023"></a>
+
+### CS-SQL-023　基础 · 考频 ★★
+
+在 MySQL 中对一条慢查询执行 EXPLAIN，结果中 `type = ALL`、`key = NULL`、`rows` 约为 5,000,000，`Extra = Using where; Using filesort`。下列解读正确的是：
+
+- **A.** 查询使用了主键索引，只是返回的行数比较多，给查询加上 LIMIT 就能解决
+- **B.** `Using filesort` 表示查询结果被写进了磁盘文件，说明内存不足，应该调大内存相关参数
+- **C.** `type = ALL` 表示用上了索引中的全部列，是最优的访问方式，不需要再优化
+- **D.** 没有使用索引，对约 500 万行做全表扫描，还需要额外排序；应考虑为相关列建联合索引
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：D**
+
+**解析：**
+
+**EXPLAIN 重点看四列**：
+- `type`：访问方式，大致从好到差为 system、const、eq_ref、ref、range、index、ALL。ALL 是全表扫描，index 是扫描整个索引树；
+- `key`：实际使用的索引，NULL 表示没用索引；
+- `rows`：优化器**预估**需要扫描的行数；
+- `Extra`：`Using filesort` 表示需要额外的排序步骤，`Using temporary` 表示用到了临时表，`Using index` 表示覆盖索引，`Using index condition` 表示使用了索引下推。
+
+- A 错：key 为 NULL，没有使用任何索引。
+- B 错：filesort 只是「不能按索引顺序直接取出，需要额外排序」的意思，数据量小时完全在内存中完成，并不一定写磁盘。
+- C 错：ALL 是最差的访问方式。
+
+**优化方向**：为 `WHERE 等值列 + ORDER BY 列` 建联合索引，让索引顺序直接满足排序，消除 filesort；只查需要的列，争取覆盖索引。改完用 EXPLAIN 确认，MySQL 8.0.18 起可以用 `EXPLAIN ANALYZE` 看真实的执行耗时和行数。
+
+<sub>考点：执行计划　｜　出处：MySQL 文档：EXPLAIN Output Format</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-029"></a>
+
+### CS-SQL-029　进阶 · 考频 ★★
+
+秒杀场景下扣减库存，有下面两种写法：
+
+- 写法一（悲观锁）：在事务中执行 `SELECT stock FROM items WHERE id = ? FOR UPDATE`，判断库存充足后 `UPDATE items SET stock = stock - 1 WHERE id = ?`，然后提交；
+- 写法二（乐观锁）：先读出 stock 和 version，然后执行 `UPDATE items SET stock = stock - 1, version = version + 1 WHERE id = ? AND version = ?`，检查影响的行数，为 0 则重试。
+
+下列说法正确的是：
+
+- **A.** 写法一不需要放在事务中，`SELECT ... FOR UPDATE` 加的锁在这条语句执行完后就会立即释放
+- **B.** 写法二读时不加锁，冲突少时开销小；但大量请求同时扣减同一商品时，多数请求会因版本不匹配而重试，浪费严重
+- **C.** 两种写法在任何情况下性能都相同，因为最终都只执行了一条 UPDATE
+- **D.** 写法二能保证不超卖，是因为数据库在执行这条 UPDATE 时会自动对 version 字段加表级锁
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：B**
+
+**解析：**
+
+**结论**：乐观锁适合冲突少的场景，冲突激烈时大量请求做无用功；悲观锁让冲突的请求排队，代价是持锁期间其他请求只能等待。
+
+- A 错：`FOR UPDATE` 加的行锁要保持到事务**提交或回滚**时才释放，必须在事务中使用，否则（自动提交模式下）语句一结束锁就释放，起不到保护作用。另外，id 上要有索引，否则可能锁住大量行。
+- C 错：两者的并发行为完全不同：一个排队等锁，一个冲突后重试。
+- D 错：乐观锁的正确性来自 `WHERE ... AND version = ?` 这个条件：UPDATE 在执行时会对这一行加锁、检查条件，版本号已变化就更新 0 行。不存在什么「自动加表锁」。
+
+**秒杀扣库存更常见的做法**：直接使用带条件的原子更新 `UPDATE items SET stock = stock - 1 WHERE id = ? AND stock > 0`，判断影响行数是否为 1。判断和扣减在一条语句中完成，不需要先读。热点特别集中时，还要配合 Redis 预扣、请求排队、库存分桶等手段，把并发挡在数据库之外。
+
+<sub>考点：锁</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-031"></a>
+
+### CS-SQL-031　进阶 · 考频 ★★
+
+一个 Agent 平台需要存储以下几类数据：① 用户账户、额度与计费流水；② 进行中会话的短期状态（读写频繁，几小时后即可过期）；③ 知识库文档切块后的向量，用于相似度检索（约 2000 万条）；④ 每天数亿条的模型调用日志与 trace，用于事后统计分析。下列选型最合理的是：
+
+- **A.** 全部存进 MySQL：①②③④ 都建成 InnoDB 表，向量序列化成 JSON 字符串存放，共用一套运维体系
+- **B.** ①Redis　②MySQL　③Elasticsearch 的倒排索引　④向量数据库（按日期分区）
+- **C.** ①关系型数据库　②Redis（带过期时间）　③向量数据库或 pgvector　④列式分析库
+- **D.** ①②③④ 全部存进 MongoDB，统一技术栈最省事，也便于跨数据做联合查询和统一备份
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：C**
+
+**解析：**
+
+**结论**：按数据的访问模式选存储，而不是「一库通吃」。
+
+- ① 账户与计费需要事务、约束和强一致性，选关系型数据库。计费流水用唯一的请求 ID 保证幂等。
+- ② 会话状态读写频繁、可以过期、偶尔丢失可以重建，适合 Redis 这类内存键值存储，利用 TTL 自动清理。
+- ③ 向量相似度检索需要 HNSW、IVF 等近似最近邻索引。2000 万条属于中等规模：要与业务数据联合过滤、并在同一个事务中更新时，pgvector 很方便；需要更大规模、独立扩展时，用专门的向量数据库。
+- ④ 海量、只追加、以聚合统计为主的数据，适合按天分区的列式分析型存储（如 ClickHouse）或日志系统，并设置数据保留期。
+
+- A 错：MySQL 没有向量索引，JSON 字符串只能全表取出、在应用层计算相似度；每天数亿条日志也会拖垮在线业务库。
+- B 错：计费放在 Redis 中缺少可靠的事务与持久化保证；倒排索引是为关键词检索设计的，不是用来做向量相似度检索的；日志放进向量数据库更是用错了地方。
+- D 错：MongoDB 本身支持多文档事务和 TTL 索引，其云服务 Atlas 还提供向量检索，单独看每一项都「能做」，但完全不考虑访问特点，海量日志的聚合分析、高频会话状态等场景都难以做到经济高效。
+
+<sub>考点：数据库选型</sub>
+
+</details>
+
+---
+
+## 多选题
+
+<a name="CS-SQL-007"></a>
+
+### CS-SQL-007　进阶 · 考频 ★★
+
+关于子查询与 CTE（WITH 子句），下列说法**正确**的有：
+
+- **A.** `WITH RECURSIVE` 可以用来遍历组织架构、类目树这类层级数据
+- **B.** 相关子查询语义上对外层每一行求值，但优化器常把它改写成半连接执行，不一定比等价的 JOIN 慢
+- **C.** CTE 的结果会被持久化成一张会话级临时表，同一连接中后续的其他 SQL 语句也能直接引用它
+- **D.** PostgreSQL 12 起，只被引用一次的非递归、无副作用 CTE 默认会被内联优化，也可用 MATERIALIZED 显式控制
+- **E.** CTE 可以把复杂查询拆成命名的步骤，并在同一条语句中被多次引用，提高可读性
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ABDE**
+
+**解析：**
+
+**结论**：A、B、D、E 正确。
+
+- A 对：见递归 CTE 的锚点成员与递归成员。
+- B 对：语义上的「逐行求值」不等于实际的执行方式，优化器经常把相关子查询改写成半连接、反连接或普通连接执行（如 MySQL 对 IN、EXISTS 子查询的 semi-join 优化）。是否高效要看执行计划。
+- C 错：CTE 只在**它所在的那一条语句**中有效，语句结束就不存在了；需要跨语句复用，要建临时表或视图。
+- D 对：PostgreSQL 12 之前，CTE 总是被单独物化，相当于一道「优化屏障」，外层的过滤条件推不进去；12 起，不带副作用、只被引用一次的非递归 CTE 默认会被内联。被多次引用的 CTE 默认仍然物化。两种行为都可以用 `MATERIALIZED` / `NOT MATERIALIZED` 显式指定。
+- E 对：用 CTE 把「先算每日用量、再算环比、最后取异常日」这样的多步逻辑拆开写，比层层嵌套的子查询好读得多。
+
+<sub>考点：子查询与CTE　｜　出处：PostgreSQL 文档：WITH Queries（7.8.3 Common Table Expression Materialization）</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-022"></a>
+
+### CS-SQL-022　进阶 · 考频 ★★★
+
+MySQL 表 users 在 `created_at`（DATETIME）、`phone`（VARCHAR）、`name`（VARCHAR）三列上各有一个普通 B+ 树索引。下列写法中，会导致对应列上的索引**无法用于快速定位**的有：
+
+- **A.** `WHERE YEAR(created_at) = 2026`
+- **B.** `WHERE name LIKE 'zhang%'`
+- **C.** `WHERE name LIKE '%san'`
+- **D.** `WHERE phone = 13800000000`（phone 是字符串列，右边写成了数字）
+- **E.** `WHERE created_at >= '2026-01-01' AND created_at < '2027-01-01'`
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：ACD**
+
+**解析：**
+
+**结论**：A、C、D 会让索引失效。
+
+- A 对：对索引列使用函数后，索引中存的是 created_at 的原值，无法按 `YEAR(created_at)` 的值定位。改写成 `created_at >= '2026-01-01' AND created_at < '2027-01-01'` 这样的范围条件即可；MySQL 8.0.13 起也可以为表达式建函数索引。
+- B 错：前缀匹配，等价于一个范围扫描，可以使用索引。
+- C 对：前导通配符，索引按字符串从左到右排序，找不到「以 san 结尾」的连续区间，无法定位。需要后缀匹配时可以额外存一列反转后的字符串并建索引；需要模糊搜索时用全文索引或搜索引擎。
+- D 对：字符串列与数字比较时，MySQL 会把每一行的字符串转换成数字再比较（`'138...'`、`' 138...'`、`'138...a'` 都可能转换成同一个数），无法利用按字符串排序的索引，官方文档专门说明了这一点。写成 `phone = '13800000000'` 即可。反过来，整数列与字符串常量比较时，转换的是常量，索引仍然可用。
+- E 错：普通的范围条件，可以使用索引。
+
+**其他常见的失效原因**：联合索引不满足最左前缀；`OR` 连接的条件中有列没有索引；区分度太低或命中行太多，优化器认为全表扫描更便宜。是否真的走了索引，以 EXPLAIN 为准。
+
+<sub>考点：最左前缀与覆盖索引、执行计划　｜　出处：MySQL 文档：Type Conversion in Expression Evaluation</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-025"></a>
+
+### CS-SQL-025　进阶 · 考频 ★★★
+
+关于事务的隔离级别与并发异常，下列说法**正确**的有：
+
+- **A.** 在 InnoDB 的可重复读级别下，同一事务中的普通 SELECT 与 SELECT … FOR UPDATE 都读取第一次读取时建立的一致性快照
+- **B.** 隔离级别越高越好，生产环境应一律使用串行化（SERIALIZABLE）
+- **C.** 在 InnoDB 的读已提交级别下，同一事务中的每次普通 SELECT 都会使用新的快照，所以可能读到其他事务在此期间提交的修改
+- **D.** 脏读是指读到了其他事务尚未提交的修改；「读已提交」及更高的隔离级别都不会出现脏读
+- **E.** 不可重复读与幻读是同一个概念，只是不同数据库的叫法不同
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：CD**
+
+**解析：**
+
+**结论**：C、D 正确。
+
+- A 错：普通 SELECT（一致性读）确实使用事务中第一次一致性读时建立的快照（MVCC 实现），多次普通读结果一致；但 `SELECT … FOR UPDATE`、`FOR SHARE` 是加锁读（当前读），读取的是最新的已提交版本并加锁，结果可能与同一事务中普通 SELECT 看到的不同。UPDATE、DELETE 同样基于最新版本。
+- B 错：隔离级别越高，并发性能越差，冲突、等待和重试越多。多数 OLTP 系统使用读已提交或可重复读，再在关键操作上用 `SELECT ... FOR UPDATE`、乐观锁或唯一约束保证正确性。
+- C 对：读已提交下每条一致性读语句都会建立新快照。
+- D 对：读已提交只能看到已提交的数据。
+- E 错：**不可重复读**针对同一行，两次读到的值不同（被其他事务的 UPDATE 改了）；**幻读**针对一个查询条件，两次查到的行数不同（被其他事务 INSERT 或 DELETE 了符合条件的行）。
+
+**标准隔离级别速记**：读未提交三种异常都可能；读已提交防脏读；可重复读再防不可重复读（标准允许幻读）；串行化全部防止。各数据库的实现可能强于标准：PostgreSQL 的可重复读同样不会出现幻读，代价是并发冲突时会报序列化失败，需要应用重试。
+
+<sub>考点：事务与隔离级别　｜　出处：MySQL 文档：Transaction Isolation Levels、Consistent Nonlocking Reads、Locking Reads；PostgreSQL 文档：Transaction Isolation</sub>
+
+</details>
+
+---
+
+## 判断题
+
+<a name="CS-SQL-010"></a>
+
+### CS-SQL-010　进阶 · 考频 ★★
+
+想取每个用户最新的一条记录时，可以直接在同一层查询中写 `WHERE ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) = 1`，或者给窗口函数起别名后在同一层的 WHERE 中引用这个别名。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：❌ 错误**
+
+**解析：**
+
+**错误**。窗口函数在 SELECT 阶段计算，晚于 WHERE、GROUP BY、HAVING，所以同一层的 WHERE 中既不能直接写窗口函数，也不能引用它在 SELECT 中的别名。SQLite 的报错分别是 `misuse of window function ROW_NUMBER()` 和 `misuse of aliased window function rn`；MySQL、PostgreSQL 同样报错。
+
+正确写法是包一层子查询或 CTE，在外层过滤：
+
+```sql
+SELECT * FROM (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC, id DESC) AS rn
+  FROM events
+) t
+WHERE rn = 1;
+```
+
+补充：Snowflake、BigQuery、DuckDB 等部分分析型数据库提供 `QUALIFY` 子句，专门用来按窗口函数的结果过滤，可以省去一层子查询；MySQL、PostgreSQL、SQLite 不支持。
+
+<sub>考点：窗口函数</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-019"></a>
+
+### CS-SQL-019　基础 · 考频 ★★
+
+在 MySQL InnoDB 中，二级索引（非主键索引）的叶子节点存放的是索引列的值和对应行的主键值；通过二级索引找到主键后，如果查询还需要索引中没有的列，就要再到主键索引（聚簇索引）中查找一次，这个过程称为回表。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。InnoDB 的表数据就组织在主键的 B+ 树中：主键索引的叶子节点存放整行数据，称为**聚簇索引**。二级索引的叶子节点只存「索引列 + 主键值」。
+
+所以 `SELECT * FROM users WHERE phone = ?`（phone 上有二级索引）分两步：先在 phone 索引中找到主键，再拿主键到聚簇索引中取出整行，这就是**回表**。命中的行很多时，每一行都要回表一次，代价可能超过全表扫描，优化器因此可能放弃使用这个索引。
+
+**相关结论**：
+- **覆盖索引**：查询需要的列全部在二级索引中（主键也算，因为叶子里本来就有），就不用回表，EXPLAIN 的 Extra 显示 `Using index`。例如 `SELECT id, phone FROM users WHERE phone = ?`。
+- 主键越长，每个二级索引就越大，所以 InnoDB 通常推荐短的、单调递增的主键。
+- MyISAM 不同：它的数据与索引分开存放，索引叶子中存的是行在数据文件中的位置。
+
+<sub>考点：B+树索引、最左前缀与覆盖索引　｜　出处：MySQL 文档：Clustered and Secondary Indexes</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-026"></a>
+
+### CS-SQL-026　基础 · 考频 ★★
+
+MySQL InnoDB 的默认隔离级别是可重复读（REPEATABLE READ），而 PostgreSQL 的默认隔离级别是读已提交（READ COMMITTED）。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：✅ 正确**
+
+**解析：**
+
+**正确**。两者的官方文档分别写明：InnoDB 的默认隔离级别是 REPEATABLE READ；PostgreSQL 的默认隔离级别是 Read Committed。Oracle、SQL Server 的默认级别也是读已提交。
+
+**为什么值得关注**：
+- 在两种数据库之间迁移时，依赖「事务内多次读取结果一致」的代码（如在一个事务中先后读取多张表生成对账报表）行为会改变；
+- InnoDB 的可重复读对加锁读和更新使用 next-key lock（记录锁加间隙锁），高并发写入时锁冲突和死锁更多；有些团队会把 MySQL 改为读已提交来减少间隙锁，此时官方文档说明只支持基于行（row）格式的 binlog；
+- 隔离级别可以按会话或按事务设置，如 `SET TRANSACTION ISOLATION LEVEL ...`，不必全局修改。
+
+<sub>考点：事务与隔离级别　｜　出处：MySQL 文档：Transaction Isolation Levels；PostgreSQL 文档：Transaction Isolation</sub>
+
+</details>
+
+---
+
+## 填空题
+
+<a name="CS-SQL-009"></a>
+
+### CS-SQL-009　基础 · 考频 ★★★
+
+某部门 4 名员工的分数依次为 100、90、90、80，按分数降序编号。对分数为 80 的员工：`ROW_NUMBER()` 的结果为 ____，`RANK()` 的结果为 ____，`DENSE_RANK()` 的结果为 ____。
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) 4；(2) 4；(3) 3
+
+**解析：**
+
+三个函数对 100、90、90、80 的编号：
+
+| 分数 | ROW_NUMBER | RANK | DENSE_RANK |
+|---|---|---|---|
+| 100 | 1 | 1 | 1 |
+| 90 | 2 | 2 | 2 |
+| 90 | 3 | 2 | 2 |
+| 80 | **4** | **4** | **3** |
+
+- `ROW_NUMBER`：连续编号，并列也强行区分；并列行谁先谁后不确定，需要在 ORDER BY 中加唯一列打破并列。适合去重保留一条、分页。
+- `RANK`：并列同名次，之后**跳号**（两个第 2 名之后是第 4 名），即竞赛排名。
+- `DENSE_RANK`：并列同名次，之后**不跳号**，适合按「分数档位」取前 N 档。
+
+<sub>考点：窗口函数、分组TopN</sub>
+
+</details>
+
+---
+
+## 计算题
+
+<a name="CS-SQL-017"></a>
+
+### CS-SQL-017　进阶 · 考频 ★★
+
+估算 InnoDB 主键索引（B+ 树）的高度。假设：页大小为 16 KB（按 16384 字节计）；主键为 BIGINT（8 字节），内部节点的每个索引项为「主键 + 6 字节页指针」，忽略页头等开销；叶子节点存放整行数据，每行约 1 KB，一个叶子页存 16 行。
+(1) 一个内部节点大约能容纳多少个分支？
+(2) 高度为 2 和 3 的 B+ 树（高度 2 指根节点加一层叶子）分别大约能存多少行？
+(3) 一张 5000 万行的表，按主键查询一行大约要访问几个页？
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：(1) 约 1170 个；(2) 高度 2 约 1.9 万行，高度 3 约 2190 万行；(3) 需要 4 层，约访问 4 个页（上面几层通常常驻缓冲池）**
+
+**解析：**
+
+**(1) 扇出**：$16384 / (8 + 6) \approx 1170$。
+
+**(2) 容量**：
+- 高度 2：根节点指向约 1170 个叶子页，每页 16 行：$1170\times16=18720$，约 1.9 万行；
+- 高度 3：$1170^2\times16=21{,}902{,}400$，约 2190 万行。
+
+**(3) 5000 万行**：超过高度 3 的容量，需要高度 4，容量约 $1170^3\times16\approx2.56\times10^{10}$ 行，远远够用。按主键查一行要从根走到叶子，访问 4 个页。根节点和第二层的页数很少、访问频繁，通常常驻在缓冲池中，真正可能触发磁盘读取的往往只有下面一两层。
+
+**启示**：
+- B+ 树的扇出很大，所以「矮胖」，千万到上亿行的表也只有 3～4 层，这是它适合磁盘存储的根本原因；
+- 主键越短，扇出越大、树越矮；用长字符串或 UUID 做主键，不仅扇出变小，还会让所有二级索引变大（二级索引的叶子中存的是主键）；随机 UUID 插入还会造成频繁的页分裂；
+- 这是数量级估算：实际页中有页头、页目录等开销，填充率也不是 100%，数字只用于理解树高的量级。
+
+<sub>考点：B+树索引</sub>
+
+</details>
+
+---
+
+## 代码输出题
+
+<a name="CS-SQL-001"></a>
+
+### CS-SQL-001　进阶 · 考频 ★★★
+
+两张表的连接键都有重复值和 NULL。下面三条查询分别返回多少行？输出是什么？
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE a(k INT); INSERT INTO a VALUES (1), (1), (2), (NULL);
+CREATE TABLE b(k INT); INSERT INTO b VALUES (1), (1), (3), (NULL);
+""")
+for sql in ["SELECT COUNT(*) FROM a JOIN b ON a.k = b.k",
+            "SELECT COUNT(*) FROM a LEFT JOIN b ON a.k = b.k",
+            "SELECT COUNT(*) FROM a CROSS JOIN b"]:
+    print(db.execute(sql).fetchone()[0])
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+4
+6
+16
+```
+
+**解析：**
+
+- **INNER JOIN**：只保留连接条件为真的行对。a 中两个 1 与 b 中两个 1 两两匹配，得到 2×2 = 4 行；a 的 2 在 b 中找不到；`NULL = NULL` 的结果是 NULL（未知），不算匹配。共 **4** 行。
+- **LEFT JOIN**：在内连接的 4 行基础上，左表中没有匹配的行（2 和 NULL）各保留一行，右表的列填 NULL：4 + 2 = **6** 行。
+- **CROSS JOIN**：笛卡尔积，4×4 = **16** 行。
+
+若是 FULL OUTER JOIN，还要再加上右表中没有匹配的 3 和 NULL，共 8 行（SQLite 3.39 起支持；MySQL 不支持，要用 LEFT JOIN 与 RIGHT JOIN 的 UNION 模拟）。
+
+**工程启示**：连接键不唯一时，JOIN 会让行数「乘出来」。典型事故是订单表先 JOIN 订单明细再 `SUM(订单金额)`，每个订单的金额被重复计入明细行数次。先在子查询里聚合到合适的粒度再连接，或者确认连接键在某一侧唯一。
+
+<sub>考点：JOIN类型</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-003"></a>
+
+### CS-SQL-003　基础 · 考频 ★★★
+
+下面的表中 bonus 列含有 NULL。三条聚合查询的输出是什么？
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE t(dept TEXT, bonus INT);
+INSERT INTO t VALUES ('a', 100), ('a', NULL), ('b', NULL), ('b', 200), ('b', 200);
+""")
+print(db.execute("SELECT COUNT(*), COUNT(bonus), COUNT(DISTINCT bonus), "
+                 "ROUND(AVG(bonus), 2) FROM t").fetchone())
+print(db.execute("SELECT SUM(bonus), COUNT(bonus) FROM t WHERE dept = 'c'").fetchone())
+print(db.execute("SELECT dept, AVG(bonus), ROUND(AVG(COALESCE(bonus, 0)), 1) "
+                 "FROM t GROUP BY dept ORDER BY dept").fetchall())
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+(5, 3, 2, 166.67)
+(None, 0)
+[('a', 100.0, 50.0), ('b', 200.0, 133.3)]
+```
+
+**解析：**
+
+**第一行**：
+- `COUNT(*)` 数行数，5；
+- `COUNT(bonus)` 只数非 NULL 的值，3；
+- `COUNT(DISTINCT bonus)` 数非 NULL 的不同值（100 和 200），2；
+- `AVG(bonus)` 忽略 NULL：(100 + 200 + 200) / 3 ≈ 166.67，而不是除以 5。
+
+**第二行**：没有任何行满足条件时，`SUM` 返回 NULL（Python 中为 None），`COUNT` 返回 0。报表中常用 `COALESCE(SUM(x), 0)` 把空结果变成 0。
+
+**第三行**：按部门分组。a 部门 `AVG(bonus)` 只算 100 这一个值，得 100；把 NULL 当作 0 后是 (100 + 0) / 2 = 50。b 部门分别是 200 与 400 / 3 ≈ 133.3。
+
+**要点**：NULL 表示「未知或不适用」，聚合函数（除 `COUNT(*)` 外）都会跳过它。「没有奖金」应该算 0 还是不计入，是业务定义问题，要在统计口径里写清楚，不能任由 NULL 的默认行为决定。
+
+<sub>考点：聚合与分组</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-005"></a>
+
+### CS-SQL-005　挑战 · 考频 ★★
+
+需求是「找出从未下过单的用户」。orders 表中有一条 uid 为 NULL 的脏数据。下面三种写法分别统计出多少个用户？最后一行输出什么？
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE users(id INT); INSERT INTO users VALUES (1), (2), (3);
+CREATE TABLE orders(uid INT); INSERT INTO orders VALUES (1), (NULL);
+""")
+queries = [
+    "SELECT COUNT(*) FROM users WHERE id NOT IN (SELECT uid FROM orders)",
+    "SELECT COUNT(*) FROM users u WHERE NOT EXISTS "
+    "(SELECT 1 FROM orders o WHERE o.uid = u.id)",
+    "SELECT COUNT(*) FROM users u LEFT JOIN orders o ON o.uid = u.id WHERE o.uid IS NULL",
+]
+for q in queries:
+    print(db.execute(q).fetchone()[0])
+print(db.execute("SELECT 2 NOT IN (1, NULL), NULL = NULL, NULL IS NULL").fetchone())
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+0
+2
+2
+(None, None, 1)
+```
+
+**解析：**
+
+**SQL 是三值逻辑**：比较的结果可以是真、假或未知（NULL），WHERE 只保留结果为**真**的行。
+
+1. `id NOT IN (1, NULL)` 等价于 `id <> 1 AND id <> NULL`。`id <> NULL` 永远是未知，于是整个条件对任何 id 都不可能为真：用户 2、3 也被过滤掉，结果为 **0**。子查询结果中只要混进一个 NULL，NOT IN 就会「静默地」返回空集。
+2. `NOT EXISTS`：对用户 2、3，子查询中 `o.uid = u.id` 对每一行都不为真，子查询为空，NOT EXISTS 为真，结果为 **2**。
+3. LEFT JOIN 加 `WHERE o.uid IS NULL`（反连接）：用户 2、3 没有匹配的订单，右表列为 NULL，被保留，结果为 **2**。
+4. 最后一行：`2 NOT IN (1, NULL)` 为 NULL；`NULL = NULL` 也是 NULL；`NULL IS NULL` 为真（SQLite 用 1 表示）。
+
+**实践**：判断「不存在」优先用 NOT EXISTS；一定要用 NOT IN 时，在子查询中加 `WHERE uid IS NOT NULL`；更根本的做法是给外键列加 NOT NULL 约束。判断 NULL 只能用 `IS NULL` / `IS NOT NULL`。
+
+<sub>考点：子查询与CTE、聚合与分组、JOIN类型</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-008"></a>
+
+### CS-SQL-008　挑战 · 考频 ★★
+
+下面用窗口函数计算累计金额，第 2 天有两笔记录。注意两种累计写法的区别。输出是什么？
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE t(day INT, amt INT);
+INSERT INTO t VALUES (1, 10), (2, 20), (2, 30), (3, 40);
+""")
+rows = db.execute("""
+SELECT day, amt,
+       SUM(amt) OVER (ORDER BY day) AS s1,
+       SUM(amt) OVER (ORDER BY day, amt
+                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s2,
+       LAG(amt) OVER (ORDER BY day, amt) AS prev
+FROM t ORDER BY day, amt""").fetchall()
+for r in rows:
+    print(r)
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+(1, 10, 10, 10, None)
+(2, 20, 60, 30, 10)
+(2, 30, 60, 60, 20)
+(3, 40, 100, 100, 30)
+```
+
+**解析：**
+
+**s1**：窗口定义了 ORDER BY 却没有写窗口帧时，默认帧是 `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`。RANGE 按排序**值**划定范围：当前行之前的所有行，**加上与当前行排序值相同的所有行**（peer）。第 2 天的两行互为 peer，累计都包含了 20 和 30：10 + 20 + 30 = 60。
+
+**s2**：显式写 `ROWS ...` 后按**物理行**累计，并用 `ORDER BY day, amt` 让顺序唯一，于是得到逐行递增的 10、30、60、100。
+
+**prev**：`LAG(amt)` 取按窗口顺序的上一行的值，第一行没有上一行，为 NULL；也可以写 `LAG(amt, 1, 0)` 指定默认值。
+
+**要点**：
+- 做「逐行累计」时，要显式写 ROWS 帧，并保证排序唯一（加上 id 等列打破并列），否则排序键有重复时结果会出乎意料，ROWS 帧下并列行的先后顺序也不确定；
+- 窗口中不写 ORDER BY 时，帧是整个分区，`SUM(amt) OVER ()` 每行都是总和 100；
+- 窗口函数不改变行数，这是它与 GROUP BY 的根本区别。
+
+<sub>考点：窗口函数　｜　出处：SQLite 文档：Window Functions</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-020"></a>
+
+### CS-SQL-020　进阶 · 考频 ★★★
+
+下面在 `logs` 表上建了联合索引 `(user_id, day, model)`，用 SQLite 的 `EXPLAIN QUERY PLAN` 查看 6 条查询的访问方式（`kind` 函数把执行计划归纳成中文，并统计定位时用到了索引的几列）。输出是什么？
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE logs(id INTEGER PRIMARY KEY, user_id INT, day TEXT, model TEXT, tokens INT)")
+db.execute("CREATE INDEX idx_u_d_m ON logs(user_id, day, model)")
+
+def kind(sql):
+    d = " ".join(r[3] for r in db.execute("EXPLAIN QUERY PLAN " + sql))
+    if d.startswith("SCAN"):
+        return "全表扫描" if "INDEX" not in d else "扫描整个索引"
+    return ("覆盖索引查找" if "COVERING" in d else "索引查找") + f"，定位用到 {d.count('?')} 列"
+
+print(kind("SELECT * FROM logs WHERE user_id = 7 AND day = '2026-05-03'"))
+print(kind("SELECT * FROM logs WHERE day = '2026-05-03'"))
+print(kind("SELECT model FROM logs WHERE day = '2026-05-03'"))
+print(kind("SELECT * FROM logs WHERE model = 'a' AND day > '2026-05-01' AND user_id = 7"))
+print(kind("SELECT day, model FROM logs WHERE user_id = 7"))
+print(kind("SELECT * FROM logs WHERE user_id + 0 = 7"))
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+索引查找，定位用到 2 列
+全表扫描
+扫描整个索引
+索引查找，定位用到 2 列
+覆盖索引查找，定位用到 1 列
+全表扫描
+```
+
+**解析：**
+
+联合索引 `(user_id, day, model)` 先按 user_id 排序，user_id 相同再按 day、再按 model 排序，所以只能从最左边的列开始连续使用（**最左前缀**）。
+
+1. `user_id = ? AND day = ?`：前两列都是等值，定位用到 2 列。
+2. 只有 `day = ?`：跳过了最左列，索引无法定位；要取所有列（`SELECT *`），只能全表扫描。
+3. 同样只有 `day = ?`，但只查 model：索引本身包含 day 和 model，比整张表小，SQLite 选择**扫描整个索引**（覆盖索引扫描，不回表），仍然要读完全部索引项，不是快速定位。MySQL 中对应 `type = index`。
+4. WHERE 中条件的书写顺序无关紧要，优化器会重新组合。user_id 等值、day 范围：范围列之后的 model 不能再用于定位，所以只用到 2 列（MySQL 5.6 起的索引下推可以在索引层先用 model 过滤，减少回表）。
+5. 只查 day、model，全在索引中：**覆盖索引**查找，不需要回表。
+6. 在索引列上做运算（`user_id + 0`），索引中存的是 user_id 本身，无法按表达式的值定位，退化为全表扫描。函数、隐式类型转换也是同样的道理。
+
+SQLite 的执行计划文本在不同版本中略有差异（例如 3.36 之前写作 `SCAN TABLE logs`），这里的 `kind` 函数只看关键字，各版本结果一致。
+
+<sub>考点：最左前缀与覆盖索引、执行计划　｜　出处：SQLite 文档：EXPLAIN QUERY PLAN</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-027"></a>
+
+### CS-SQL-027　进阶 · 考频 ★★
+
+下面的转账函数先给收款方加钱、再给付款方扣钱，余额列有 `CHECK (bal >= 0)` 约束，整个转账放在 `with db:` 中执行。连续两次从账户 1 向账户 2 转账 80，输出是什么？
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE acct(id INTEGER PRIMARY KEY, bal INT CHECK (bal >= 0))")
+db.executemany("INSERT INTO acct VALUES (?, ?)", [(1, 100), (2, 50)])
+db.commit()
+
+def transfer(src, dst, amt):
+    try:
+        with db:                    # 正常结束时提交，抛出异常时回滚
+            db.execute("UPDATE acct SET bal = bal + ? WHERE id = ?", (amt, dst))
+            db.execute("UPDATE acct SET bal = bal - ? WHERE id = ?", (amt, src))
+        return "ok"
+    except sqlite3.IntegrityError:
+        return "rollback"
+
+print(transfer(1, 2, 80), transfer(1, 2, 80))
+print(db.execute("SELECT bal FROM acct ORDER BY id").fetchall())
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案（程序输出）：**
+
+```text
+ok rollback
+[(20,), (130,)]
+```
+
+**解析：**
+
+1. **第一次转账**：账户 2 从 50 变为 130，账户 1 从 100 变为 20，都满足约束，提交，返回 ok。
+2. **第二次转账**：先给账户 2 加钱（130 → 210），再给账户 1 扣钱（20 → -60）时违反 CHECK 约束，抛出 IntegrityError。`with db:` 捕获到异常后**回滚整个事务**，已经执行成功的「加钱」也被撤销，然后异常继续向外抛，被 except 捕获，返回 rollback。
+3. 最终余额仍是 `[20, 130]`，钱既没有凭空多出来，也没有丢失。
+
+这就是事务的**原子性**：一组操作要么全部生效，要么全部不生效。约束保证了数据始终满足业务规则，对应 ACID 中的**一致性**。
+
+**反例**：如果每条 UPDATE 都单独自动提交，第二次转账的加钱已经生效、扣钱失败，账户 2 就会凭空多出 80。
+
+**补充**：sqlite3 连接对象作为上下文管理器时，只负责提交或回滚，**不会关闭连接**。MySQL 等数据库中，转账还要考虑并发：两个转账同时操作同一账户时，用 `SELECT ... FOR UPDATE` 或带条件的原子更新（如 `UPDATE ... SET bal = bal - ? WHERE id = ? AND bal >= ?`），并按固定顺序加锁避免死锁。
+
+<sub>考点：事务与隔离级别　｜　出处：Python 文档：sqlite3（How to use the connection context manager）</sub>
+
+</details>
+
+---
+
+## 代码填空题
+
+<a name="CS-SQL-011"></a>
+
+### CS-SQL-011　进阶 · 考频 ★★
+
+表 `daily(day, tokens)` 记录每天的 token 用量。补全 SQL，计算每天相对前一天的环比增长率（百分数，保留 1 位小数）：第一天没有前一天，结果为 NULL；前一天用量为 0 时无法计算环比，结果也应为 NULL，而不是报错。
+
+```python
+import sqlite3
+
+SQL = """
+SELECT day, tokens,
+       ROUND(100.0 * (tokens - ____(tokens) OVER (ORDER BY day))
+             / ____(____(tokens) OVER (ORDER BY day), 0), 1) AS pct
+FROM daily ORDER BY day
+"""
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：** (1) `LAG`；(2) `NULLIF`；(3) `LAG`
+
+**解析：**
+
+- `LAG(tokens) OVER (ORDER BY day)` 取按日期排序后上一行的 tokens；第一行没有上一行，得到 NULL，整个表达式也是 NULL。
+- `NULLIF(x, 0)`：x 等于 0 时返回 NULL，否则返回 x。除以 NULL 的结果是 NULL，从而避免除零。
+
+逐行验证：05-02 为 (120 - 100) / 100 = 20.0%；05-03 为 (0 - 120) / 120 = -100.0%；05-04 的前一天是 0，结果为 NULL；05-05 为 (135 - 90) / 90 = 50.0%。
+
+**细节**：
+- 写 `100.0 *` 而不是 `100 *`，避免整数除法把小数截掉（SQLite、PostgreSQL、SQL Server 中整数相除结果仍是整数）；
+- SQLite 中除以 0 本身就返回 NULL，但 PostgreSQL 会直接报 `division by zero`，MySQL 的行为也受 SQL 模式影响，用 NULLIF 才是可移植的写法；
+- 日期有缺失（某天没有记录）时，LAG 取到的是「上一条记录」而不是「昨天」。严格的日环比要先用日历表补齐日期，或改用按日期自连接。同一个窗口用到多次时，可以用 `WINDOW w AS (ORDER BY day)` 统一定义。
+
+<sub>考点：窗口函数</sub>
+
+</details>
+
+---
+
+## 代码改错题
+
+<a name="CS-SQL-013"></a>
+
+### CS-SQL-013　进阶 · 考频 ★★★
+
+用户资料变更日志表 `profile_log(id INTEGER PRIMARY KEY, user_id, nickname, city, updated_at)` 中，每次修改资料都会新增一行。下面的查询想取每个用户**最新一条**记录的昵称和城市，结果中却出现了用户从未同时使用过的「昵称 + 城市」组合。请找出问题并修正（同一用户的 updated_at 可能相同，此时取 id 较大的一条）。
+
+```python
+LATEST_SQL = """
+SELECT user_id, MAX(updated_at) AS updated_at,
+       MAX(nickname) AS nickname, MAX(city) AS city
+FROM profile_log
+GROUP BY user_id
+ORDER BY user_id
+"""
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：每个 `MAX()` 都是在组内**独立地**求最大值：`MAX(updated_at)` 是最新时间，`MAX(nickname)` 却是字典序最大的昵称，`MAX(city)` 又是字典序最大的城市，三者可能来自不同的行。例如用户 1 得到 `('tommy', 'shanghai')`，而 tommy 是旧昵称、shanghai 是新城市，这个组合从未存在过。
+
+**修正**：用窗口函数给每个用户的记录按时间倒序编号，取编号为 1 的**整行**；时间并列时用 id 打破并列，保证结果唯一且确定：
+
+```sql
+SELECT user_id, updated_at, nickname, city FROM (
+  SELECT *, ROW_NUMBER() OVER (
+             PARTITION BY user_id ORDER BY updated_at DESC, id DESC) AS rn
+  FROM profile_log) t
+WHERE rn = 1;
+```
+
+**修正后的代码：**
+
+```python
+LATEST_SQL = """
+SELECT user_id, updated_at, nickname, city FROM (
+    SELECT *, ROW_NUMBER() OVER (
+               PARTITION BY user_id ORDER BY updated_at DESC, id DESC) AS rn
+    FROM profile_log
+) t
+WHERE rn = 1
+ORDER BY user_id
+"""
+```
+
+**解析：**
+
+**其他常见写法及其问题**：
+- `SELECT user_id, nickname, MAX(updated_at) ... GROUP BY user_id`：nickname 是既不在 GROUP BY 中、也不在聚合函数里的「裸列」。PostgreSQL 直接报错；MySQL 开启默认的 ONLY_FULL_GROUP_BY 时也报错，关闭后返回组内**任意一行**的值。SQLite 有一个特例：查询中恰好只有一个 MAX 或 MIN 聚合时，裸列取自最大或最小值所在的行，但并列时取哪一行仍不确定。这种写法依赖具体数据库的特殊行为，不可移植。
+- 「先按用户求 `MAX(updated_at)`，再 JOIN 回原表」：时间并列时会返回多行（本题用户 2 就会返回两行）。
+- 不支持窗口函数的老版本（如 MySQL 5.7）：用相关子查询或 JOIN 子查询，再按 id 处理并列。
+
+**物理删除重复行**时，先用同样的 ROW_NUMBER 查出 `rn > 1` 的主键，再按主键分批 DELETE，避免一个大事务长时间锁表。
+
+<sub>考点：去重保留最新　｜　出处：SQLite 文档：SELECT（Bare columns in an aggregate query）</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-030"></a>
+
+### CS-SQL-030　进阶 · 考频 ★★★
+
+下面的下单逻辑先读库存、在应用层判断，再写回新库存。为了在测试中稳定复现并发问题，读和写被拆成两个函数：`read_stock` 读出库存快照，`reserve` 根据快照写回。两个用户几乎同时购买最后 1 件商品时，都读到库存为 1，结果两人都下单成功、库存变成 0，发生了超卖。请修改 `reserve`，使得无论读和写如何交错执行都不会超卖（返回 True 表示下单成功）。
+
+```python
+import sqlite3
+
+def read_stock(conn, item_id):
+    return conn.execute("SELECT stock FROM items WHERE id = ?", (item_id,)).fetchone()[0]
+
+def reserve(conn, item_id, snapshot):
+    if snapshot <= 0:
+        return False
+    conn.execute("UPDATE items SET stock = ? WHERE id = ?", (snapshot - 1, item_id))
+    conn.commit()
+    return True
+```
+
+<details>
+<summary>答案与解析</summary>
+
+**答案：**
+
+**问题**：这是典型的**丢失更新**（读-改-写竞态）。两个请求读到同一个快照 1，各自在应用层算出「1 - 1 = 0」，再把**绝对值** 0 写回。第二次写入覆盖了第一次，两次扣减只体现为一次，库存却卖出了两份。判断「库存是否充足」所依据的数据在写入时已经过期。
+
+**修正**：把判断和扣减合并成一条原子的条件更新，用影响行数判断是否成功：
+
+```python
+cur = conn.execute(
+    "UPDATE items SET stock = stock - 1 WHERE id = ? AND stock > 0", (item_id,))
+conn.commit()
+return cur.rowcount == 1
+```
+
+**修正后的代码：**
+
+```python
+import sqlite3
+
+def read_stock(conn, item_id):
+    return conn.execute("SELECT stock FROM items WHERE id = ?", (item_id,)).fetchone()[0]
+
+def reserve(conn, item_id, snapshot):
+    # 判断与扣减在同一条 UPDATE 中原子完成，不依赖之前读到的快照
+    cur = conn.execute(
+        "UPDATE items SET stock = stock - 1 WHERE id = ? AND stock > 0", (item_id,))
+    conn.commit()
+    return cur.rowcount == 1
+```
+
+**解析：**
+
+**为什么条件更新是安全的**：在 MySQL InnoDB 等数据库中，UPDATE 会对目标行加排他锁，并在加锁后基于**最新提交的版本**判断 `stock > 0`。并发的两个 UPDATE 会排队执行：第一个把库存减到 0，第二个再检查时条件不成立，影响行数为 0。数据库保证了「检查」与「修改」之间不会被插入别的写入。
+
+**其他正确方案**：
+- 悲观锁：在事务中先 `SELECT stock ... FOR UPDATE` 再更新，其他请求在加锁的读处排队；
+- 乐观锁：带版本号的条件更新，失败后重新读取再重试；
+- 兜底：加 `CHECK (stock >= 0)` 约束（MySQL 从 8.0.16 起才真正执行 CHECK 约束），即使代码出错也不会扣成负数。
+
+**反模式**：应用层「先查再改」，还以为加了事务就安全。在默认的可重复读或读已提交级别下，普通 SELECT 是不加锁的快照读，两个事务仍然会读到同一个旧值。
+
+<sub>考点：锁、事务与隔离级别</sub>
+
+</details>
+
+---
+
+## 编程题
+
+<a name="CS-SQL-006"></a>
+
+### CS-SQL-006　挑战 · 考频 ★★
+
+员工表 `staff(id INTEGER PRIMARY KEY, name TEXT, manager_id INT)` 中，manager_id 指向直属上级（CEO 的 manager_id 为 NULL）。实现：
+
+```python
+def subordinates(conn, manager_id) -> list[tuple[int, int]]: ...
+```
+
+用一条 `WITH RECURSIVE` 查询返回该经理的**所有**下属（直接和间接）及其层级 depth（直接下属为 1，下属的下属为 2，依此类推），返回 `[(id, depth), ...]`，按 (depth, id) 升序排列；没有下属时返回空列表。必须使用参数化查询传入 manager_id。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考实现：**
+
+```python
+def subordinates(conn, manager_id):
+    sql = """
+    WITH RECURSIVE sub(id, depth) AS (
+        SELECT id, 1 FROM staff WHERE manager_id = ?        -- 锚点：直接下属
+        UNION ALL
+        SELECT s.id, sub.depth + 1                          -- 递归：下属的下属
+        FROM staff s JOIN sub ON s.manager_id = sub.id
+    )
+    SELECT id, depth FROM sub ORDER BY depth, id
+    """
+    return conn.execute(sql, (manager_id,)).fetchall()
+```
+
+**测试用例：**
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.executescript("""
+CREATE TABLE staff(id INTEGER PRIMARY KEY, name TEXT, manager_id INT);
+INSERT INTO staff VALUES (1,'ceo',NULL), (2,'cto',1), (3,'cfo',1), (4,'dev1',2),
+  (5,'dev2',2), (6,'intern',4), (7,'acct',3);
+""")
+assert subordinates(conn, 2) == [(4, 1), (5, 1), (6, 2)]
+assert subordinates(conn, 1) == [(2, 1), (3, 1), (4, 2), (5, 2), (7, 2), (6, 3)]
+assert subordinates(conn, 6) == []
+assert subordinates(conn, 99) == []
+assert subordinates(conn, "2 OR 1=1") == []        # 参数不会被拼接进 SQL
+```
+
+**解析：**
+
+**递归 CTE 的结构**：
+1. **锚点成员**：非递归的初始结果，这里是直属下属，depth = 1；
+2. **递归成员**：引用 CTE 自身，用上一轮新产生的行去连接 staff，找出下一层，depth + 1；
+3. 用 `UNION ALL` 合并；某一轮递归成员不再产生新行时，递归结束。
+
+**注意事项**：
+- **环**：脏数据中若出现 A 管 B、B 又管 A，递归永远不会结束。防御办法是加深度上限（在递归成员中加 `WHERE sub.depth < 50`），或记录已访问的路径；MySQL 用 `cte_max_recursion_depth` 限制递归深度，默认 1000。
+- **参数化查询**：用 `?` 占位符传参，参数作为数据传给数据库，不会被解析成 SQL，测试中的 `"2 OR 1=1"` 只会被当成一个普通值去比较。用字符串拼接则会变成 `manager_id = 2 OR 1=1`，返回所有人，这就是 SQL 注入。
+- **兼容性**：MySQL 8.0、PostgreSQL、SQLite 3.8.3 起都支持 `WITH RECURSIVE`。
+- **性能**：manager_id 上要有索引，否则每一轮递归都要全表扫描。层级很深、查询很频繁时，可以考虑闭包表或物化路径（如存 `/1/2/4/`）等专门的树形存储方式。
+
+<sub>考点：子查询与CTE　｜　出处：SQLite 文档：The WITH Clause</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-012"></a>
+
+### CS-SQL-012　挑战 · 考频 ★★
+
+登录日志表 `login(uid INT, d TEXT)`，d 为 `'YYYY-MM-DD'` 格式的日期，同一用户同一天可能有多条记录。实现：
+
+```python
+def max_streak(conn) -> list[tuple[int, int]]: ...
+```
+
+用 SQL 计算每个用户的**最长连续登录天数**，返回 `[(uid, 天数), ...]`，按 uid 升序排列。（提示：SQLite 中 `date(d, '-3 days')` 可以做日期减法。）
+
+<details>
+<summary>答案与解析</summary>
+
+**参考实现：**
+
+```python
+def max_streak(conn):
+    sql = """
+    WITH days AS (
+        SELECT DISTINCT uid, d FROM login                       -- 先按天去重
+    ),
+    grp AS (
+        SELECT uid, d,
+               date(d, '-' || ROW_NUMBER() OVER (PARTITION BY uid ORDER BY d) || ' days') AS g
+        FROM days
+    )
+    SELECT uid, MAX(cnt) FROM (
+        SELECT uid, g, COUNT(*) AS cnt FROM grp GROUP BY uid, g
+    ) GROUP BY uid
+    ORDER BY uid
+    """
+    return conn.execute(sql).fetchall()
+```
+
+**测试用例：**
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.executescript("""
+CREATE TABLE login(uid INT, d TEXT);
+INSERT INTO login VALUES
+  (1,'2026-05-01'), (1,'2026-05-02'), (1,'2026-05-02'), (1,'2026-05-03'), (1,'2026-05-05'),
+  (2,'2026-05-01'), (2,'2026-05-03'), (2,'2026-05-04'),
+  (3,'2026-04-29'), (3,'2026-04-30'), (3,'2026-05-01'), (3,'2026-05-02'),
+  (4,'2026-05-07'),
+  (5,'2025-12-31'), (5,'2026-01-01');
+""")
+assert max_streak(conn) == [(1, 3), (2, 2), (3, 4), (4, 1), (5, 2)]
+```
+
+**解析：**
+
+**思路（gaps and islands，连续区间问题）**：把每个用户的登录日期去重后排序，编上行号 rn。在一段连续的日期里，日期每加 1 天，rn 也加 1，所以 **日期 − rn 天** 是一个常数；一旦中间断开，这个差值就会变。于是按 (uid, 日期 − rn) 分组，每组就是一段连续登录，组内行数就是这段的天数，再取每个用户的最大值。
+
+以用户 1 为例：05-01、05-02、05-03、05-05 的 rn 为 1、2、3、4，减去之后分别是 04-30、04-30、04-30、05-01，分成两组，长度为 3 和 1。
+
+**易错点**：
+- 必须先按天**去重**：同一天两条记录会让 rn 多加 1，打断连续性；
+- 要用真正的日期运算处理跨月、跨年（测试中的 04-30 → 05-01、12-31 → 01-01），不能把日期当字符串或数字直接相减；
+- 其他数据库的写法：MySQL 用 `DATE_SUB(d, INTERVAL rn DAY)`，PostgreSQL 可以直接 `d - rn::int`。
+
+**另一种思路**：用 `LAG(d)` 判断与前一天是否相差 1 天，不连续时记一个「断点」标志，再对标志做累计求和得到分段编号。
+
+<sub>考点：窗口函数</sub>
+
+</details>
+
+---
+
+<a name="CS-SQL-015"></a>
+
+### CS-SQL-015　进阶 · 考频 ★★★
+
+表 `sales(category TEXT, item TEXT, amount INT)`。实现：
+
+```python
+def top_items(conn, n) -> list[tuple[str, str, int]]: ...
+```
+
+用 SQL 返回每个类目中销售额排在前 n 的商品：销售额并列的商品都要保留，并且排名**不跳号**（即取每个类目销售额最高的 n 个档位）。返回 `(category, item, amount)`，按 category 升序、amount 降序、item 升序排列；n 通过参数化查询传入。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考实现：**
+
+```python
+def top_items(conn, n):
+    sql = """
+    SELECT category, item, amount FROM (
+        SELECT *, DENSE_RANK() OVER (
+                   PARTITION BY category ORDER BY amount DESC) AS dr
+        FROM sales
+    ) t
+    WHERE dr <= ?
+    ORDER BY category, amount DESC, item
+    """
+    return conn.execute(sql, (n,)).fetchall()
+```
+
+**测试用例：**
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.executescript("""
+CREATE TABLE sales(category TEXT, item TEXT, amount INT);
+INSERT INTO sales VALUES ('book','b1',90), ('book','b2',95), ('book','b3',95),
+  ('book','b4',80), ('book','b5',70), ('toy','t1',50), ('toy','t2',40), ('food','f1',10);
+""")
+assert top_items(conn, 2) == [('book', 'b2', 95), ('book', 'b3', 95), ('book', 'b1', 90),
+                              ('food', 'f1', 10), ('toy', 't1', 50), ('toy', 't2', 40)]
+assert top_items(conn, 1) == [('book', 'b2', 95), ('book', 'b3', 95),
+                              ('food', 'f1', 10), ('toy', 't1', 50)]
+assert top_items(conn, 0) == []
+```
+
+**解析：**
+
+**思路**：分组 Top-N 的标准模板是「窗口函数编号 + 外层过滤」：`PARTITION BY` 分组，`ORDER BY` 定义组内排名，外层 `WHERE 编号 <= n`。窗口函数不能写在同一层的 WHERE 中，所以必须包一层子查询或 CTE。
+
+**选哪个编号函数**，取决于「并列怎么算」：
+- 每组恰好 n 行：`ROW_NUMBER`（排序中加唯一列保证确定性）；
+- 名次不超过 n，并列占用名次：`RANK`；
+- 取前 n 个档位，并列不占名次：`DENSE_RANK`（本题）。book 类中 95、95、90 属于前两个档位，所以 n = 2 时返回 3 个商品。
+
+**不支持窗口函数时**（如 MySQL 5.7），可以用相关子查询统计「同类目中比我高的不同金额有几个」：`WHERE (SELECT COUNT(DISTINCT s2.amount) FROM sales s2 WHERE s2.category = s.category AND s2.amount > s.amount) < n`，但它的复杂度接近每组行数的平方。
+
+**性能**：在 `(category, amount)` 上建索引，可以减少窗口排序的开销。
+
+<sub>考点：分组TopN、窗口函数</sub>
+
+</details>
+
+---
+
+## 简答题
+
+<a name="CS-SQL-028"></a>
+
+### CS-SQL-028　进阶 · 考频 ★★★
+
+请解释事务 ACID 的含义，以及脏读、不可重复读、幻读三种并发异常；说明四种标准隔离级别分别能避免哪些异常；再说明 MySQL InnoDB 在默认的可重复读级别下，是如何通过 MVCC 和锁来处理幻读的，这种处理有什么局限。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+1. **ACID**：
+   - 原子性：事务中的操作要么全部生效，要么全部不生效（InnoDB 用 undo log 实现回滚）；
+   - 一致性：事务前后数据都满足约束和业务规则；
+   - 隔离性：并发执行的事务之间互不干扰的程度，由隔离级别决定；
+   - 持久性：提交后数据不丢失（InnoDB 用 redo log 加刷盘策略保证）。
+2. **三种异常**：
+   - 脏读：读到其他事务**尚未提交**的修改，对方回滚后读到的就是从未存在过的数据；
+   - 不可重复读：同一事务中两次读**同一行**，值不同，因为期间有其他事务提交了 UPDATE；
+   - 幻读：同一事务中两次按**同一条件**查询，返回的行数不同，因为期间有其他事务插入或删除了符合条件的行。
+3. **四种隔离级别**：读未提交三种都可能出现；读已提交避免脏读；可重复读再避免不可重复读（标准允许幻读）；串行化全部避免。级别越高，并发性能越低。
+4. **InnoDB 可重复读下的处理**：
+   - **快照读**（普通 SELECT）走 MVCC：每行记录带有最近修改它的事务 ID 和指向旧版本的回滚指针，旧版本保存在 undo log 中。事务第一次读取时创建读视图（read view），之后按可见性规则读取对应的版本，看不到其他事务后来提交的修改，所以快照读中既没有不可重复读，也看不到新插入的「幻行」。
+   - **当前读**（`SELECT ... FOR UPDATE / FOR SHARE`、UPDATE、DELETE）读取最新提交的版本并加锁。对扫描到的索引范围加 next-key lock（记录锁加记录前的间隙锁），阻止其他事务往这个范围插入新行，从而防止当前读出现幻读。
+5. **局限**：
+   - 快照读和当前读混用时仍可能「看到」幻行：快照读看不到其他事务新插入并提交的行，但随后一条 UPDATE（当前读）会作用到这些行，再次快照读时它们就出现了；
+   - 间隙锁会降低并发、增加死锁的概率；范围条件没有走索引时，锁住的范围会变得很大；
+   - 所以涉及「先查后改」的关键逻辑，要么全程使用加锁读，要么使用唯一约束、乐观锁等手段保证正确性。
+
+**评分要点（共 10 分）：**
+
+- 正确解释 ACID 四个特性（2 分）
+- 准确区分脏读、不可重复读、幻读（2 分）
+- 说出四种隔离级别分别能避免的异常（2 分）
+- 说明 InnoDB 用 MVCC 处理快照读、用 next-key lock 处理当前读，并指出局限（4 分）
+
+**讲解：**
+
+**常见失分点**：把不可重复读和幻读混为一谈；说「InnoDB 的可重复读完全解决了幻读」，不区分快照读与当前读；把 MVCC 说成是加锁实现的；说不出间隙锁的代价。高分回答能用「两个事务的时间线」讲清楚某种异常是怎么发生的。
+
+<sub>考点：事务与隔离级别、锁　｜　出处：MySQL 文档：Consistent Nonlocking Reads、Phantom Rows</sub>
+
+</details>
+
+---
+
+## 场景分析题
+
+<a name="CS-SQL-024"></a>
+
+### CS-SQL-024　挑战 · 考频 ★★
+
+一个 Agent 平台的对话消息表 `messages`（InnoDB，约 2 亿行）结构为：`id BIGINT 自增主键, tenant_id INT, session_id BIGINT, role VARCHAR(16), content TEXT, created_at DATETIME`，目前只有主键索引和 `idx_session(session_id)`。下面两条查询很慢：
+
+- Q1（加载某会话最近 20 条消息）：`SELECT * FROM messages WHERE tenant_id = ? AND session_id = ? ORDER BY created_at DESC LIMIT 20;`
+- Q2（运营后台翻页）：`SELECT id, session_id, created_at FROM messages WHERE tenant_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 20 OFFSET 100000;`
+
+请分析变慢的原因，给出索引设计与查询改写方案，并说明如何验证效果、要付出哪些代价。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**1. 原因分析**
+- Q1：能用 idx_session 定位到该会话的全部消息，但随后要逐行回表取出 tenant_id 等列过滤，再按 created_at 额外排序（EXPLAIN 中有 Using filesort），最后才取 20 条。长会话有上万条消息时，大量回表加排序很慢。
+- Q2：没有以 tenant_id 或 created_at 开头的索引，只能全表扫描或扫描主键索引；`OFFSET 100000` 意味着要先找出并丢弃前 10 万行，页码越大越慢。
+
+**2. 索引设计**
+- Q1：建联合索引 `(session_id, created_at)`，或者 `(tenant_id, session_id, created_at)`（等值列在前、排序列在后）。按索引倒序读取前 20 条即可，消除 filesort，只回表 20 次。建好后原来的 idx_session 成为冗余索引，可以删除。
+- Q2：建 `(tenant_id, created_at)`，范围扫描和排序都走索引；若写成 `(tenant_id, created_at, session_id)`，查询所需的 id（二级索引叶子中本来就带主键）、session_id、created_at 都在索引中，构成覆盖索引，扫描时完全不回表。
+
+**3. 查询改写**
+- Q2 的深分页改为**键集分页（游标分页）**：记住上一页最后一条的 (created_at, id)，下一页写 `WHERE tenant_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT 20`。无论翻到第几页，代价都只是读 20 条。如果业务必须支持跳页，可以用「延迟关联」：先在覆盖索引上查出这一页的 id，再按 id 回表取其他列。
+- Q1 不要 `SELECT *`：content 很长时只取需要的列，减少回表和网络传输。
+
+**4. 验证**：EXPLAIN 确认 key、rows 和 Extra（Using filesort 消失，Q2 出现 Using index）；MySQL 8.0.18 起用 EXPLAIN ANALYZE 查看实际行数与耗时；用线上流量回放或压测对比 P99 延迟；打开慢查询日志持续观察。
+
+**5. 代价**：每个新索引都会增加写入开销（2 亿行、持续写入的表要权衡）和磁盘、缓冲池占用；大表加索引要使用在线 DDL 或 gh-ost、pt-online-schema-change 等工具，并避开业务高峰；建完新索引后要及时清理冗余索引。
+
+**评分要点（共 10 分）：**
+
+- 分析出 Q1 回表加额外排序、Q2 全表扫描加深分页的原因（3 分）
+- 给出合理的联合索引：等值列在前、排序或范围列在后，并说明覆盖索引的作用（3 分）
+- 给出深分页的改写方案，如键集分页或延迟关联（2 分）
+- 说明验证方法以及写入开销、在线加索引等代价（2 分）
+
+**讲解：**
+
+**常见失分点**：只说「加索引」而不说加什么列、按什么顺序；把 created_at 放在联合索引的最前面，导致等值条件用不上；没有意识到 OFFSET 本身的代价，只想靠索引解决深分页；忽略写放大与大表加索引的风险。
+
+<sub>考点：执行计划、最左前缀与覆盖索引</sub>
+
+</details>
+
+---
+
+## 系统设计题
+
+<a name="CS-SQL-032"></a>
+
+### CS-SQL-032　挑战 · 考频 ★★
+
+为一个企业级知识库问答 Agent（RAG）设计数据存储方案。需求：多租户（约 500 家企业），每家企业上传的文档从几百到几十万份不等；文档的增删改要在 5 分钟内反映到检索结果中；检索要按租户、部门权限和文档标签过滤；完整保存对话历史，用户可以查看和删除自己的对话（合规要求删除后不可恢复）；按租户统计 token 用量并计费。请给出：存储选型、核心表结构与索引、数据流与一致性设计、权限与合规措施、容量估算、监控指标与演进思路。
+
+<details>
+<summary>答案与解析</summary>
+
+**参考答案：**
+
+**1. 需求澄清与容量估算**（以下为假设，面试中要先与面试官确认）
+- 文档：500 个租户 × 平均 2 万份 = 1000 万份；每份平均切 20 块，共约 2 亿个文本块；
+- 向量：1024 维 float32 每条 4 KB，2 亿条原始向量约 800 GB，加上 HNSW 图结构的额外开销，内存需求在 TB 量级，需要分片，或使用标量量化 / PQ 压缩、磁盘索引；
+- 对话：假设每天 100 万条消息，每条 2 KB，每天约 2 GB，一年约 700 GB。
+
+**2. 存储选型**
+- **关系型主库**（PostgreSQL 或 MySQL）：租户、用户、部门权限、文档元数据、文本块元数据、对话、计费流水，需要事务和约束；
+- **向量检索**：独立的向量数据库（支持按标量字段过滤、按租户分区）；小租户也可以放在 pgvector 中，与元数据同库、同事务；
+- **对象存储**：原始文件和解析后的文本；
+- **Redis**：会话短期状态、热点检索结果缓存；
+- **列式分析库**：调用明细与用量统计，计费以主库中的汇总流水为准。
+
+**3. 核心表与索引**
+- `documents(id, tenant_id, dept_id, title, tags, status, active_version, updated_at, deleted_at)`，索引 `(tenant_id, dept_id, updated_at)`；
+- `chunks(id, doc_id, tenant_id, version, seq, content_hash)`，索引 `(doc_id, version, seq)`；
+- 向量库中每条向量携带 `tenant_id、dept_id、tags、doc_id、version` 等标量字段，并为它们建立过滤索引；按 tenant_id 分区，便于隔离与按租户删除；
+- `conversations(id, tenant_id, user_id, created_at)` 与 `messages(id, conversation_id, role, content, tokens, created_at)`，索引 `(conversation_id, created_at)`、`(tenant_id, user_id, created_at)`；
+- `usage_ledger(id, tenant_id, request_id UNIQUE, model, prompt_tokens, completion_tokens, cost, created_at)`：request_id 唯一，重复上报不会重复计费。
+
+**4. 数据流与一致性**
+- 上传：写对象存储，在主库插入文档记录（状态为处理中），并在**同一个事务**中写入 outbox 事件表；后台把事件投递到消息队列，触发解析、切块、向量化、写入向量库，完成后把文档状态改为就绪；
+- 更新：新版本的向量全部写完后，再原子地切换 `active_version`；检索时只返回当前版本的块，旧版本异步清理，避免新旧内容混杂；
+- 删除：先在主库标记删除（检索时立即过滤），再异步删除向量、文件和缓存；
+- 5 分钟的时效要求：监控队列积压和每份文档的端到端处理时间，超时告警。
+
+**5. 权限与合规**
+- 检索时由服务端根据当前用户的身份强制注入 `tenant_id`、部门和标签过滤条件，不信任前端或模型传来的参数；主库可再启用行级安全（如 PostgreSQL 的 RLS）作为纵深防御；
+- 对话删除：主库物理删除，分析库中按用户删除或匿名化，缓存失效，备份按保留期自然过期，并记录删除审计日志；
+- 加密：传输加密与静态加密，敏感租户可以使用独立的密钥。
+
+**6. 监控指标**：检索 P99 延迟、召回率（定期用标注集评估）、文档从上传到可检索的时延、队列积压、向量库与主库的一致性抽查（数量对账）、计费对账差异。
+
+**7. 风险与演进**
+- 带过滤的近似检索在过滤条件很严时可能返回不足 k 条，需要调大候选数或在分区内检索；
+- 头部大租户独立分区或独立集群，避免成为热点；
+- 冷数据迁到磁盘索引或对象存储，降低成本；主库按 tenant_id 分片应对增长。
+
+**评分要点（共 10 分）：**
+
+- 给出分层的存储选型并说明理由：关系库、向量库、对象存储、缓存、分析库（3 分）
+- 给出核心表结构与关键索引，体现租户隔离与幂等计费（2 分）
+- 设计文档更新、删除的数据流与一致性：outbox 或消息队列、版本切换、标记删除（2 分）
+- 说明权限过滤由服务端强制注入，以及合规删除的完整范围（2 分）
+- 给出容量估算、监控指标或演进思路（1 分）
+
+**讲解：**
+
+**常见失分点**：只说「用向量数据库」，不考虑元数据、权限和计费；检索时把权限过滤交给模型或前端；文档更新时先删旧向量再写新向量，中间出现检索空窗或新旧混杂；删除只删主库，忘了向量库、缓存和分析库；计费没有幂等设计，重试会导致重复扣费；没有容量估算，不知道向量规模已到 TB 量级。
+
+<sub>考点：数据库选型</sub>
+
+</details>
+
+---

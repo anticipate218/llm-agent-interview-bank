@@ -1,0 +1,412 @@
+# 题库分类体系：大类（domain）→ 小类（subcategory）→ 考点（points）
+# - code：用于题目 ID，形如 LLM-ATTN-001
+# - target：该小类的目标题量（规划值）
+# - points：考点清单；每道题的 points 字段应取自这里，便于统计覆盖度
+
+version: 1
+domains:
+
+  - code: FND
+    name: 机器学习与深度学习基础
+    description: 大模型岗面试的底层功底：数学、经典机器学习、深度学习、优化方法与 NLP 基础。
+    subcategories:
+      - code: MATH
+        name: 数学基础
+        target: 30
+        description: 线性代数、概率统计与信息论中面试常考的部分。
+        points: [向量与矩阵运算, 矩阵的秩与分解, 特征值与SVD, 梯度与链式法则, 雅可比与海森矩阵, 常见概率分布, 贝叶斯公式, 期望方差与协方差, 最大似然与最大后验, 熵与交叉熵, KL散度, 互信息, 数值稳定性]
+      - code: ML
+        name: 机器学习基础
+        target: 40
+        description: 经典机器学习的核心概念、模型与评估方法。
+        points: [监督与无监督学习, 偏差方差权衡, 过拟合与欠拟合, L1与L2正则化, 交叉验证, 分类评估指标, ROC与AUC, 类别不平衡, 线性回归与逻辑回归, 决策树与集成学习, 支持向量机, 聚类算法, 降维与PCA, 特征工程]
+      - code: DL
+        name: 深度学习基础
+        target: 40
+        description: 神经网络的结构、训练机制与常用组件。
+        points: [多层感知机, 反向传播, 激活函数, 权重初始化, 梯度消失与爆炸, 残差连接, BatchNorm与LayerNorm, Dropout, 卷积神经网络, 循环神经网络, 损失函数, 计算图与自动微分, 泛化与模型容量]
+      - code: OPT
+        name: 优化与训练技巧
+        target: 33
+        description: 优化器、学习率策略与训练过程中的常见问题。
+        points: [梯度下降与SGD, 动量, Adagrad与RMSprop, Adam与AdamW, 学习率调度与warmup, 批大小与学习率, 梯度裁剪, 权重衰减, 早停, 梯度累积, 二阶方法直觉, 训练不稳定诊断, 新型优化器]
+      - code: NLP
+        name: NLP 基础
+        target: 40
+        description: 从词向量到预训练语言模型的发展脉络与经典任务。
+        points: [分词与文本预处理, 词袋与TF-IDF, Word2Vec与GloVe, 语言模型与困惑度, RNN/LSTM/GRU, Seq2Seq与注意力起源, 上下文词表示, BERT预训练目标, GPT与自回归建模, 编码器-解码器模型, 生成评估指标, 经典NLP任务]
+
+  - code: LLM
+    name: 大模型原理
+    description: Transformer 架构、注意力、位置编码、Tokenizer、MoE、解码、模型演进与多模态。
+    subcategories:
+      - code: ARCH
+        name: Transformer 整体架构
+        target: 45
+        description: Transformer 的整体结构、各组件作用以及参数量与计算量估算。
+        points: [Encoder-Decoder结构, Decoder-only为何主流, 残差流, Post-Norm与Pre-Norm, LayerNorm与RMSNorm, FFN与SwiGLU, 参数量估算, 计算量估算, Embedding与LM Head, 权重共享, 激活值显存, 架构变体对比]
+      - code: ATTN
+        name: 注意力机制
+        target: 50
+        description: 注意力的计算、掩码、多头及其省显存变体、复杂度与 KV Cache。
+        points: [缩放点积注意力, 缩放因子, 注意力掩码, 多头注意力, MQA, GQA, MLA, 注意力复杂度, KV Cache原理与大小, 稀疏与滑动窗口注意力, 线性注意力, 交叉注意力, Attention Sink, 数值稳定]
+      - code: POS
+        name: 位置编码与长上下文
+        target: 43
+        description: 位置信息如何注入模型，以及长度外推与长上下文技术。
+        points: [绝对位置编码, 可学习位置编码, 相对位置编码, RoPE原理, RoPE实现与基频, ALiBi, 长度外推, 位置插值, NTK-aware缩放, YaRN, 长上下文训练, 长上下文评测, Lost in the Middle, 多模态位置编码]
+      - code: TOK
+        name: Tokenizer 与 Embedding
+        target: 35
+        description: 子词切分算法、词表设计与特殊 token。
+        points: [BPE, Byte-level BPE, WordPiece, Unigram与SentencePiece, 词表大小权衡, 中文与多语言压缩率, 特殊token与对话模板, 未登录词, 数字与代码的切分, 词嵌入矩阵, 扩词表]
+      - code: MOE
+        name: 混合专家 MoE
+        target: 35
+        description: 稀疏专家模型的结构、路由、负载均衡与工程特点。
+        points: [MoE基本结构, 门控路由与top-k, 负载均衡辅助损失, 容量因子与token丢弃, 共享专家, 细粒度专家, 无辅助损失负载均衡, 专家并行与All-to-All, MoE推理特点, Dense与MoE对比, 代表模型]
+      - code: DEC
+        name: 解码与生成
+        target: 35
+        description: 从 logits 到文本：解码策略、采样参数与约束生成。
+        points: [贪心解码, 束搜索, 温度, Top-k采样, Top-p采样, Min-p采样, 重复惩罚, 停止条件与EOS, 约束解码与结构化输出, 解码与幻觉, 确定性与随机种子, logits处理]
+      - code: MODEL
+        name: 主流模型与演进
+        target: 35
+        description: 主流模型家族的发展脉络与关键架构选择。
+        points: [GPT系列演进, BERT与GPT路线, T5与统一框架, Llama系列, Qwen系列, DeepSeek系列, Mistral与Mixtral, Gemma系列, 开源与闭源生态, 开放权重与许可证, 规模与涌现能力, 上下文长度演进]
+      - code: MM
+        name: 多模态大模型
+        target: 41
+        description: 视觉、语音等模态与语言模型的融合方式。
+        points: [ViT与图像分块, CLIP对比学习, 视觉编码器, 模态连接器, LLaVA架构, 视觉token数量与压缩, 多图与视频理解, 多模态预训练与指令微调, 文档与OCR理解, 语音大模型, 理解与生成统一, 多模态幻觉, 扩散生成, VLA与具身]
+      - code: NEW
+        name: 新架构与前沿
+        target: 25
+        description: Transformer 之外的架构探索与近年的前沿方向。
+        points: [状态空间模型, Mamba选择性机制, 线性注意力与RNN, 混合架构, 多token预测, 稀疏注意力新进展, 扩散语言模型, 小模型与端侧部署]
+
+  - code: TRN
+    name: 预训练与微调
+    description: 预训练、数据工程、分布式训练、显存与精度、SFT、参数高效微调与领域适配。
+    subcategories:
+      - code: PT
+        name: 预训练与 Scaling Law
+        target: 40
+        description: 预训练目标、缩放律与预训练过程中的关键决策。
+        points: [自回归预训练目标, 交叉熵与困惑度, Kaplan缩放律, Chinchilla缩放律, 过训练小模型, 训练算力估算, 涌现能力, 学习率与批大小, 学习率调度与退火, 预训练阶段划分, 训练稳定性, 基座模型评估]
+      - code: DATA
+        name: 数据工程
+        target: 40
+        description: 预训练与微调数据的采集、清洗、去重、过滤、配比与合成。
+        points: [数据来源, 文本清洗, 精确去重, MinHash近似去重, 质量过滤, 毒性与PII过滤, 数据配比, 课程学习, 合成数据, 数据污染, 代码与数学数据, 多语言数据]
+      - code: DIST
+        name: 分布式训练
+        target: 45
+        description: 数据、张量、流水线、序列与专家并行，以及通信与容错。
+        points: [数据并行, 集合通信原语, ZeRO, FSDP, 张量并行, 流水线并行与气泡, 序列与上下文并行, 专家并行, 3D并行, 通信计算重叠, 梯度检查点, 大规模训练容错]
+      - code: MEM
+        name: 显存与混合精度
+        target: 35
+        description: 训练显存的构成与估算、数值精度格式与混合精度训练。
+        points: [训练显存账本, 优化器状态, 激活显存, 激活重计算, FP16与BF16, FP8训练, Loss Scaling, 主权重, 显存估算, 卸载技术, 显存碎片]
+      - code: SFT
+        name: 指令微调 SFT
+        target: 40
+        description: 指令数据、对话模板、损失掩码与 SFT 实践。
+        points: [SFT目标, 指令数据构建, 数据质量与多样性, 对话模板, Loss Mask, 多轮对话训练, Packing, 工具调用数据, 灾难性遗忘, SFT超参数, SFT评估, 拒绝采样微调]
+      - code: PEFT
+        name: 参数高效微调
+        target: 40
+        description: LoRA 系列与其他参数高效微调方法。
+        points: [LoRA原理, 秩与alpha, LoRA作用层, LoRA合并, QLoRA与NF4, 双重量化与分页优化器, DoRA, Adapter, Prefix与Prompt Tuning, 多LoRA服务, 全参与PEFT选型, PEFT显存估算]
+      - code: ADAPT
+        name: 领域适配与蒸馏
+        target: 33
+        description: 继续预训练、领域适配、知识蒸馏与模型合并。
+        points: [继续预训练, 数据回放, 灾难性遗忘, 扩词表, 知识蒸馏, 推理能力蒸馏, 模型合并, 领域知识注入选型, 在线策略蒸馏]
+
+  - code: ALN
+    name: 对齐与强化学习
+    description: 强化学习基础、RLHF、偏好优化、GRPO 系列、奖励设计与推理模型。
+    subcategories:
+      - code: RL
+        name: 强化学习基础
+        target: 40
+        description: LLM 对齐所需的强化学习核心概念与算法。
+        points: [MDP基本概念, 回报与折扣, 价值函数, 贝尔曼方程, 策略梯度定理, REINFORCE与基线, 优势函数, Actor-Critic, GAE, 重要性采样, On-policy与Off-policy, 探索与利用, PPO裁剪, 熵正则]
+      - code: RLHF
+        name: RLHF 与 PPO
+        target: 40
+        description: 基于人类反馈的强化学习流程与 PPO 在 LLM 中的实现。
+        points: [RLHF三阶段, 偏好数据, Bradley-Terry模型, 奖励模型训练, PPO目标函数, KL惩罚与参考模型, 价值头与GAE, 四模型显存开销, PPO训练不稳定, 奖励归一化, RLHF训练框架]
+      - code: PO
+        name: 偏好优化 DPO 系列
+        target: 40
+        description: 不训练奖励模型的离线偏好优化方法。
+        points: [DPO推导, DPO损失, β的作用, 隐式奖励, DPO失效模式, IPO, KTO, ORPO, SimPO, 在线与迭代DPO, 偏好数据质量, DPO与PPO对比]
+      - code: GRPO
+        name: GRPO 与可验证奖励
+        target: 46
+        description: 组相对策略优化及其改进，基于可验证奖励的强化学习。
+        points: [GRPO组内优势, 去掉价值模型, KL估计器, RLVR, DAPO改进, Clip-Higher与熵坍塌, 动态采样, Token级损失, GSPO, Dr.GRPO, 组大小与采样, 规则奖励设计, 训推不一致与修正, 异步RL与陈旧度]
+      - code: RWD
+        name: 奖励设计与奖励黑客
+        target: 33
+        description: 奖励信号的来源与设计、奖励黑客及缓解。
+        points: [奖励模型与规则奖励, ORM与PRM, 过程监督, 奖励黑客, 长度偏置, 奖励过优化, RM集成与正则, RLAIF, Constitutional AI, 评审模型奖励风险, 生成式奖励模型]
+      - code: REASON
+        name: 推理模型与测试时计算
+        target: 38
+        description: o1/R1 一类推理模型的训练方法与测试时计算扩展。
+        points: [推理模型特点, 长思维链, R1-Zero与R1, 冷启动数据, 多阶段训练, 推理蒸馏, 测试时计算扩展, Best-of-N与多数投票, 过度思考与长度控制, 思考预算, 推理模型局限, 混合思考模式]
+
+  - code: INF
+    name: 推理与部署
+    description: 推理性能分析、KV Cache、调度、算子、量化、投机解码与推理服务。
+    subcategories:
+      - code: BASE
+        name: 推理流程与性能指标
+        target: 40
+        description: 一次推理请求的生命周期、性能指标与瓶颈分析。
+        points: [请求生命周期, Prefill与Decode, TTFT与TPOT, 吞吐与goodput, 算术强度与Roofline, 带宽瓶颈与批处理, 延迟估算, 流式输出, 负载特征, 性能分析方法]
+      - code: KV
+        name: KV Cache 与显存管理
+        target: 40
+        description: KV Cache 的大小、管理、复用与压缩。
+        points: [KV Cache原理, KV Cache大小计算, 显存碎片, PagedAttention, 块表, 写时复制, 前缀缓存, RadixAttention, KV量化, KV压缩与淘汰, KV卸载, 长上下文KV优化]
+      - code: SCHED
+        name: 批处理与调度
+        target: 35
+        description: 推理服务的批处理、调度与资源编排策略。
+        points: [静态批处理, 连续批处理, 迭代级调度, Chunked Prefill, 抢占, 优先级与公平, PD分离, 负载均衡与路由, SLO与goodput, 调度权衡]
+      - code: KERNEL
+        name: 算子与 FlashAttention
+        target: 33
+        description: GPU 内存层次与 IO 感知的注意力算子优化。
+        points: [GPU内存层次, IO感知, FlashAttention分块, Online Softmax, 反向重计算, FlashAttention-2与3, FlashDecoding, 算子融合, CUDA Graph, Triton, GPU执行模型]
+      - code: QUANT
+        name: 量化与压缩
+        target: 43
+        description: 权重、激活与 KV 的量化原理与主流方法。
+        points: [量化基本原理, 对称与非对称量化, 量化粒度, PTQ与QAT, LLM.int8与离群值, SmoothQuant, GPTQ, AWQ, FP8格式, INT4权重量化, KV Cache量化, 量化效果评估, 剪枝与稀疏化]
+      - code: SPEC
+        name: 投机解码
+        target: 30
+        description: 用「先猜后验」加速自回归解码的方法族。
+        points: [投机解码原理, 接受拒绝采样, 无损性, 接受率与加速比, 草稿模型选择, Medusa, EAGLE, MTP, Lookahead解码, 树形验证, 适用场景]
+      - code: SERVE
+        name: 推理服务与框架
+        target: 38
+        description: 推理框架、并行部署、结构化输出与容量规划。
+        points: [vLLM, SGLang, TensorRT-LLM, llama.cpp与端侧, 张量并行推理, 流水线与专家并行推理, 多LoRA服务, 结构化输出, OpenAI兼容API, 容量规划, 推理成本估算, 推理服务监控, 国产硬件部署]
+
+  - code: RAG
+    name: 检索增强生成
+    description: RAG 原理、切块、向量检索、混合检索与重排、查询优化、高级范式与评测。
+    subcategories:
+      - code: BASE
+        name: RAG 原理与选型
+        target: 33
+        description: 为什么需要 RAG、标准链路与方案选型。
+        points: [RAG动机, 标准链路, 离线索引与在线检索, RAG与微调与长上下文, Naive与Advanced与Modular RAG, 幻觉与可溯源, 失败模式分析, 端到端延迟, Agentic Search与grep]
+      - code: CHUNK
+        name: 文档解析与切块
+        target: 30
+        description: 文档解析与切块策略。
+        points: [文档解析, 固定长度切块, 重叠窗口, 递归切块, 语义切块, 结构感知切块, 父子块, 块大小权衡, 元数据, 多模态文档]
+      - code: EMB
+        name: Embedding 与向量索引
+        target: 40
+        description: 稠密向量表示、对比学习与近似最近邻索引。
+        points: [双塔模型, 对比学习InfoNCE, 难负例, 相似度度量, Embedding模型选型, Matryoshka表示, 领域微调, 暴力检索, IVF, 乘积量化PQ, HNSW, 向量数据库选型, 召回与延迟权衡]
+      - code: RETR
+        name: 稀疏检索、混合检索与重排
+        target: 40
+        description: BM25、混合检索融合与重排模型。
+        points: [TF-IDF, BM25, 倒排索引, 混合检索, RRF融合, 分数归一化融合, Cross-Encoder重排, ColBERT晚交互, LLM重排, MMR去冗余, 两阶段检索漏斗]
+      - code: QUERY
+        name: 查询理解与生成控制
+        target: 30
+        description: 查询侧优化与生成侧的上下文组织、引用与拒答。
+        points: [查询改写, 多查询, HyDE, Step-back, 查询路由, 元数据过滤, 上下文组织与排序, 引用生成, 拒答, 上下文压缩, Lost in the Middle]
+      - code: ADV
+        name: 高级 RAG 范式
+        target: 33
+        description: 图谱、自反思与 Agentic 等进阶 RAG 范式。
+        points: [GraphRAG, 知识图谱RAG, Self-RAG, CRAG, Agentic RAG, 多跳检索, Contextual Retrieval, 长上下文与RAG结合, 多模态RAG, 结构化数据问答, 本体建模]
+      - code: EVAL
+        name: RAG 评测与运维
+        target: 30
+        description: 检索与生成两端的评测指标、评测集与线上运维。
+        points: [检索指标, 忠实度, 答案相关性, 上下文精确率与召回率, RAGAS, 评测集构建, LLM评判偏差, 增量更新, 权限与多租户, 缓存, 线上反馈闭环]
+
+  - code: AGT
+    name: 智能体 Agent
+    description: Agent 范式、提示工程、规划与反思、工具调用、协议、记忆、框架、多 Agent、Harness、应用与 Agentic RL。
+    subcategories:
+      - code: BASE
+        name: Agent 基础与范式
+        target: 40
+        description: Agent 的定义、核心循环、工作流模式与适用场景。
+        points: [Agent定义与组成, 自主程度光谱, Agent Loop, 工作流与Agent, 提示链, 路由, 并行化, 编排者-工作者, 评估者-优化者, 终止条件, Agent适用场景]
+      - code: PROMPT
+        name: 提示工程与结构化输出
+        target: 35
+        description: 提示设计方法、结构化输出与提示的工程化管理。
+        points: [提示结构与角色, 零样本与少样本, 思维链提示, 自洽性, 结构化输出, 输出解析与修复, 提示模板与版本管理, 系统提示设计, 提示压缩, 推理模型的提示差异, 提示评测]
+      - code: PLAN
+        name: 推理与规划
+        target: 46
+        description: Agent 的推理范式与任务规划方法。
+        points: [思维链CoT, Self-Consistency, 思维树ToT, ReAct, Act-only与ReAct, Plan-and-Execute, ReWOO, LLMCompiler, 层次化任务分解, 重规划, Todo清单, 规划失败模式, 路径震荡与偏航, Plan模式]
+      - code: REFL
+        name: 反思与自我改进
+        target: 25
+        description: 让 Agent 从反馈中改进输出与行为的方法。
+        points: [Self-Refine, Reflexion, CRITIC, 外部反馈与内在反思, 验证器, 反思记忆, 自我纠错局限]
+      - code: TOOL
+        name: 工具调用
+        target: 48
+        description: Function Calling 的原理、协议细节与工具设计。
+        points: [Function Calling原理, 工具Schema设计, tool_choice, 并行工具调用, 工具结果回填, 错误处理与重试, 工具描述写法, 工具检索, 严格模式, 流式工具调用, 不同厂商格式, API幻觉, 副作用与幂等, 工具结果缓存]
+      - code: PROTO
+        name: 智能体协议
+        target: 51
+        description: MCP、A2A、Agent Skills 与 Code Mode。
+        points: [MCP动机, MCP架构, MCP服务端原语, MCP客户端原语, JSON-RPC生命周期, MCP传输方式, MCP鉴权, MCP与Function Calling, A2A Agent Card, A2A任务生命周期, A2A与MCP分工, Agent Skills, Code Mode, 技能与工具治理, 生成式UI协议]
+      - code: MEM
+        name: 记忆与上下文工程
+        target: 45
+        description: 上下文管理、短期与长期记忆系统。
+        points: [上下文窗口限制, 上下文工程四类操作, 上下文腐化, 滑动窗口, 摘要记忆, Compaction, 工具输出清理, 外部笔记与状态, 长期记忆分类, MemGPT, Generative Agents, Mem0, 时序记忆Zep, Prompt Caching, 记忆冲突与遗忘, 记忆隔离与隐私]
+      - code: FW
+        name: Agent 框架
+        target: 40
+        description: 主流 Agent 框架的抽象、能力与选型。
+        points: [框架解决的问题, LangChain, LangGraph状态图, 检查点与持久化, 中断与人在回路, OpenAI Agents SDK, Handoff与Guardrail, Google ADK, AutoGen, CrewAI, MetaGPT与ChatDev, 低代码平台, 框架选型]
+      - code: MULTI
+        name: 多 Agent 与长程任务
+        target: 43
+        description: 多 Agent 协作拓扑、通信与长程任务的可靠执行。
+        points: [多Agent收益与代价, Supervisor模式, 层级结构, Handoff与Swarm, 黑板与共享状态, 辩论与投票, SOP流水线, 子Agent上下文隔离, 任务分解与依赖图, 检查点与恢复, 幂等步骤, 冲突与一致性, 多Agent失败模式, 何时不用多Agent, Agent Teams]
+      - code: HARNESS
+        name: Harness 与编码 Agent 运行时
+        target: 41
+        description: 模型之外的运行时：接口、权限、钩子、沙箱与经验沉淀。
+        points: [Harness概念, ACI设计, SWE-agent, OpenHands与CodeAct, 编码Agent主循环, 权限模式与规则, 钩子, 沙箱技术, 项目记忆文件, 子Agent, 输出截断, 技能库, Harness评估, Harness工程演进, Spec驱动开发]
+      - code: APP
+        name: Agent 应用
+        target: 46
+        description: Coding、Deep Research、Computer-Use 等典型应用的关键技术。
+        points: [Coding Agent任务形式化, 代码定位, 编辑格式, 测试验证与假绿灯, Agentless, Deep Research流程, 引用与事实核查, DOM浏览器Agent, 视觉GUI Agent, Set-of-Mark, Computer-Use安全, 客服Agent, 数据分析Agent, 代码评审Agent, 运维排障Agent]
+      - code: RL
+        name: Agentic RL 与自我进化
+        target: 30
+        description: 用强化学习训练多轮 Agent，以及不改参数的自我进化方法。
+        points: [Agentic RL与单轮RL, POMDP形式化, 多轮rollout, 观察token掩码, 环境设计, 奖励设计, 信用分配, 异步rollout与训练框架, 工具增强RL, 无梯度自我进化, 拒绝采样微调, Agent奖励黑客]
+
+  - code: EVL
+    name: 评测
+    description: 大模型评测与 Agent 评测。
+    subcategories:
+      - code: LLM
+        name: 大模型评测
+        target: 40
+        description: 大模型能力评测的基准、协议、偏差与污染。
+        points: [评测维度, 知识与推理基准, 数学与代码基准, 指令遵循评测, 对话评测与Arena, Elo评分, LLM-as-Judge, 评测偏差, 数据污染, 评测协议, 长上下文评测, 安全评测]
+      - code: AGENT
+        name: Agent 评测
+        target: 48
+        description: Agent 评测指标、主流基准、评测工程与统计方法。
+        points: [Agent评测难点, 指标体系, pass@k, pass^k, GAIA, SWE-bench系列, τ-bench, 网页与操作系统基准, BFCL, 轨迹评测, 评测Harness工程, 统计显著性, 离线与在线评测, 失败归因, 刷榜与脚手架过拟合, 指标口径与增量证明]
+
+  - code: ENG
+    name: 工程化与系统设计
+    description: 稳定性、可观测性与 LLMOps、成本优化与系统设计。
+    subcategories:
+      - code: STAB
+        name: 稳定性与容错
+        target: 45
+        description: Agent 服务的超时、重试、幂等、限流、熔断与持久化执行。
+        points: [Agent服务特点, 同步与异步架构, 超时分层, 重试与退避抖动, 重试风暴, 幂等键, 投递语义, 持久化执行与Saga, 限流算法, 熔断器, 舱壁隔离, 背压, 降级策略, 死信队列, 故障演练]
+      - code: OBS
+        name: 可观测性与 LLMOps
+        target: 35
+        description: 追踪、指标、日志与大模型应用的持续交付。
+        points: [Trace与Metrics与Logs, OpenTelemetry GenAI约定, RED与USE, 轨迹记录与回放, 成本监控, Prompt版本管理, 评测门禁, 灰度发布与A/B, 线上反馈闭环, 告警设计, 数据飞轮]
+      - code: PERF
+        name: 成本与性能优化
+        target: 25
+        description: 大模型应用的成本构成与优化手段。
+        points: [Token成本构成, Prompt Caching利用, 语义缓存, 模型路由与级联, 批处理API, 输出长度控制, 流式与感知延迟, 上下文裁剪, 自部署与API成本]
+      - code: DESIGN
+        name: 系统设计
+        target: 46
+        description: Agent 系统设计题的方法论与典型案例。
+        points: [答题框架, 需求澄清, MVP裁剪, 容量估算, 成本估算, 参考架构, 控制面与数据面, 指标树, FMEA风险分析, 排障方法, 多租户隔离, 知识库助手设计, Coding Agent平台设计, 智能客服设计, 数据分析Agent设计, LLM网关设计, 内容审核设计]
+
+  - code: SEC
+    name: 安全与可靠性
+    description: 提示注入、Agent 安全、防御体系与治理、幻觉与合规。
+    subcategories:
+      - code: INJ
+        name: 提示注入与越狱
+        target: 35
+        description: 提示注入与越狱的原理、类型与检测。
+        points: [直接提示注入, 间接提示注入, 越狱类型, 系统提示泄露, 注入难以根治的原因, 数据与指令分离, 输入检测, 护栏模型, 对抗后缀, 多模态注入]
+      - code: AGENT
+        name: Agent 安全
+        target: 40
+        description: Agent 特有的安全风险与控制措施。
+        points: [威胁建模, 过度代理, 工具滥用, 致命三要素, 外泄通道, 最小权限, 高危操作人审, 记忆投毒, RAG投毒, MCP工具投毒, 供应链风险, SSRF, 沙箱逃逸, 费用型拒绝服务]
+      - code: DEF
+        name: 防御体系与治理
+        target: 30
+        description: 纵深防御架构、安全评测与事故响应。
+        points: [OWASP LLM Top 10, 纵深防御, 双LLM模式, CaMeL, 污点追踪, 安全设计模式, 输出处理, 红队测试, 安全评测集, 应急响应, 安全与体验平衡]
+      - code: REL
+        name: 可靠性、幻觉与合规
+        target: 30
+        description: 幻觉、不确定性、隐私与合规。
+        points: [幻觉类型, 幻觉成因, 幻觉检测, 幻觉缓解, 不确定性与校准, 拒答与过度拒答, 隐私与PII, 数据合规, 版权与许可, 内容安全, 审计与可解释]
+
+  - code: CS
+    name: 编程与计算机基础
+    description: Python、PyTorch、算法、SQL、网络、操作系统与分布式系统。
+    subcategories:
+      - code: PY
+        name: Python
+        target: 50
+        description: Python 语言机制、并发模型与常见陷阱。
+        points: [可变与不可变, 深浅拷贝, 可变默认参数, 闭包与晚绑定, 装饰器, 生成器与迭代器, 上下文管理器, GIL, 线程进程协程, asyncio, 数据模型与魔法方法, 类型注解与dataclass, 异常处理, 内存管理与垃圾回收, 常用标准库]
+      - code: TORCH
+        name: PyTorch
+        target: 45
+        description: 张量操作、自动求导、模块与训练循环。
+        points: [Tensor与设备, 广播, view与reshape与contiguous, autograd与计算图, requires_grad与no_grad, 叶子节点与梯度累积, nn.Module, train与eval, 损失函数, 优化器与zero_grad, 混合精度AMP, DataLoader, 分布式DDP, 常见bug, 显存排查]
+      - code: ALGO
+        name: 算法与数据结构
+        target: 53
+        description: 大模型岗笔试与手撕中常见的算法题。
+        points: [复杂度分析, 哈希表, 双指针与滑动窗口, 二分查找, 栈与单调栈, 堆与TopK, 链表, 树与遍历, 图搜索, 拓扑排序, 最短路径, 动态规划, 字符串算法, 排序算法, 随机采样算法, LRU缓存, Agent工程化编程]
+      - code: SQL
+        name: SQL 与数据库
+        target: 30
+        description: SQL 查询、索引、事务与数据库选型。
+        points: [JOIN类型, 聚合与分组, 子查询与CTE, 窗口函数, 去重保留最新, 分组TopN, B+树索引, 最左前缀与覆盖索引, 执行计划, 事务与隔离级别, 锁, 数据库选型]
+      - code: NET
+        name: 计算机网络
+        target: 30
+        description: 与大模型服务相关的网络协议与通信方式。
+        points: [网络分层, TCP连接管理, TCP可靠传输与拥塞控制, UDP, HTTP版本演进, HTTPS与TLS, DNS, 长连接与连接池, SSE, WebSocket, 超时类型, gRPC, 负载均衡]
+      - code: OS
+        name: 操作系统与并发
+        target: 30
+        description: 进程线程、同步、IO 模型与内存管理。
+        points: [进程与线程, 协程, 上下文切换, 锁与死锁, 信号量与条件变量, IO模型与多路复用, 虚拟内存与分页, 内存分配, 进程间通信, 容器隔离]
+      - code: DIST
+        name: 分布式系统
+        target: 30
+        description: 分布式系统的一致性、共识、分片与常用中间件。
+        points: [CAP定理, BASE与最终一致性, 一致性模型, Raft选举, Raft日志复制, Paxos直觉, 一致性哈希, 分布式事务, 消息队列, MapReduce, 分布式锁, 分布式追踪]
