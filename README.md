@@ -21,11 +21,11 @@
 > [!TIP]
 > 如果这个题库对你有帮助，欢迎点一个 ⭐ **Star**，让更多准备大模型、Agent 岗位实习和校招的同学看到它。
 
-## 🎬 30 秒看懂
+## 🎬 47 秒看懂
 
-<p align="center"><a href="https://anticipate218.github.io/llm-agent-interview-bank/"><img src="docs/images/demo.gif" alt="刷题演示：答对彩带、多选标出漏选、键盘翻题" width="860"></a></p>
+https://github.com/user-attachments/assets/b3d4361e-ddcd-4080-9606-dd4845673869
 
-答对时选项打勾、彩带飞出，答错时选项抖动并标出正确答案；多选题分别标出选对、选错与漏选；电脑上用 `A`–`E` 选择、`←` `→` 翻题，手机上左右滑动。
+画面都是网站的真实操作录屏：答错时选项抖动并标出正确答案，答对时打勾、彩带飞出，多选题分别标出选错和漏选；还能按岗位一键组卷、模拟考试。
 
 ## ✨ 为什么选它
 
@@ -111,6 +111,10 @@
 - ⏱️ **模拟考试**：按岗位一键组卷，倒计时、答题卡，交卷自动判分（多选少选得一半、填空按空给分），逐题回顾
 - 📊 **学习统计**：做题热力图、各领域正确率、连续打卡；数据只保存在本机浏览器，可导出备份
 - 🌙 **好用的细节**：深色模式、键盘快捷键、手机滑动翻题、添加到主屏幕后离线可用
+
+<p align="center"><a href="https://anticipate218.github.io/llm-agent-interview-bank/"><img src="docs/images/demo.gif" alt="刷题演示：答对彩带、多选标出漏选、键盘翻题" width="860"></a></p>
+
+电脑上用 `A`–`E` 选择、`←` `→` 翻题，手机上左右滑动。
 
 <p align="center"><img src="docs/images/practice.png" alt="电脑端刷题" width="100%"></p>
 <p align="center"><img src="docs/images/mobile.png" alt="手机端：答对、答错与模拟考试" width="100%"></p>
